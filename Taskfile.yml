@@ -1,0 +1,126 @@
+version: '3'
+vars:
+  ODIN: odin
+  ODINFMT: odinfmt
+  VERSION: 0.1.0-dev
+  ODIN_ARM64E: bin/odin-arm64e
+  ODIN_ARM64E_ROOT:
+    sh: '{{.ODIN}} root'
+  CODESIGN: codesign
+  BINARY: bin/shoji
+  CPU_FLAGS:
+    sh: 'test "$(uname -m)" != arm64 || echo -target-features:pauth'
+  LINK_FLAGS: -F/System/Library/PrivateFrameworks
+
+tasks:
+  default:
+    cmds: [task build]
+  build:
+    deps: [addition, loader]
+    desc: Build the native macOS executable
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build src -out:{{.BINARY}} -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - {{.BINARY}}'
+  debug:
+    deps: [addition]
+    desc: Build with debug information and runtime checks
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build src -out:bin/shoji-debug -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-debug'
+  check:
+    desc: Type-check all source and tests
+    cmds:
+      - '{{.ODIN}} check src -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/addition/payload -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check tests -no-entry-point -vet-unused-imports -vet-unused-variables'
+  test:
+    desc: Run deterministic tests without controlling desktop windows
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} test tests -out:bin/shoji-tests -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+  fmt:
+    desc: Format Odin source and tests
+    cmds:
+      # odinfmt's parser does not yet understand native asm templates.
+      - >-
+        rg --files src tests -g '*.odin' -g '!calls_*.odin' -g '!registers_*.odin' -g '!state_arm64.odin' |
+        while IFS= read -r file; do {{.ODINFMT}} -w=true "$file" || exit; done
+  clean:
+    desc: Remove generated binaries
+    cmds:
+      - rm -rf bin
+  build:amd64:
+    deps: [addition:amd64]
+    desc: Cross-build the Intel macOS executable
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build src -target:darwin_amd64 -out:bin/shoji-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-amd64'
+  addition:
+    desc: Build the Dock payload (does not load it)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build src/addition/payload -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - python3 tools/normalize_arm64e_abi.py bin/shoji-sa.dylib
+      - '{{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
+  addition:amd64:
+    desc: Cross-build the Intel Dock payload
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build src/addition/payload -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-sa-amd64.dylib'
+  test:amd64:
+    desc: Run Intel tests (requires Intel macOS or Rosetta)
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} test tests -target:darwin_amd64 -out:bin/shoji-tests-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+  test:tooling:
+    desc: Test service and release tooling without installing a service
+    cmds:
+      - python3 -m unittest discover -s tests -p 'test_*.py'
+  build:universal:
+    deps: [build, build:amd64]
+    desc: Assemble signed Intel and Apple Silicon release binaries on Apple Silicon
+    preconditions:
+      - sh: 'test "$(uname -m)" = arm64'
+        msg: Universal assembly currently requires an Apple Silicon build host
+    cmds:
+      - mkdir -p bin/universal
+      - lipo -create bin/shoji bin/shoji-amd64 -output bin/universal/shoji
+      - lipo -create bin/shoji-sa.dylib bin/shoji-sa-amd64.dylib -output bin/universal/shoji-sa.dylib
+      - cp bin/shoji-loader bin/universal/shoji-loader
+      - '{{.CODESIGN}} --force --sign - bin/universal/shoji'
+      - '{{.CODESIGN}} --force --sign - bin/universal/shoji-sa.dylib'
+  package:
+    deps: [build:universal]
+    desc: Create a relocatable release archive with SHA-256 checksums
+    cmds:
+      - 'python3 tools/package_release.py --version {{.VERSION}}'
+  test:bootstrap:
+    desc: Inspect the bootstraps that get copied into targets for external references
+    deps: [build, build:amd64]
+    cmds:
+      # The arm64 executable always spawns the loader and dead-strips its own
+      # bootstrap section; the amd64 executable and the arm64e loader carry
+      # the live in-process injectors.
+      - python3 tests/check_bootstrap.py bin/shoji-amd64 bin/shoji-loader
+  loader:
+    desc: Build the Odin arm64e Dock loader used by task build on arm64
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build tools/odin-loader -target:darwin_arm64e -target-features:pauth -define:SHOJI_ODIN_LOADER=true -no-thread-local -out:bin/shoji-loader -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - python3 tools/normalize_arm64e_abi.py bin/shoji-loader
+      - '{{.CODESIGN}} --force --sign - bin/shoji-loader'
+  test:loader:
+    desc: Run the arm64e loader's in-process self-test
+    deps: [loader]
+    cmds:
+      - bin/shoji-loader --self-test
