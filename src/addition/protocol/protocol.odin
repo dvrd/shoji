@@ -42,37 +42,37 @@ Status :: enum u8 {
 	Version_Mismatch,
 }
 Packet :: struct {
-	data: [MAX_PACKET]u8,
+	data:  [MAX_PACKET]u8,
 	count: int,
 	valid: bool,
 }
 Reader :: struct {
-	data: []u8,
+	data:   []u8,
 	offset: int,
-	valid: bool,
+	valid:  bool,
 }
 begin :: proc(op: Opcode) -> Packet {p := Packet {
 		count = 3,
 		valid = true,
-	}; p.data[2] = u8(op); return p}
+	};p.data[2] = u8(op);return p}
 pack :: proc(p: ^Packet, value: $T) {
-	if !p.valid || p.count + size_of(T) > MAX_PACKET { p.valid = false; return }
+	if !p.valid || p.count + size_of(T) > MAX_PACKET {p.valid = false;return}
 	value := value
 	copy(p.data[p.count:], (([^]u8)(&value))[:size_of(T)])
 	p.count += size_of(T)
 }
 finish :: proc(p: ^Packet) -> []u8 {
-	if !p.valid { return nil }
-	n := p.count - 2; p.data[0] = u8(n); p.data[1] = u8(n >> 8)
+	if !p.valid {return nil}
+	n := p.count - 2;p.data[0] = u8(n);p.data[1] = u8(n >> 8)
 	return p.data[:p.count]
 }
-reader :: proc(bytes: []u8) -> Reader { return {data = bytes, valid = true} }
+reader :: proc(bytes: []u8) -> Reader {return {data = bytes, valid = true}}
 unpack :: proc(r: ^Reader, $T: typeid) -> (value: T) {
-	if !r.valid || r.offset + size_of(T) > len(r.data) { r.valid = false; return }
+	if !r.valid || r.offset + size_of(T) > len(r.data) {r.valid = false;return}
 	copy(((^[size_of(T)]u8)(&value))[:], r.data[r.offset:r.offset + size_of(T)])
-	r.offset += size_of(T); return
+	r.offset += size_of(T);return
 }
-complete :: proc(r: Reader) -> bool { return r.valid && r.offset == len(r.data) }
+complete :: proc(r: Reader) -> bool {return r.valid && r.offset == len(r.data)}
 expected_size :: proc(op: Opcode) -> int {
 	switch op {
 	case .Handshake:
@@ -97,21 +97,21 @@ expected_size :: proc(op: Opcode) -> int {
 	return -2
 }
 validate :: proc(op: Opcode, data: []u8) -> bool {
-	if u8(op) < 1 || u8(op) > 19 { return false }
+	if u8(op) < 1 || u8(op) > 19 {return false}
 	expected := expected_size(op)
-	if expected >= 0 { return len(data) == expected }
+	if expected >= 0 {return len(data) == expected}
 	r := reader(data)
-	if op == .Window_List_To_Space { unpack(&r, u64) }
+	if op == .Window_List_To_Space {unpack(&r, u64)}
 	count := unpack(&r, i32)
-	if !r.valid || count < 0 || count > MAX_PACKET / 4 { return false }
+	if !r.valid || count < 0 || count > MAX_PACKET / 4 {return false}
 	for _ in 0 ..< count {
 		id := unpack(&r, u32)
-		if (op == .Proxy_In || op == .Proxy_Out) && id != 0 { unpack(&r, u32) }
+		if (op == .Proxy_In || op == .Proxy_Out) && id != 0 {unpack(&r, u32)}
 	}
 	return complete(r)
 }
 handshake :: proc(data: []u8) -> (caps: Capabilities, ok: bool) {
 	at := strings.index_byte(string(data), 0)
-	if at < 0 || string(data[:at]) != VERSION || len(data) != at + 5 { return }
-	r := reader(data[at + 1:]); caps = unpack(&r, Capabilities); ok = complete(r); return
+	if at < 0 || string(data[:at]) != VERSION || len(data) != at + 5 {return}
+	r := reader(data[at + 1:]);caps = unpack(&r, Capabilities);ok = complete(r);return
 }

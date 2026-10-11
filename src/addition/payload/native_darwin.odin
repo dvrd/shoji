@@ -50,28 +50,28 @@ foreign sys {
 	vm_page_size: u64
 	sys_icache_invalidate :: proc(start: rawptr, length: uint) ---
 }
-foreign cg { CGWindowLevelForKey :: proc(key: i32) -> i32 --- }
+foreign cg {CGWindowLevelForKey :: proc(key: i32) -> i32 ---}
 ivar :: proc(object: Object, name: cstring) -> Object {
-	if object == nil { return nil }
+	if object == nil {return nil}
 	value: Object
 	objc.object_getInstanceVariable(objc.id(object), name, rawptr(&value))
 	return value
 }
 set_ivar :: proc(object: Object, name: cstring, value: Object) {
 	old := ivar(object, name)
-	if old == value { return }
-	if value != nil { send(Object, value, "retain") }
+	if old == value {return}
+	if value != nil {send(Object, value, "retain")}
 	objc.object_setInstanceVariable(objc.id(object), name, objc.id(value))
-	if old != nil { send(nil, old, "release") }
+	if old != nil {send(nil, old, "release")}
 }
 array_u64 :: proc(values: []u64) -> m.Ref {
 	refs := make([]m.Ref, len(values), context.temp_allocator)
-	for value, i in values { v := value; refs[i] = m.CFNumberCreate(nil, 4, &v) }
+	for value, i in values {v := value;refs[i] = m.CFNumberCreate(nil, 4, &v)}
 	// NSArray retains each CFNumber before its temporary owning reference is released.
 	retaining := send(Object, objc.Array, "alloc")
 	retaining = send(Object, retaining, "initWithObjects:count:", raw_data(refs), uint(len(refs)))
-	for ref in refs { m.CFRelease(ref) }
+	for ref in refs {m.CFRelease(ref)}
 	return rawptr(retaining)
 }
 
-dispatch_get_main_queue :: proc() -> rawptr { return &_dispatch_main_q }
+dispatch_get_main_queue :: proc() -> rawptr {return &_dispatch_main_q}
