@@ -5,10 +5,10 @@ import "core:strings"
 // Darwin regex_t's public ABI; compiled expressions remain owned by libSystem.
 // Matching uses the same REG_EXTENDED grammar as yabai.
 POSIX_Regex :: struct {
-	magic: i32,
+	magic:          i32,
 	subexpressions: uint,
-	end: cstring,
-	guts: rawptr,
+	end:            cstring,
+	guts:           rawptr,
 }
 foreign import libc "system:c"
 @(default_calling_convention = "c")

@@ -4,58 +4,58 @@ import "core:encoding/json"
 import "core:strings"
 
 Window_JSON :: struct {
-	id: u32,
-	pid: i32,
-	app, title: string,
-	scratchpad: string,
-	frame: Rect,
-	role, subrole: string,
-	display: u32,
-	space: u32,
-	level: int,
-	sub_level: int `json:"sub-level"`,
-	layer: string,
-	sub_layer: string `json:"sub-layer"`,
-	opacity: f64,
-	split_type: string `json:"split-type"`,
-	split_child: string `json:"split-child"`,
-	stack_index: int `json:"stack-index"`,
-	can_move: bool `json:"can-move"`,
-	can_resize: bool `json:"can-resize"`,
-	has_focus: bool `json:"has-focus"`,
-	has_shadow: bool `json:"has-shadow"`,
-	has_parent_zoom: bool `json:"has-parent-zoom"`,
-	has_fullscreen_zoom: bool `json:"has-fullscreen-zoom"`,
-	has_ax_reference: bool `json:"has-ax-reference"`,
+	id:                   u32,
+	pid:                  i32,
+	app, title:           string,
+	scratchpad:           string,
+	frame:                Rect,
+	role, subrole:        string,
+	display:              u32,
+	space:                u32,
+	level:                int,
+	sub_level:            int `json:"sub-level"`,
+	layer:                string,
+	sub_layer:            string `json:"sub-layer"`,
+	opacity:              f64,
+	split_type:           string `json:"split-type"`,
+	split_child:          string `json:"split-child"`,
+	stack_index:          int `json:"stack-index"`,
+	can_move:             bool `json:"can-move"`,
+	can_resize:           bool `json:"can-resize"`,
+	has_focus:            bool `json:"has-focus"`,
+	has_shadow:           bool `json:"has-shadow"`,
+	has_parent_zoom:      bool `json:"has-parent-zoom"`,
+	has_fullscreen_zoom:  bool `json:"has-fullscreen-zoom"`,
+	has_ax_reference:     bool `json:"has-ax-reference"`,
 	is_native_fullscreen: bool `json:"is-native-fullscreen"`,
-	is_visible: bool `json:"is-visible"`,
-	is_minimized: bool `json:"is-minimized"`,
-	is_hidden: bool `json:"is-hidden"`,
-	is_floating: bool `json:"is-floating"`,
-	is_sticky: bool `json:"is-sticky"`,
+	is_visible:           bool `json:"is-visible"`,
+	is_minimized:         bool `json:"is-minimized"`,
+	is_hidden:            bool `json:"is-hidden"`,
+	is_floating:          bool `json:"is-floating"`,
+	is_sticky:            bool `json:"is-sticky"`,
 }
 
 Space_JSON :: struct {
-	id: u64,
-	uuid: string,
-	index: u32,
-	label: string,
-	type: string,
-	display: u32,
-	windows: [dynamic]u32,
-	first_window: u32 `json:"first-window"`,
-	last_window: u32 `json:"last-window"`,
-	has_focus: bool `json:"has-focus"`,
-	is_visible: bool `json:"is-visible"`,
+	id:                   u64,
+	uuid:                 string,
+	index:                u32,
+	label:                string,
+	type:                 string,
+	display:              u32,
+	windows:              [dynamic]u32,
+	first_window:         u32 `json:"first-window"`,
+	last_window:          u32 `json:"last-window"`,
+	has_focus:            bool `json:"has-focus"`,
+	is_visible:           bool `json:"is-visible"`,
 	is_native_fullscreen: bool `json:"is-native-fullscreen"`,
 }
 
 Display_JSON :: struct {
-	id, index: u32,
+	id, index:   u32,
 	label, uuid: string,
-	frame: Rect,
-	spaces: [dynamic]u32,
-	has_focus: bool `json:"has-focus"`,
+	frame:       Rect,
+	spaces:      [dynamic]u32,
+	has_focus:   bool `json:"has-focus"`,
 }
 
 json_text :: proc(value: $T) -> string {
@@ -78,6 +78,9 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 		scratchpad           = w.scratchpad,
 		opacity              = w.opacity,
 		layer                = w.layer,
+		level                = int(w.level),
+		sub_level            = int(w.sub_level),
+		sub_layer            = w.layer,
 		has_focus            = w.focused,
 		has_shadow           = w.shadow,
 		can_move             = w.can_move,
@@ -88,7 +91,7 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 		is_hidden            = w.hidden,
 		is_floating          = w.floating,
 		is_sticky            = w.sticky,
-		is_visible           = !w.hidden && !w.minimized,
+		is_visible           = !w.hidden && !w.minimized && !w.scratchpad_hidden,
 		split_type           = "none",
 		split_child          = "none",
 	}
@@ -156,6 +159,58 @@ sort_ids :: proc(ids: []u32) {
 }
 
 query :: proc(m: ^Manager, args: []string) -> Response {
+	if len(args) < 2 || strings.has_prefix(args[1], "--") {return query_full(m, args)}
+	fields := strings.split(args[1], ",", context.temp_allocator)
+	schema: string
+	switch args[0] {
+	case "--windows":
+		schema = json_text(Window_JSON{})
+	case "--spaces":
+		schema = json_text(Space_JSON{})
+	case "--displays":
+		schema = json_text(Display_JSON{})
+	case:
+		return failure("unknown query")
+	}
+	shape, err := json.parse(schema, allocator = context.temp_allocator)
+	if err != nil {return failure("could not inspect query schema")}
+	object := shape.(json.Object)
+	for field in fields {
+		if _, exists := object[field];
+		   !exists {return failure(errorf("unknown query property '%s'", field))}
+	}
+	clean := make([dynamic]string, 0, len(args) - 1, context.temp_allocator)
+	append(&clean, args[0]);append(&clean, ..args[2:])
+	response := query_full(m, clean[:])
+	if response.failed {return response}
+	value, parse_err := json.parse(
+		response.text,
+		parse_integers = true,
+		allocator = context.temp_allocator,
+	)
+	if parse_err != nil {return failure("could not parse query output")}
+	projected := project_query(value, fields)
+	data, marshal_err := json.unparse(projected, allocator = context.temp_allocator)
+	if marshal_err != nil {return failure("could not encode projected query")}
+	return success(data)
+}
+
+project_query :: proc(value: json.Value, fields: []string) -> json.Value {
+	#partial switch v in value {
+	case json.Object:
+		object := make(json.Object, context.temp_allocator)
+		for field in fields {object[field] = v[field]}
+		return object
+	case json.Array:
+		array := make(json.Array, 0, len(v), context.temp_allocator)
+		for item in v {append(&array, project_query(item, fields))}
+		return array
+	case:
+		return value
+	}
+}
+
+query_full :: proc(m: ^Manager, args: []string) -> Response {
 	if len(args) == 0 {
 		return failure("query expects --windows, --spaces, or --displays")
 	}

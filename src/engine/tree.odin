@@ -32,24 +32,26 @@ Padding :: struct {
 MAX_STACK :: 32
 Node :: struct {
 	parent, left, right, zoom: ^Node,
-	frame: Rect,
-	windows, order: [MAX_STACK]u32,
-	count: int,
-	ratio: f64,
-	split: Split,
-	insert_first: Maybe(bool),
-	insert_stack: bool,
+	frame:                     Rect,
+	windows, order:            [MAX_STACK]u32,
+	count:                     int,
+	ratio:                     f64,
+	split:                     Split,
+	insert_first:              Maybe(bool),
+	insert_stack:              bool,
 }
 
 View :: struct {
-	root: ^Node,
-	layout: Layout,
-	frame: Rect,
-	padding: Padding,
-	gap, ratio: f64,
-	split: Split,
+	root:                                                    ^Node,
+	layout:                                                  Layout,
+	frame:                                                   Rect,
+	padding:                                                 Padding,
+	gap, ratio:                                              f64,
+	split:                                                   Split,
 	padding_enabled, gap_enabled, first_child, auto_balance: bool,
-	insertion: u32,
+	balance_axis:                                            Split,
+	zoom_persist:                                            bool,
+	insertion:                                               u32,
 }
 
 view_init :: proc(v: ^View, frame: Rect, layout: Layout = .BSP) {
@@ -221,10 +223,35 @@ stack_push :: proc(n: ^Node, id: u32) -> bool {
 	return true
 }
 
+Zoom_Record :: struct {
+	window:     u32,
+	fullscreen: bool,
+}
+
+capture_zooms :: proc(v: ^View) -> [dynamic]Zoom_Record {
+	result := make([dynamic]Zoom_Record, context.temp_allocator)
+	if !v.zoom_persist {return result}
+	for n := first(v.root); n != nil; n = next(n) {
+		if n.zoom == nil {continue}
+		for i in 0 ..< n.count {append(&result, Zoom_Record{n.windows[i], n.zoom == v.root})}
+	}
+	return result
+}
+
+restore_zooms :: proc(v: ^View, records: []Zoom_Record) {
+	if !v.zoom_persist {return}
+	for record in records {
+		if n := find(v.root, record.window);
+		   n != nil {n.zoom = record.fullscreen ? v.root : n.parent}
+	}
+}
+
 add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	if id == 0 || find(v.root, id) != nil || v.layout == .Float {
 		return false
 	}
+	zooms := capture_zooms(v)
+	defer restore_zooms(v, zooms[:])
 	n := find(v.root, insertion)
 	if n == nil {
 		n = find(v.root, v.insertion)
@@ -262,7 +289,7 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	n.count = 0
 	n.zoom = nil
 	if v.auto_balance {
-		balance(v.root)
+		balance(v.root, v.balance_axis)
 	}
 	view_update(v)
 	v.insertion = 0
@@ -274,6 +301,8 @@ remove :: proc(v: ^View, id: u32) -> bool {
 	if n == nil {
 		return false
 	}
+	zooms := capture_zooms(v)
+	defer restore_zooms(v, zooms[:])
 	if v.insertion == id {
 		v.insertion = 0
 	}
@@ -306,7 +335,7 @@ remove :: proc(v: ^View, id: u32) -> bool {
 	free(sibling)
 	free(n)
 	if v.auto_balance {
-		balance(v.root)
+		balance(v.root, v.balance_axis)
 	}
 	view_update(v)
 	return true

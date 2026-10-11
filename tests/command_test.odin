@@ -6,12 +6,38 @@ import "core:testing"
 
 Recorder :: struct {
 	actions: [dynamic]e.Action,
-	fail: bool,
+	fail:    bool,
+	fail_at: int,
+	calls:   int,
+}
+
+@(test)
+cross_space_swap_rolls_back_failed_second_move :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r)
+	defer e.manager_destroy(&m);defer delete(r.actions)
+	s := e.add_space(&m, 200, 10, 2, {0, 0, 1000, 800})
+	e.add_window(
+		&m,
+		e.Window {
+			id = 3,
+			role = "AXWindow",
+			subrole = "AXStandardWindow",
+			space = 200,
+			display = 10,
+		},
+	)
+	r.fail_at = 2
+	testing.expect(t, e.execute(&m, []string{"window", "1", "--swap", "3"}).failed)
+	testing.expect_value(t, m.windows[1].space, u64(100))
+	testing.expect_value(t, m.windows[3].space, u64(200))
+	testing.expect(t, e.find(s.view.root, 3) != nil && e.find(s.view.root, 1) == nil)
+	testing.expect_value(t, r.actions[len(r.actions) - 1].space, u64(100))
 }
 
 record :: proc(user: rawptr, a: e.Action) -> string {
 	r := (^Recorder)(user)
-	if r.fail {
+	r.calls += 1
+	if r.fail || (r.fail_at > 0 && r.calls == r.fail_at) {
 		return "injected backend error"
 	}
 	append(&r.actions, a)
@@ -82,6 +108,42 @@ config_and_layout_transitions :: proc(t: ^testing.T) {
 	testing.expect(t, !e.execute(&m, []string{"space", "--layout", "bsp"}).failed)
 	testing.expect(t, e.find(s.view.root, 1) != nil && e.find(s.view.root, 2) != nil)
 }
+
+@(test)
+global_configuration_preserves_explicit_space_settings :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r)
+	defer e.manager_destroy(&m);defer delete(r.actions)
+	testing.expect(
+		t,
+		!e.execute(&m, []string{"config", "--space", "1", "window_gap", "12"}).failed,
+	)
+	testing.expect(t, !e.execute(&m, []string{"config", "window_gap", "24"}).failed)
+	testing.expect_value(t, e.space_by_id(&m, 100).view.gap, f64(12))
+	s := e.add_space(&m, 200, 10, 2, {0, 0, 1000, 800})
+	testing.expect_value(t, s.view.gap, f64(24))
+	testing.expect(t, !e.execute(&m, []string{"space", "1", "--layout", "stack"}).failed)
+	testing.expect(t, !e.execute(&m, []string{"config", "layout", "float"}).failed)
+	testing.expect_value(t, e.space_by_id(&m, 100).view.layout, e.Layout.Stack)
+	testing.expect_value(t, s.view.layout, e.Layout.Float)
+	bad := e.execute(&m, []string{"config", "--space", "1", "split_ratio", "NaN"})
+	testing.expect(t, bad.failed)
+	testing.expect(t, !e.space_by_id(&m, 100).overrides["split_ratio"])
+}
+@(test)
+window_opacity_configuration_updates_focus_states :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
+	testing.expect(t, !e.execute(&m, []string{"config", "normal_window_opacity", "0.7"}).failed)
+	testing.expect(t, !e.execute(&m, []string{"config", "window_opacity", "on"}).failed)
+	testing.expect_value(t, m.windows[1].opacity, f64(1))
+	testing.expect_value(t, m.windows[2].opacity, f64(0.7))
+	testing.expect(t, !e.execute(&m, []string{"window", "--focus", "2"}).failed)
+	testing.expect_value(t, m.windows[1].opacity, f64(0.7))
+	testing.expect_value(t, m.windows[2].opacity, f64(1))
+	testing.expect(t, !e.execute(&m, []string{"config", "window_opacity", "off"}).failed)
+	testing.expect_value(t, m.windows[1].opacity, f64(1))
+	testing.expect_value(t, m.windows[2].opacity, f64(1))
+	testing.expect(t, e.execute(&m, []string{"config", "active_window_opacity", "2"}).failed)
+}
 @(test)
 commands_propagate_backend_failures :: proc(t: ^testing.T) {
 	m: e.Manager
@@ -120,6 +182,96 @@ query_json_escapes_text_and_filters :: proc(t: ^testing.T) {
 	testing.expect(t, e.execute(&m, []string{"query", "--windows", "--window", "999"}).failed)
 	testing.expect(t, e.execute(&m, []string{"query", "--windows", "bogus"}).failed)
 }
+
+@(test)
+query_projection_validates_fields_and_retains_array_shape :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r)
+	defer e.manager_destroy(&m);defer delete(r.actions)
+	response := e.execute(&m, []string{"query", "--windows", "id,title", "--window", "2"})
+	testing.expect(t, !response.failed)
+	value, err := json.parse(response.text, allocator = context.temp_allocator)
+	testing.expect(t, err == nil)
+	object := value.(json.Object)
+	testing.expect_value(t, len(object), 2)
+	testing.expect_value(t, object["title"].(string), m.windows[2].title)
+	response = e.execute(&m, []string{"query", "--windows", "id"})
+	value, err = json.parse(response.text, allocator = context.temp_allocator)
+	testing.expect(t, err == nil)
+	testing.expect_value(t, len(value.(json.Array)), 2)
+	testing.expect(t, e.execute(&m, []string{"query", "--windows", "no-such-property"}).failed)
+}
+
+@(test)
+rule_effects_apply_and_invalid_values_are_rejected :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r)
+	defer e.manager_destroy(&m);defer delete(r.actions)
+	testing.expect(
+		t,
+		!e.execute(&m, []string{"rule", "--apply", "app=^Terminal$", "manage=off", "opacity=0.5", "sticky=on", "sub-layer=above", "grid=1:2:0:0:1:1", "scratchpad=terminal", "mouse_follows_focus=on"}).failed,
+	)
+	w := m.windows[1]
+	testing.expect_value(t, w.opacity, f64(0.5))
+	testing.expect(t, w.sticky && w.floating)
+	testing.expect_value(t, w.scratchpad, "terminal")
+	testing.expect_value(t, w.frame, e.Rect{0, 0, 500, 800})
+	testing.expect_value(t, w.layer, "above")
+	testing.expect(t, e.execute(&m, []string{"rule", "--add", "opacity=NaN"}).failed)
+	testing.expect(t, e.execute(&m, []string{"rule", "--add", "grid=1:0:0:0:1:1"}).failed)
+	// Rule effects propagate transport errors to the command client.
+	r.fail = true
+	testing.expect(t, e.execute(&m, []string{"rule", "--apply", "sticky=off"}).failed)
+}
+
+@(test)
+directional_auto_balance_and_opacity_duration_are_configurable :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r)
+	defer e.manager_destroy(&m);defer delete(r.actions)
+	testing.expect(t, !e.execute(&m, []string{"config", "auto_balance", "x-axis"}).failed)
+	testing.expect_value(t, e.config(&m, []string{"auto_balance"}).text, "x-axis")
+	testing.expect_value(t, e.space_by_id(&m, 100).view.balance_axis, e.Split.Horizontal)
+	testing.expect(t, !e.execute(&m, []string{"config", "window_opacity_duration", "0.25"}).failed)
+	testing.expect(t, !e.execute(&m, []string{"config", "window_opacity", "on"}).failed)
+	fades := 0
+	for action in r.actions {
+		if action.kind == .Opacity {fades += 1;testing.expect_value(t, action.duration, f64(0.25))}
+	}
+	testing.expect_value(t, fades, 2)
+}
+
+@(test)
+insert_toggle_and_stack_direction_follow_command_contract :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r)
+	defer e.manager_destroy(&m);defer delete(r.actions)
+	s := e.space_by_id(&m, 100)
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--insert", "west"}).failed)
+	testing.expect_value(t, s.view.insertion, u32(1))
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--insert", "west"}).failed)
+	testing.expect_value(t, s.view.insertion, u32(0))
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--stack", "2"}).failed)
+	n := e.find(s.view.root, 1)
+	testing.expect_value(t, n.windows[0], u32(1))
+	testing.expect_value(t, n.windows[1], u32(2))
+}
+
+@(test)
+rule_reapply_ignores_one_shots_and_supports_inline_properties :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r)
+	defer e.manager_destroy(&m);defer delete(r.actions)
+	testing.expect(
+		t,
+		!e.execute(&m, []string{"rule", "--add", "one-shot=on", "manage=off"}).failed,
+	)
+	testing.expect(t, !e.execute(&m, []string{"rule", "--apply"}).failed)
+	testing.expect(t, !m.windows[1].floating)
+	testing.expect_value(t, len(m.rules), 1)
+	testing.expect(
+		t,
+		!e.execute(&m, []string{"rule", "--apply", "app=^Terminal$", "manage=off"}).failed,
+	)
+	testing.expect(t, m.windows[1].floating)
+	testing.expect(t, !m.windows[2].floating)
+	testing.expect_value(t, len(m.rules), 1)
+}
 @(test)
 rule_exclusion_and_one_shot :: proc(t: ^testing.T) {
 	m: e.Manager
@@ -152,6 +304,26 @@ rule_exclusion_and_one_shot :: proc(t: ^testing.T) {
 	)
 	testing.expect(t, !e.execute(&m, []string{"signal", "--remove", "test"}).failed)
 	testing.expect_value(t, len(m.signals), 0)
+}
+@(test)
+rule_apply_can_target_one_rule :: proc(t: ^testing.T) {
+	m: e.Manager
+	r: Recorder
+	fixture(&m, &r)
+	defer e.manager_destroy(&m)
+	defer delete(r.actions)
+	testing.expect(
+		t,
+		!e.execute(&m, []string{"rule", "--add", "label=editor", "app=^Editor$", "manage=off"}).failed,
+	)
+	testing.expect(t, !e.execute(&m, []string{"rule", "--apply", "editor"}).failed)
+	testing.expect(t, !m.windows[1].floating)
+	testing.expect(t, m.windows[2].floating)
+	s := e.space_by_id(&m, 100)
+	testing.expect(t, e.find(s.view.root, 1) != nil)
+	testing.expect(t, e.find(s.view.root, 2) == nil)
+	testing.expect(t, e.execute(&m, []string{"rule", "--apply", "999"}).failed)
+	testing.expect(t, e.execute(&m, []string{"rule", "--apply", "1", "2"}).failed)
 }
 @(test)
 invalid_commands_do_not_panic :: proc(t: ^testing.T) {
@@ -193,6 +365,80 @@ stack_swap_warp_keep_unique_ids :: proc(t: ^testing.T) {
 }
 
 @(test)
+cross_space_swap_and_warp_update_both_views :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
+	append(
+		&m.displays,
+		e.Display {
+			id = 20,
+			index = 2,
+			frame = {1000, 0, 1000, 800},
+			usable = {1000, 0, 1000, 800},
+			active_space = 200,
+		},
+	)
+	e.add_space(&m, 200, 20, 2, {1000, 0, 1000, 800})
+	e.add_window(
+		&m,
+		e.Window {
+			id = 3,
+			app = "Browser",
+			role = "AXWindow",
+			subrole = "AXStandardWindow",
+			space = 200,
+			display = 20,
+		},
+	)
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--swap", "3"}).failed)
+	testing.expect_value(t, m.windows[1].space, u64(200))
+	testing.expect_value(t, m.windows[3].space, u64(100))
+	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 3) != nil)
+	testing.expect(t, e.find(e.space_by_id(&m, 200).view.root, 1) != nil)
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--warp", "3"}).failed)
+	testing.expect_value(t, m.windows[1].space, u64(100))
+	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 3) != nil)
+	testing.expect(t, e.find(e.space_by_id(&m, 200).view.root, 1) == nil)
+	// Two actions for a swap and one for a warp are sent through the payload backend.
+	// Frame actions from flushing the affected BSP views are intentionally separate.
+	space_actions := 0
+	for action in r.actions {
+		if action.kind == .Space {space_actions += 1}
+	}
+	testing.expect_value(t, space_actions, 3)
+}
+
+@(test)
+directional_display_selection_focuses_the_matching_active_space :: proc(t: ^testing.T) {
+	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
+	append(
+		&m.displays,
+		e.Display {
+			id = 20,
+			index = 2,
+			frame = {1000, 0, 1000, 800},
+			usable = {1000, 0, 1000, 800},
+			active_space = 200,
+		},
+	)
+	e.add_space(&m, 200, 20, 2, {1000, 0, 1000, 800})
+	append(
+		&m.displays,
+		e.Display {
+			id = 30,
+			index = 3,
+			frame = {0, -800, 1000, 800},
+			usable = {0, -800, 1000, 800},
+			active_space = 300,
+		},
+	)
+	e.add_space(&m, 300, 30, 3, {0, -800, 1000, 800})
+	testing.expect(t, !e.execute(&m, []string{"display", "--focus", "east"}).failed)
+	testing.expect_value(t, r.actions[len(r.actions) - 1].space, u64(200))
+	testing.expect(t, !e.execute(&m, []string{"display", "--focus", "north"}).failed)
+	testing.expect_value(t, r.actions[len(r.actions) - 1].space, u64(300))
+}
+
+@(test)
 unchanged_layout_does_not_repeat_accessibility_writes :: proc(t: ^testing.T) {
 	m: e.Manager
 	r: Recorder
@@ -219,16 +465,16 @@ rules_use_posix_character_classes :: proc(t: ^testing.T) {
 
 @(test)
 window_order_and_pip_dispatch_correct_payload_arguments :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; fixture(&m, &r); defer e.manager_destroy(&m); defer delete(r.actions)
+	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
 	testing.expect(t, !e.window_command(&m, []string{"1", "--raise", "2"}).failed)
 	a := r.actions[len(r.actions) - 1]
 	testing.expect_value(t, a.kind, e.Action_Kind.Order)
-	testing.expect_value(t, a.relative, u32(2)); testing.expect_value(t, a.value, f64(1))
+	testing.expect_value(t, a.relative, u32(2));testing.expect_value(t, a.value, f64(1))
 	testing.expect(t, !e.window_command(&m, []string{"1", "--lower"}).failed)
 	a = r.actions[len(r.actions) - 1]
-	testing.expect_value(t, a.relative, u32(0)); testing.expect_value(t, a.value, f64(-1))
+	testing.expect_value(t, a.relative, u32(0));testing.expect_value(t, a.value, f64(-1))
 	testing.expect(t, e.window_command(&m, []string{"1", "--raise", "1"}).failed)
-	s := e.space_by_id(&m, 100); s.view.padding = {10, 20, 30, 40}
+	s := e.space_by_id(&m, 100);s.view.padding = {10, 20, 30, 40}
 	testing.expect(t, !e.window_command(&m, []string{"1", "--toggle", "pip"}).failed)
 	a = r.actions[len(r.actions) - 1]
 	testing.expect_value(t, a.kind, e.Action_Kind.Scale)
@@ -236,7 +482,7 @@ window_order_and_pip_dispatch_correct_payload_arguments :: proc(t: ^testing.T) {
 }
 @(test)
 window_appearance_toggles_commit_only_after_backend_success :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; fixture(&m, &r); defer e.manager_destroy(&m); defer delete(r.actions)
+	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
 	w := m.windows[1]
 	testing.expect(t, !e.window_command(&m, []string{"1", "--toggle", "sticky"}).failed)
 	testing.expect(t, w.sticky)
@@ -257,8 +503,8 @@ window_appearance_toggles_commit_only_after_backend_success :: proc(t: ^testing.
 
 @(test)
 window_family_and_area_selectors_follow_tree_structure :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; fixture(&m, &r); defer e.manager_destroy(&m); defer delete(r.actions)
-	s := e.space_by_id(&m, 100); e.flush(&m, s)
+	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
+	s := e.space_by_id(&m, 100);e.flush(&m, s)
 	testing.expect_value(t, e.select_window(&m, "sibling", 1).id, u32(2))
 	testing.expect(t, e.select_window(&m, "uncle", 1) == nil)
 	// Splitting the sibling makes it an internal node, so sibling must not
@@ -273,7 +519,7 @@ window_family_and_area_selectors_follow_tree_structure :: proc(t: ^testing.T) {
 			floating = true,
 		},
 	)
-	w.floating = false; e.add(&s.view, 3, 2); e.flush(&m, s)
+	w.floating = false;e.add(&s.view, 3, 2);e.flush(&m, s)
 	testing.expect(t, e.select_window(&m, "sibling", 1) == nil)
 	testing.expect_value(t, e.select_window(&m, "first_nephew", 1).id, u32(2))
 	testing.expect_value(t, e.select_window(&m, "second_nephew", 1).id, u32(3))
