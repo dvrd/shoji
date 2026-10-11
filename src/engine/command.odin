@@ -5,7 +5,7 @@ import "core:strconv"
 import "core:strings"
 
 Response :: struct {
-	text: string,
+	text:   string,
 	failed: bool,
 }
 
@@ -61,6 +61,8 @@ parse_numbers :: proc(text: string, values: []f64) -> bool {
 }
 
 select_display :: proc(m: ^Manager, text: string) -> ^Display {
+	if text == "recent" {return display_by_id(m, m.last_display)}
+	if text == "mouse" {return display_by_id(m, m.mouse_display)}
 	current := space_by_id(m, m.active_space)
 	if text == "" {
 		if current != nil {
@@ -73,6 +75,35 @@ select_display :: proc(m: ^Manager, text: string) -> ^Display {
 	}
 	if text == "last" && len(m.displays) > 0 {
 		return &m.displays[len(m.displays) - 1]
+	}
+	if current != nil && (text == "north" || text == "east" || text == "south" || text == "west") {
+		origin := display_by_id(m, current.display)
+		if origin == nil {return nil}
+		ox, oy := origin.frame.x + origin.frame.w / 2, origin.frame.y + origin.frame.h / 2
+		best: ^Display
+		best_score := math.inf_f64(1)
+		for &candidate in m.displays {
+			if candidate.id == origin.id {continue}
+			x := candidate.frame.x + candidate.frame.w / 2 - ox
+			y := candidate.frame.y + candidate.frame.h / 2 - oy
+			major, minor: f64
+			switch text {
+			case "north":
+				major, minor = -y, x
+			case "east":
+				major, minor = x, y
+			case "south":
+				major, minor = y, x
+			case "west":
+				major, minor = -x, y
+			}
+			if major <= 0 {continue}
+			// Prefer the closest display in the requested direction, then the
+			// one most aligned with that direction.
+			score := major * 10000 + math.abs(minor)
+			if score < best_score {best, best_score = &candidate, score}
+		}
+		return best
 	}
 	number, numeric := strconv.parse_u64(text)
 	for &d, i in m.displays {

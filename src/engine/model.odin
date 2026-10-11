@@ -6,36 +6,43 @@ import "core:strconv"
 import "core:strings"
 
 Window :: struct {
-	can_move, can_resize: bool,
-	manage_override: Maybe(bool),
-	id: u32,
-	pid: i32,
-	app, title, role, subrole: string,
-	frame: Rect,
-	display: u32,
-	space: u64,
+	windowed_frame:                                           Maybe(Rect),
+	can_move, can_resize:                                     bool,
+	manage_override:                                          Maybe(bool),
+	id:                                                       u32,
+	pid:                                                      i32,
+	app, title, role, subrole:                                string,
+	frame:                                                    Rect,
+	level, sub_level:                                         i32,
+	display:                                                  u32,
+	space:                                                    u64,
 	focused, floating, minimized, hidden, fullscreen, sticky: bool,
-	shadow: bool,
-	opacity: f64,
-	layer: string,
-	scratchpad: string,
+	shadow:                                                   bool,
+	opacity:                                                  f64,
+	opacity_override, scratchpad_hidden:                      bool,
+	layer_override:                                           bool,
+	mouse_follows_focus:                                      Maybe(bool),
+	layer:                                                    string,
+	scratchpad:                                               string,
 }
 
 Display :: struct {
-	id, index: u32,
-	uuid: string,
+	id, index:     u32,
+	native_index:  u32,
+	uuid:          string,
 	frame, usable: Rect,
-	spaces: [dynamic]u64,
-	active_space: u64,
-	label: string,
+	spaces:        [dynamic]u64,
+	active_space:  u64,
+	label:         string,
 }
 
 Space :: struct {
-	id: u64,
-	index, display: u32,
-	uuid, label: string,
+	id:                  u64,
+	index, display:      u32,
+	uuid, label:         string,
 	visible, fullscreen: bool,
-	view: View,
+	view:                View,
+	overrides:           map[string]bool,
 }
 
 Action_Kind :: enum {
@@ -46,6 +53,7 @@ Action_Kind :: enum {
 	Minimize,
 	Deminimize,
 	Fullscreen,
+	Expose,
 	Space,
 	Opacity,
 	Layer,
@@ -60,41 +68,86 @@ Action_Kind :: enum {
 }
 
 Action :: struct {
-	kind: Action_Kind,
-	window, relative: u32,
+	kind:               Action_Kind,
+	window, relative:   u32,
 	space, destination: u64,
-	frame: Rect,
-	value: f64,
-	flag: bool,
+	frame:              Rect,
+	value:              f64,
+	duration:           f64,
+	flag:               bool,
 }
 
 Backend :: proc(user: rawptr, action: Action) -> string
 Manager :: struct {
-	mouse: Mouse_Config,
-	windows: map[u32]^Window,
-	spaces: [dynamic]^Space,
-	displays: [dynamic]Display,
-	focused, last_focused: u32,
-	active_space, last_space: u64,
-	default_layout: Layout,
-	padding: Padding,
-	gap, ratio: f64,
-	split: Split,
-	first_child, auto_balance: bool,
-	backend: Backend,
-	backend_user: rawptr,
-	rules: [dynamic]Rule,
-	signals: [dynamic]Signal,
+	feedback_color:                            u32,
+	main_display:                              u32,
+	display_order:                             enum {
+		Default,
+		Vertical,
+		Horizontal,
+	},
+	origin_display:                            enum {
+		Default,
+		Focused,
+		Cursor,
+	},
+	external_bar:                              enum {
+		Off,
+		Main,
+		All,
+	},
+	bar_top, bar_bottom:                       f64,
+	shadow_mode:                               enum {
+		On,
+		Off,
+		Float,
+	},
+	shadow_configured:                         bool,
+	suspended:                                 bool,
+	gesture_active:                            bool,
+	mouse:                                     Mouse_Config,
+	windows:                                   map[u32]^Window,
+	spaces:                                    [dynamic]^Space,
+	displays:                                  [dynamic]Display,
+	focused, last_focused:                     u32,
+	active_space, last_space:                  u64,
+	last_display, mouse_window, mouse_display: u32,
+	default_layout:                            Layout,
+	padding:                                   Padding,
+	gap, ratio:                                f64,
+	opacity_duration:                          f64,
+	animation_duration:                        f64,
+	animation_easing:                          Easing,
+	balance_axis:                              Split,
+	active_opacity, normal_opacity:            f64,
+	window_opacity:                            bool,
+	split:                                     Split,
+	first_child, auto_balance:                 bool,
+	zoom_persist:                              bool,
+	insertion_point:                           enum {
+		Focused,
+		First,
+		Last,
+	},
+	backend:                                   Backend,
+	backend_user:                              rawptr,
+	rules:                                     [dynamic]Rule,
+	signals:                                   [dynamic]Signal,
 }
 
 manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
 	m^ = Manager {
-		mouse          = mouse_defaults(),
-		windows        = make(map[u32]^Window),
-		ratio          = 0.5,
-		default_layout = .Float,
-		backend        = backend,
-		backend_user   = user,
+		feedback_color   = 0xffd75f5f,
+		mouse            = mouse_defaults(),
+		windows          = make(map[u32]^Window),
+		ratio            = 0.5,
+		active_opacity   = 1.0,
+		normal_opacity   = 1.0,
+		default_layout   = .Float,
+		zoom_persist     = true,
+		animation_easing = .Out_Circ,
+		backend          = backend,
+		backend_user     = user,
 	}
 }
 
@@ -114,6 +167,7 @@ manager_destroy :: proc(m: ^Manager) {
 	delete(m.windows)
 	for s in m.spaces {
 		view_destroy(&s.view)
+		delete(s.overrides)
 		delete(s.uuid)
 		delete(s.label)
 		free(s)
@@ -155,6 +209,7 @@ display_by_id :: proc(m: ^Manager, id: u32) -> ^Display {
 
 add_space :: proc(m: ^Manager, id: u64, display, index: u32, frame: Rect) -> ^Space {
 	s := new(Space)
+	s.overrides = make(map[string]bool)
 	s.id = id
 	s.display = display
 	s.index = index
@@ -164,8 +219,11 @@ add_space :: proc(m: ^Manager, id: u64, display, index: u32, frame: Rect) -> ^Sp
 	s.view.ratio = m.ratio
 	s.view.split = m.split
 	s.view.auto_balance = m.auto_balance
+	s.view.balance_axis = m.balance_axis
 	s.view.first_child = m.first_child
+	s.view.zoom_persist = m.zoom_persist
 	append(&m.spaces, s)
+	if d := display_by_id(m, display); d != nil {s.view.frame = usable_frame(m, d)}
 	return s
 }
 
@@ -191,9 +249,24 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 	w.subrole = strings.clone(window.subrole)
 	w.scratchpad = strings.clone(window.scratchpad)
 	m.windows[w.id] = w
+	if m.origin_display != .Default && managed(w) {
+		d :=
+			m.origin_display == .Focused \
+			? select_display(m, "") \
+			: display_by_id(m, m.mouse_display)
+		if d != nil && d.active_space != w.space {
+			if err := perform(m, {kind = .Space, window = w.id, space = d.active_space});
+			   err == "" {w.space, w.display = d.active_space, d.id}
+		}
+	}
 	apply_rules(m, w)
 	if s := space_by_id(m, w.space); s != nil && managed(w) {
-		add(&s.view, w.id, m.focused)
+		insertion := m.focused
+		if m.insertion_point != .Focused {
+			n := m.insertion_point == .First ? first(s.view.root) : last(s.view.root)
+			if n != nil && n.count > 0 {insertion = n.order[0]}
+		}
+		add(&s.view, w.id, insertion)
 	}
 	return w
 }
@@ -235,11 +308,13 @@ perform :: proc(m: ^Manager, a: Action) -> string {
 	if m.backend == nil {
 		return "no macOS backend is attached"
 	}
+	a := a
+	if a.kind == .Frame {a.duration = m.animation_duration}
 	return m.backend(m.backend_user, a)
 }
 
 flush :: proc(m: ^Manager, s: ^Space) -> string {
-	if s == nil || s.view.layout == .Float {
+	if m.suspended || m.gesture_active || s == nil || s.view.layout == .Float {
 		return ""
 	}
 	view_update(&s.view)
@@ -249,6 +324,7 @@ flush :: proc(m: ^Manager, s: ^Space) -> string {
 			if w == nil {
 				continue
 			}
+			if w.windowed_frame != nil {continue}
 			r := frame_for(n)
 			if math.abs(w.frame.x - r.x) < 1.5 &&
 			   math.abs(w.frame.y - r.y) < 1.5 &&
@@ -266,6 +342,8 @@ flush :: proc(m: ^Manager, s: ^Space) -> string {
 }
 
 select_space :: proc(m: ^Manager, text: string) -> ^Space {
+	if text ==
+	   "mouse" {if d := display_by_id(m, m.mouse_display); d != nil {return space_by_id(m, d.active_space)};return nil}
 	if text == "" {
 		return space_by_id(m, m.active_space)
 	}
@@ -300,6 +378,7 @@ select_space :: proc(m: ^Manager, text: string) -> ^Space {
 }
 
 select_window :: proc(m: ^Manager, text: string, reference: u32 = 0) -> ^Window {
+	if text == "mouse" {return m.windows[m.mouse_window]}
 	reference := reference
 	if reference == 0 {
 		reference = m.focused
@@ -315,16 +394,18 @@ select_window :: proc(m: ^Manager, text: string, reference: u32 = 0) -> ^Window 
 	}
 	if text == "largest" || text == "smallest" {
 		active := space_by_id(m, m.active_space)
-		if active == nil { return nil }
+		if active == nil {return nil}
 		best: ^Node
 		best_area: f64
 		for candidate := first(active.view.root); candidate != nil; candidate = next(candidate) {
-			if candidate.count == 0 { continue }
+			if candidate.count == 0 {continue}
 			area := math.floor(candidate.frame.w * candidate.frame.h)
 			if best == nil ||
-			   (text == "largest" ? area > best_area : area <= best_area) { best = candidate; best_area = area }
+			   (text == "largest" \
+					   ? area > best_area \
+					   : area <= best_area) {best = candidate;best_area = area}
 		}
-		if best != nil { return m.windows[best.order[0]] }
+		if best != nil {return m.windows[best.order[0]]}
 		return nil
 	}
 	w := m.windows[reference]
@@ -357,16 +438,16 @@ select_window :: proc(m: ^Manager, text: string, reference: u32 = 0) -> ^Window 
 	case "sibling", "first_nephew", "second_nephew", "uncle", "first_cousin", "second_cousin":
 		branch := n
 		if text == "uncle" || text == "first_cousin" || text == "second_cousin" {
-			if branch == nil { return nil }; branch = branch.parent
+			if branch == nil {return nil};branch = branch.parent
 		}
-		if branch == nil || branch.parent == nil { return nil }
+		if branch == nil || branch.parent == nil {return nil}
 		target = branch.parent.left == branch ? branch.parent.right : branch.parent.left
 		if text == "first_nephew" || text == "first_cousin" {
-			if target == nil { return nil }; target = target.left
+			if target == nil {return nil};target = target.left
 		} else if text == "second_nephew" || text == "second_cousin" {
-			if target == nil { return nil }; target = target.right
+			if target == nil {return nil};target = target.right
 		}
-		if target != nil && !leaf(target) { return nil }
+		if target != nil && !leaf(target) {return nil}
 	case "stack.first":
 		if n != nil && n.count > 0 {
 			return m.windows[n.windows[0]]
@@ -392,7 +473,7 @@ select_window :: proc(m: ^Manager, text: string, reference: u32 = 0) -> ^Window 
 	}
 	if n != nil && strings.has_prefix(text, "stack.") {
 		index, ok := strconv.parse_int(text[len("stack."):])
-		if ok && index > 0 && index <= n.count { return m.windows[n.windows[index - 1]] }
+		if ok && index > 0 && index <= n.count {return m.windows[n.windows[index - 1]]}
 	}
 	if target != nil && target.count > 0 {
 		return m.windows[target.order[0]]
@@ -404,6 +485,8 @@ set_layout :: proc(m: ^Manager, s: ^Space, layout: Layout) {
 	if s.view.layout == layout {
 		return
 	}
+	zooms := capture_zooms(&s.view)
+	defer restore_zooms(&s.view, zooms[:])
 	s.view.layout = layout
 	node_destroy(s.view.root)
 	s.view.root = new(Node)

@@ -1,31 +1,37 @@
 package engine
 
+import "core:fmt"
+import "core:math"
 import "core:strconv"
 import "core:strings"
 
 Filter :: struct {
-	pattern: string,
-	expression: POSIX_Regex,
+	pattern:          string,
+	expression:       POSIX_Regex,
 	enabled, exclude: bool,
 }
 
 Rule :: struct {
-	label: string,
-	app, title, role, subrole: Filter,
-	manage: Maybe(bool),
-	space: string,
-	one_shot: bool,
+	label:                                          string,
+	app, title, role, subrole:                      Filter,
+	manage:                                         Maybe(bool),
+	space:                                          string,
+	display, grid, scratchpad, sub_layer:           string,
+	opacity:                                        Maybe(f64),
+	sticky, native_fullscreen, mouse_follows_focus: Maybe(bool),
+	one_shot:                                       bool,
 }
 
 Signal :: struct {
 	label, event, action: string,
-	active: Maybe(bool),
-	app, title: Filter,
+	active:               Maybe(bool),
+	app, title:           Filter,
 }
 
 rule_destroy :: proc(r: ^Rule) {
 	delete(r.label)
 	delete(r.space)
+	delete(r.display);delete(r.grid);delete(r.scratchpad);delete(r.sub_layer)
 	filter_destroy(&r.app)
 	filter_destroy(&r.title)
 	filter_destroy(&r.role)
@@ -49,10 +55,15 @@ rule_matches :: proc(r: Rule, w: ^Window) -> bool {
 	)
 }
 
-apply_rules :: proc(m: ^Manager, w: ^Window) {
+apply_rules :: proc(
+	m: ^Manager,
+	w: ^Window,
+	existing: bool = false,
+	selected: int = -1,
+) -> string {
 	for i := 0; i < len(m.rules); {
 		r := &m.rules[i]
-		if !rule_matches(r^, w) {
+		if (existing && r.one_shot) || (selected >= 0 && i != selected) || !rule_matches(r^, w) {
 			i += 1
 			continue
 		}
@@ -60,14 +71,7 @@ apply_rules :: proc(m: ^Manager, w: ^Window) {
 			w.floating = !enabled
 			w.manage_override = enabled
 		}
-		if r.space != "" {
-			if s := select_space(m, r.space); s != nil {
-				if perform(m, Action{kind = .Space, window = w.id, space = s.id}) == "" {
-					w.space = s.id
-					w.display = s.display
-				}
-			}
-		}
+		if err := apply_rule_effects(m, w, r^); err != "" {return err}
 		if r.one_shot {
 			rule_destroy(r)
 			ordered_remove(&m.rules, i)
@@ -75,6 +79,55 @@ apply_rules :: proc(m: ^Manager, w: ^Window) {
 			i += 1
 		}
 	}
+	return ""
+}
+
+apply_rule_effects :: proc(m: ^Manager, w: ^Window, r: Rule) -> string {
+	selector := fmt.tprintf("%d", w.id)
+	target: ^Space
+	follow := false
+	if r.space != "" {
+		text := r.space;follow = strings.has_prefix(text, "^");if follow {text = text[1:]}
+		target = select_space(m, text)
+	} else if r.display != "" {
+		text := r.display;follow = strings.has_prefix(text, "^");if follow {text = text[1:]}
+		if d := select_display(m, text); d != nil {target = space_by_id(m, d.active_space)}
+	}
+	if r.space != "" || r.display != "" {
+		if target == nil {return "rule destination could not be located"}
+		if err := perform(m, {kind = .Space, window = w.id, space = target.id});
+		   err != "" {return err}
+		w.space, w.display = target.id, target.display
+		if follow {if err := perform(m, {kind = .Space_Focus, space = target.id}); err != "" {return err}}
+	}
+	if value, ok := r.sticky.?; ok {
+		if err := perform(m, {kind = .Sticky, window = w.id, flag = value}); err != "" {return err}
+		w.sticky = value
+	}
+	if value, ok := r.opacity.?; ok {
+		if response := window_command(
+			m,
+			[]string{selector, "--opacity", fmt.tprintf("%v", value)},
+		); response.failed {return response.text}
+	}
+	if r.sub_layer != "" {
+		if response := window_command(m, []string{selector, "--sub-layer", r.sub_layer});
+		   response.failed {return response.text}
+	}
+	if r.scratchpad != "" && scratchpad_by_label(m, r.scratchpad) == nil {
+		if err := scratchpad_assign(m, w, r.scratchpad); err != "" {return err}
+	}
+	if r.grid != "" {
+		if response := window_command(m, []string{selector, "--grid", r.grid});
+		   response.failed {return response.text}
+	}
+	if value, ok := r.native_fullscreen.?; ok {
+		if err := perform(m, {kind = .Fullscreen, window = w.id, flag = value});
+		   err != "" {return err}
+		w.fullscreen = value
+	}
+	if value, ok := r.mouse_follows_focus.?; ok {w.mouse_follows_focus = value}
+	return ""
 }
 
 assignment :: proc(arg: string) -> (key, value: string, exclude, ok: bool) {
@@ -93,6 +146,7 @@ assignment :: proc(arg: string) -> (key, value: string, exclude, ok: bool) {
 
 parse_rule :: proc(args: []string) -> (rule: Rule, err: string) {
 	for arg in args {
+		if arg == "--one-shot" {rule.one_shot = true;continue}
 		key, value, exclude, ok := assignment(arg)
 		if !ok {
 			err = "expected key=value"
@@ -114,6 +168,47 @@ parse_rule :: proc(args: []string) -> (rule: Rule, err: string) {
 		case "space":
 			delete(rule.space)
 			rule.space = strings.clone(value)
+		case "display", "grid", "scratchpad", "sub-layer":
+			p := &rule.display
+			switch key {
+			case "grid":
+				p = &rule.grid
+			case "scratchpad":
+				p = &rule.scratchpad
+			case "sub-layer":
+				p = &rule.sub_layer
+			}
+			delete(p^);p^ = strings.clone(value)
+			if key == "sub-layer" &&
+			   value != "below" &&
+			   value != "normal" &&
+			   value != "above" &&
+			   value != "auto" {err = "invalid rule sub-layer"}
+			if key == "grid" {
+				values: [6]f64
+				if !parse_numbers(value, values[:]) ||
+				   values[0] <= 0 ||
+				   values[1] <= 0 ||
+				   values[2] < 0 ||
+				   values[3] < 0 ||
+				   values[4] <= 0 ||
+				   values[5] <= 0 ||
+				   values[2] + values[4] > values[1] ||
+				   values[3] + values[5] > values[0] {err = "invalid rule grid"}
+			}
+		case "opacity":
+			number, valid := strconv.parse_f64(value)
+			if !valid ||
+			   math.is_nan(number) ||
+			   math.is_inf(number) ||
+			   number < 0 ||
+			   number > 1 {err = "invalid rule opacity"} else {rule.opacity = number}
+		case "sticky", "native-fullscreen", "mouse_follows_focus":
+			p := &rule.sticky
+			if key == "native-fullscreen" {p = &rule.native_fullscreen}
+			if key == "mouse_follows_focus" {p = &rule.mouse_follows_focus}
+			if value != "on" &&
+			   value != "off" {err = "rule boolean expects on or off"} else {p^ = value == "on"}
 		case "manage":
 			if value != "on" && value != "off" {
 				err = "manage expects on or off"

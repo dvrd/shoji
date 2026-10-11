@@ -3,6 +3,7 @@ package engine
 import "core:fmt"
 import "core:math"
 import "core:strconv"
+import "core:strings"
 
 config :: proc(m: ^Manager, args: []string) -> Response {
 	args := args
@@ -20,7 +21,112 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 	name := args[0]
 	setting := len(args) == 2
 	value := setting ? args[1] : ""
+	if s != nil &&
+	   (name == "window_opacity" ||
+			   name == "active_window_opacity" ||
+			   name == "normal_window_opacity") {
+		return failure("opacity settings are global")
+	}
 	switch name {
+	case "insert_feedback_color":
+		if s != nil {return failure("insert_feedback_color is global")}
+		if !setting {return success(fmt.tprintf("0x%08x", m.feedback_color))}
+		if len(value) != 10 ||
+		   !strings.has_prefix(
+				   value,
+				   "0x",
+			   ) {return failure("insert_feedback_color expects 0xAARRGGBB")}
+		color, valid := strconv.parse_u64(value[2:], 16)
+		if !valid {return failure("invalid insert feedback color")}
+		m.feedback_color = u32(color)
+	case "external_bar":
+		if s != nil {return failure("external_bar is global")}
+		modes := [3]string{"off", "main", "all"}
+		if !setting {return success(fmt.tprintf("%s:%v:%v", modes[int(m.external_bar)], m.bar_top, m.bar_bottom))}
+		parts := strings.split(value, ":", context.temp_allocator)
+		values: [2]f64
+		if len(parts) != 3 ||
+		   !parse_numbers(strings.join(parts[1:], ":", context.temp_allocator), values[:]) ||
+		   values[0] < 0 ||
+		   values[1] < 0 ||
+		   values[0] > 100000 ||
+		   values[1] > 100000 {return failure("external_bar expects main|all|off:top:bottom")}
+		switch parts[0] {case "off":
+			m.external_bar = .Off;case "main":
+			m.external_bar = .Main;case "all":
+			m.external_bar = .All;case:
+			return failure("invalid external_bar mode")}
+		m.bar_top, m.bar_bottom = values[0], values[1]
+		for space in m.spaces {if d := display_by_id(m, space.display); d != nil {space.view.frame = usable_frame(m, d)}}
+	case "display_arrangement_order":
+		if s != nil {return failure("display_arrangement_order is global")}
+		modes := [3]string{"default", "vertical", "horizontal"}
+		if !setting {return success(modes[int(m.display_order)])}
+		switch value {case "default":
+			m.display_order = .Default;case "vertical":
+			m.display_order = .Vertical;case "horizontal":
+			m.display_order = .Horizontal;case:
+			return failure("invalid display arrangement")}
+		order_displays(m)
+	case "window_origin_display":
+		if s != nil {return failure("window_origin_display is global")}
+		modes := [3]string{"default", "focused", "cursor"}
+		if !setting {return success(modes[int(m.origin_display)])}
+		switch value {case "default":
+			m.origin_display = .Default;case "focused":
+			m.origin_display = .Focused;case "cursor":
+			m.origin_display = .Cursor;case:
+			return failure("invalid window origin display")}
+	case "window_shadow":
+		if s != nil {return failure("window_shadow is global")}
+		modes := [3]string{"on", "off", "float"}
+		if !setting {return success(modes[int(m.shadow_mode)])}
+		previous := m.shadow_mode
+		switch value {case "on":
+			m.shadow_mode = .On;case "off":
+			m.shadow_mode = .Off;case "float":
+			m.shadow_mode = .Float;case:
+			return failure("window_shadow expects on, off or float")}
+		if err := apply_window_shadows(m);
+		   err != "" {m.shadow_mode = previous;apply_window_shadows(m);return failure(err)}
+		m.shadow_configured = true
+	case "window_animation_duration":
+		if s != nil {return failure("animation duration is global")}
+		if !setting {return success(fmt.tprintf("%v", m.animation_duration))}
+		number, valid := strconv.parse_f64(value)
+		if !valid ||
+		   math.is_nan(number) ||
+		   math.is_inf(number) ||
+		   number < 0 ||
+		   number > 3600 {return failure("invalid animation duration")}
+		m.animation_duration = number
+	case "window_animation_easing":
+		if s != nil {return failure("animation easing is global")}
+		if !setting {return success(EASING_NAMES[int(m.animation_easing)])}
+		found := false
+		for name, kind in EASING_NAMES {if value ==
+			   name {m.animation_easing = Easing(kind);found = true;break}}
+		if !found {return failure("unknown animation easing")}
+	case "window_zoom_persist":
+		if s != nil {return failure("window_zoom_persist is global")}
+		if !setting {return success(m.zoom_persist ? "on" : "off")}
+		if value != "on" &&
+		   value != "off" {return failure("window_zoom_persist expects on or off")}
+		m.zoom_persist = value == "on"
+		for space in m.spaces {space.view.zoom_persist = m.zoom_persist}
+	case "window_insertion_point":
+		if s != nil {return failure("window_insertion_point is global")}
+		if !setting {
+			switch m.insertion_point {case .Focused:
+				return success("focused");case .First:
+				return success("first");case .Last:
+				return success("last")}
+		}
+		switch value {case "focused":
+			m.insertion_point = .Focused;case "first":
+			m.insertion_point = .First;case "last":
+			m.insertion_point = .Last;case:
+			return failure("invalid insertion point")}
 	case "mouse_modifier",
 	     "mouse_action1",
 	     "mouse_action2",
@@ -28,6 +134,40 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 	     "focus_follows_mouse",
 	     "mouse_follows_focus":
 		return mouse_config(m, s, name, value, setting)
+	case "window_opacity":
+		if !setting {return success(m.window_opacity ? "on" : "off")}
+		if value != "on" && value != "off" {return failure("window_opacity expects on or off")}
+		previous := m.window_opacity
+		m.window_opacity = value == "on"
+		if err := apply_window_opacity(m); err != "" {
+			m.window_opacity = previous
+			apply_window_opacity(m)
+			return failure(err)
+		}
+	case "window_opacity_duration":
+		if s != nil {return failure("opacity duration is global")}
+		if !setting {return success(fmt.tprintf("%v", m.opacity_duration))}
+		number, ok := strconv.parse_f64(value)
+		if !ok ||
+		   math.is_nan(number) ||
+		   math.is_inf(number) ||
+		   number < 0 ||
+		   number > 3600 {return failure("invalid opacity duration")}
+		m.opacity_duration = number
+	case "active_window_opacity", "normal_window_opacity":
+		p := name == "active_window_opacity" ? &m.active_opacity : &m.normal_opacity
+		if !setting {return success(fmt.tprintf("%v", p^))}
+		number, ok := strconv.parse_f64(value)
+		if !ok || math.is_nan(number) || math.is_inf(number) || number < 0 || number > 1 {
+			return failure("window opacity expects 0..1")
+		}
+		previous := p^
+		p^ = number
+		if err := apply_window_opacity(m); err != "" {
+			p^ = previous
+			apply_window_opacity(m)
+			return failure(err)
+		}
 	case "layout":
 		if !setting {
 			return success(layout_name(s != nil ? s.view.layout : m.default_layout))
@@ -39,6 +179,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		if s == nil {
 			m.default_layout = layout
 			for space in m.spaces {
+				if space.overrides[name] {continue}
 				set_layout(m, space, layout)
 			}
 		} else {
@@ -78,6 +219,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		p^ = number
 		if s == nil {
 			for space in m.spaces {
+				if space.overrides[name] {continue}
 				switch name {
 				case "window_gap":
 					space.view.gap = number
@@ -104,16 +246,32 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 			yes, no = "first_child", "second_child"
 		}
 		if !setting {
+			if name == "auto_balance" && p^ {
+				axis := s != nil ? s.view.balance_axis : m.balance_axis
+				if axis == .Horizontal {return success("x-axis")}
+				if axis == .Vertical {return success("y-axis")}
+			}
 			return success(p^ ? yes : no)
 		}
-		if value != yes && value != no {
+		if value != yes &&
+		   value != no &&
+		   !(name == "auto_balance" && (value == "x-axis" || value == "y-axis")) {
 			return failure(errorf("%s expects %s or %s", name, yes, no))
 		}
-		p^ = value == yes
+		p^ = value != no
+		axis :=
+			value == "x-axis" \
+			? Split.Horizontal \
+			: (value == "y-axis" ? Split.Vertical : Split.Auto)
+		if name == "auto_balance" {
+			if s != nil {s.view.balance_axis = axis} else {m.balance_axis = axis}
+		}
 		if s == nil {
 			for space in m.spaces {
+				if space.overrides[name] {continue}
 				if name == "auto_balance" {
 					space.view.auto_balance = p^
+					space.view.balance_axis = axis
 				} else {
 					space.view.first_child = p^
 				}
@@ -141,6 +299,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		if s == nil {
 			for space in m.spaces {
+				if space.overrides[name] {continue}
 				space.view.split = p^
 			}
 		}
@@ -148,6 +307,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		return failure(errorf("unsupported setting '%s'", name))
 	}
 	if s != nil {
+		mark_space_override(s, name)
 		return result(flush(m, s))
 	}
 	for space in m.spaces {
@@ -158,4 +318,39 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 	}
 	return success()
+}
+
+mark_space_override :: proc(s: ^Space, name: string) {
+	// IPC setting names borrow the request buffer; retain only static keys.
+	for key in ([]string {
+			"layout",
+			"window_gap",
+			"top_padding",
+			"bottom_padding",
+			"left_padding",
+			"right_padding",
+			"split_ratio",
+			"auto_balance",
+			"window_placement",
+			"split_type",
+		}) {
+		if key == name {s.overrides[key] = true;return}
+	}
+}
+
+apply_window_opacity :: proc(m: ^Manager) -> string {
+	for _, w in m.windows {
+		if w.opacity_override {continue}
+		desired :=
+			m.window_opacity ? (w.id == m.focused ? m.active_opacity : m.normal_opacity) : 1.0
+		if w.opacity == desired {continue}
+		if err := perform(
+			m,
+			Action{kind = .Opacity, window = w.id, value = desired, duration = m.opacity_duration},
+		); err != "" {
+			return err
+		}
+		w.opacity = desired
+	}
+	return ""
 }
