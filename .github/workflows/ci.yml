@@ -1,0 +1,45 @@
+name: macOS checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  engine:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: odin-lang/Odin
+          ref: 37d8ab08f
+          path: .toolchain/Odin
+      - name: Install build tools
+        run: |
+          test "$(uname -m)" = arm64
+          brew install llvm@22 go-task
+      - name: Build pinned compiler
+        run: |
+          export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
+          cd .toolchain/Odin
+          sh build_odin.sh release
+          echo "$PWD" >> "$GITHUB_PATH"
+      - name: Check and test
+        run: |
+          task check
+          task test
+          task test:tooling
+      - name: Build arm64e compiler
+        run: |
+          export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
+          python3 tools/build_odin_arm64e.py "$PWD/.toolchain/Odin"
+      - name: Verify loader and assemble release
+        run: |
+          task test:loader
+          task test:bootstrap
+          task build:universal
+          python3 tools/package_release.py --version ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shoji-macos
+          path: dist/*.tar.gz
