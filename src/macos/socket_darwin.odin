@@ -7,16 +7,16 @@ foreign import libc "system:c"
 
 Unix_Address :: struct {
 	length, family: u8,
-	path: [104]u8,
+	path:           [104]u8,
 }
 
 Timeval :: struct {
-	seconds: i64,
+	seconds:      i64,
 	microseconds: i32,
 }
 
 Poll_FD :: struct {
-	fd: i32,
+	fd:              i32,
 	events, revents: i16,
 }
 @(default_calling_convention = "c")

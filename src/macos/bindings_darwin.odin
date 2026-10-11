@@ -73,6 +73,7 @@ foreign ax {
 @(default_calling_convention = "c")
 foreign sls {
 	SLSMainConnectionID :: proc() -> i32 ---
+	CoreDockSendNotification :: proc(notification: Ref, unknown: i32) -> i32 ---
 	SLSCopyManagedDisplaySpaces :: proc(connection: i32) -> Ref ---
 	SLSCopyActiveMenuBarDisplayIdentifier :: proc(connection: i32) -> Ref ---
 	SLSManagedDisplayGetCurrentSpace :: proc(connection: i32, display: Ref) -> u64 ---
@@ -80,8 +81,10 @@ foreign sls {
 	SLSCopyManagedDisplayForWindow :: proc(connection: i32, window: u32) -> Ref ---
 	SLSGetWindowBounds :: proc(connection: i32, window: u32, frame: ^e.Rect) -> i32 ---
 	SLSGetWindowLevel :: proc(connection: i32, window: u32, level: ^i32) -> i32 ---
+	SLSGetWindowSubLevel :: proc(connection: i32, window: u32) -> i32 ---
 	SLSGetWindowTags :: proc(connection: i32, window: u32, tags: ^u64, size: uint) -> i32 ---
 	SLSGetWindowAlpha :: proc(connection: i32, window: u32, alpha: ^f32) -> i32 ---
+	SLSWindowIsOrderedIn :: proc(connection: i32, window: u32, ordered: ^u8) -> i32 ---
 }
 @(default_calling_convention = "c")
 foreign libc {
