@@ -1,0 +1,76 @@
+--- a/src/build_settings.cpp
++++ b/src/build_settings.cpp
+@@ -758,6 +758,12 @@
+ 	8, 8, 16, 16,
+ 	str_lit("arm64-apple-macosx"), // NOTE: Changes during initialization based on build flags.
+ };
++gb_global TargetMetrics target_darwin_arm64e = {
++	TargetOs_darwin,
++	TargetArch_arm64,
++	8, 8, 16, 16,
++	str_lit("arm64e-apple-macosx"),
++};
+ 
+ gb_global TargetMetrics target_freebsd_i386 = {
+ 	TargetOs_freebsd,
+@@ -909,6 +915,7 @@
+ gb_global NamedTargetMetrics named_targets[] = {
+ 	{ str_lit("darwin_amd64"),        &target_darwin_amd64   },
+ 	{ str_lit("darwin_arm64"),        &target_darwin_arm64   },
++	{ str_lit("darwin_arm64e"),       &target_darwin_arm64e  },
+ 
+ 	{ str_lit("linux_i386"),          &target_linux_i386     },
+ 	{ str_lit("linux_amd64"),         &target_linux_amd64    },
+--- a/src/linker.cpp
++++ b/src/linker.cpp
+@@ -990,6 +990,10 @@
+ 				link_command_line = gb_string_appendc(link_command_line, clang_path);
+ 			}
+ 			link_command_line = gb_string_appendc(link_command_line, " -Wno-unused-command-line-argument ");
++			if (build_context.metrics.os == TargetOs_darwin &&
++			    string_starts_with(build_context.metrics.target_triplet, str_lit("arm64e-"))) {
++				link_command_line = gb_string_appendc(link_command_line, " -arch arm64e ");
++			}
+ 
+ 			if (build_context.lto_kind != LTO_None) {
+ 				link_command_line = gb_string_appendc(link_command_line, " -flto=thin");
+--- a/src/llvm_backend.cpp
++++ b/src/llvm_backend.cpp
+@@ -2490,6 +2490,15 @@
+ gb_internal WORKER_TASK_PROC(lb_llvm_module_pass_worker_proc) {
+ 	auto wd = cast(lbLLVMModulePassWorkerData *)data;
+ 
++	// Darwin arm64e signs the TLV thunk (IA, 0). LLVM emits blraaz only when
++	// the function has the ptrauth-calls string attribute.
++	if (build_context.metrics.os == TargetOs_darwin &&
++	    string_starts_with(build_context.metrics.target_triplet, str_lit("arm64e-"))) {
++		for (LLVMValueRef fn = LLVMGetFirstFunction(wd->m->mod); fn != nullptr; fn = LLVMGetNextFunction(fn)) {
++			lb_add_attribute_to_proc_with_string(wd->m, fn, str_lit("ptrauth-calls"), str_lit(""));
++		}
++	}
++
+ 	LLVMPassManagerRef module_pass_manager = LLVMCreatePassManager();
+ 	LLVMRunPassManager(module_pass_manager, wd->m->mod);
+ 
+--- a/src/llvm_backend_general.cpp
++++ b/src/llvm_backend_general.cpp
+@@ -95,6 +95,19 @@
+ 	m->ctx = LLVMContextCreate();
+ 	LLVMContextSetDiagnosticHandler(m->ctx, lb_llvm_diagnostic_handler, nullptr);
+ 	m->mod = LLVMModuleCreateWithNameInContext(m->module_name, m->ctx);
++	// Experimental legacy arm64e container for explicitly bridged code. This
++	// does not implement automatic signing of Odin procedure values/callbacks.
++	if (build_context.metrics.os == TargetOs_darwin &&
++	    string_starts_with(build_context.metrics.target_triplet, str_lit("arm64e-"))) {
++		LLVMMetadataRef fields[] = {
++			LLVMValueAsMetadata(LLVMConstInt(LLVMInt32TypeInContext(m->ctx), 0, false)),
++			LLVMValueAsMetadata(LLVMConstInt(LLVMInt1TypeInContext(m->ctx), 0, false)),
++		};
++		LLVMMetadataRef version = LLVMMDNodeInContext2(m->ctx, fields, 2);
++		LLVMMetadataRef versions = LLVMMDNodeInContext2(m->ctx, &version, 1);
++		LLVMAddModuleFlag(m->mod, LLVMModuleFlagBehaviorAppendUnique,
++		                  "ptrauth.abi-version", 19, versions);
++	}
+ 	// m->debug_builder = nullptr;
+ 	if (build_context.no_plt) {
+ 		LLVMAddModuleFlag(m->mod,
