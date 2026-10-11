@@ -59,7 +59,7 @@ socket_path_is_user_scoped_and_bounded :: proc(t: ^testing.T) {
 @(test)
 server_returns_failure_marker_for_invalid_command :: proc(t: ^testing.T) {
 	fds: [2]i32
-	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) { return }
+	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) {return}
 	defer mac.close(fds[0])
 	mac.prepare_socket(fds[0])
 	data, ok := e.encode_message([]string{"not-a-domain"})
@@ -80,7 +80,7 @@ server_returns_failure_marker_for_invalid_command :: proc(t: ^testing.T) {
 @(test)
 server_returns_query_response_over_socket :: proc(t: ^testing.T) {
 	fds: [2]i32
-	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) { return }
+	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) {return}
 	defer mac.close(fds[0])
 	mac.prepare_socket(fds[0])
 	data, ok := e.encode_message([]string{"query", "--windows"})
@@ -95,5 +95,5 @@ server_returns_query_response_over_socket :: proc(t: ^testing.T) {
 	response: [256]u8
 	size := mac.recv(fds[0], &response[0], len(response), 0)
 	testing.expect(t, size > 0)
-	if size > 0 { testing.expect_value(t, string(response[:size]), "[]\n") }
+	if size > 0 {testing.expect_value(t, string(response[:size]), "[]\n")}
 }

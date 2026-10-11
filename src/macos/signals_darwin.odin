@@ -6,20 +6,21 @@ import "core:strings"
 import posix "core:sys/posix"
 
 Event :: struct {
-	name, app, title: string,
-	window, recent_window: u32,
-	pid: i32,
-	space, recent_space: u64,
+	name, app, title:        string,
+	window, recent_window:   u32,
+	pid:                     i32,
+	space, recent_space:     u64,
 	display, recent_display: u32,
-	active: bool,
+	active:                  bool,
 }
 
 Snapshot :: struct {
-	windows: map[u32]e.Window,
-	spaces: map[u64]bool,
-	displays: map[u32]e.Rect,
-	apps: map[i32]string,
-	focused: u32,
+	windows:      map[u32]e.Window,
+	spaces:       map[u64]bool,
+	displays:     map[u32]e.Rect,
+	apps:         map[i32]string,
+	app_hidden:   map[i32]bool,
+	focused:      u32,
 	active_space: u64,
 }
 
@@ -29,6 +30,7 @@ snapshot :: proc(state: ^State) -> Snapshot {
 		spaces       = make(map[u64]bool, context.temp_allocator),
 		displays     = make(map[u32]e.Rect, context.temp_allocator),
 		apps         = make(map[i32]string, context.temp_allocator),
+		app_hidden   = make(map[i32]bool, context.temp_allocator),
 		focused      = state.manager.focused,
 		active_space = state.manager.active_space,
 	}
@@ -46,11 +48,13 @@ snapshot :: proc(state: ^State) -> Snapshot {
 	}
 	for pid, app in state.applications {
 		result.apps[pid] = strings.clone(app.name, context.temp_allocator)
+		result.app_hidden[pid] = app.hidden
 	}
 	return result
 }
 
 emit :: proc(state: ^State, event: Event) {
+	if state.event_sink != nil {state.event_sink(state.event_user, event)}
 	for signal in state.manager.signals {
 		if signal.event != event.name {
 			continue
@@ -126,6 +130,15 @@ emit_changes :: proc(state: ^State, before: Snapshot) {
 	for pid, app in state.applications {
 		if _, existed := before.apps[pid]; !existed {
 			emit(state, Event{name = "application_launched", app = app.name, pid = pid})
+		} else if before.app_hidden[pid] != app.hidden {
+			emit(
+				state,
+				Event {
+					name = app.hidden ? "application_hidden" : "application_visible",
+					app = app.name,
+					pid = pid,
+				},
+			)
 		}
 	}
 	for pid, app in before.apps {
@@ -181,6 +194,11 @@ emit_changes :: proc(state: ^State, before: Snapshot) {
 		}
 	}
 	if m.active_space != before.active_space {
+		old := e.space_by_id(m, before.active_space)
+		fresh := e.space_by_id(m, m.active_space)
+		if old != nil &&
+		   fresh != nil &&
+		   old.display != fresh.display {m.last_display = old.display}
 		emit(
 			state,
 			Event {

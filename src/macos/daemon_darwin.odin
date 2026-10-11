@@ -55,6 +55,7 @@ inspect :: proc() -> int {
 		return 1
 	}
 	state: State
+	state.read_only = true
 	state_init(&state)
 	defer state_destroy(&state)
 	refresh(&state)
@@ -134,6 +135,8 @@ run :: proc(config_path: string) -> int {
 	}
 	mouse_start(&state)
 	defer mouse_stop(&state)
+	if !workspace_start(&state) {fmt.eprintln("shoji: workspace notifications unavailable")}
+	defer workspace_stop(&state)
 	run_config(config)
 	fmt.eprintf("shoji: listening on %s\n", socket_name)
 	last_refresh := time.now()
@@ -143,7 +146,10 @@ run :: proc(config_path: string) -> int {
 		{
 			context.temp_allocator = mem.dynamic_arena_allocator(&scratch)
 			CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.016, true)
+			workspace_tick(&state)
+			animation_tick(&state, time.now())
 			mouse_tick(&state)
+			feedback_tick(&state)
 			now := time.now()
 			if state.dirty || time.duration_seconds(time.diff(last_refresh, now)) >= 1 {
 				refresh(&state)

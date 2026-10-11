@@ -8,16 +8,25 @@ import objc "core:sys/darwin/Foundation"
 
 Application :: struct {
 	element, observer: Ref,
-	name: string,
+	name:              string,
+	hidden:            bool,
 }
 
 State :: struct {
-	mouse: Mouse_State,
-	manager: e.Manager,
-	windows: map[u32]Ref,
-	applications: map[i32]Application,
-	connection: i32,
-	dirty: bool,
+	feedback:          map[u32]Feedback_Window,
+	feedback_backend:  Feedback_Backend,
+	read_only:         bool,
+	animations:        map[u32]Animation_Job,
+	animation_backend: Animation_Backend,
+	event_sink:        proc(user: rawptr, event: Event),
+	event_user:        rawptr,
+	workspace_events:  Workspace_State,
+	mouse:             Mouse_State,
+	manager:           e.Manager,
+	windows:           map[u32]Ref,
+	applications:      map[i32]Application,
+	connection:        i32,
+	dirty:             bool,
 }
 
 observer_callback :: proc "c" (observer, element, notification: Ref, user: rawptr) {
@@ -40,6 +49,8 @@ state_init :: proc(state: ^State) {
 }
 
 state_destroy :: proc(state: ^State) {
+	feedback_stop(state)
+	animation_stop(state)
 	for _, element in state.windows {
 		CFRelease(element)
 	}
@@ -62,6 +73,7 @@ state_destroy :: proc(state: ^State) {
 
 perform :: proc(user: rawptr, action: e.Action) -> string {
 	state := (^State)(user)
+	if state.read_only {return "window operations are disabled in read-only inspection"}
 	element := state.windows[action.window]
 	if action.kind >= .Space_Focus ||
 	   action.kind == .Focus_Without_Raise ||
@@ -72,13 +84,20 @@ perform :: proc(user: rawptr, action: e.Action) -> string {
 	   action.kind == .Shadow ||
 	   action.kind == .Order ||
 	   action.kind == .Scale {
-		err := addition_action(action); if err == "" { state.dirty = true }; return err
+		err := addition_action(action);if err == "" {state.dirty = true};return err
 	}
 	if element == nil {
 		return "window no longer has an Accessibility reference"
 	}
 	#partial switch action.kind {
+	case .Expose:
+		if err := perform(state, {kind = .Focus, window = action.window}); err != "" {return err}
+		notification := cf_string("com.apple.expose.front.awake")
+		defer CFRelease(notification)
+		if CoreDockSendNotification(notification, 0) !=
+		   0 {return "could not request application Expose"}
 	case .Frame:
+		if action.duration > 0 {return animation_start(state, action)}
 		p := Point{action.frame.x, action.frame.y}
 		size := Size{action.frame.w, action.frame.h}
 		position := AXValueCreate(1, &p)
@@ -168,12 +187,14 @@ refresh_displays :: proc(state: ^State) {
 		return
 	}
 	primary_height := CGDisplayBounds(CGMainDisplayID()).h
+	m.main_display = CGMainDisplayID()
 	screens := intrinsics.objc_send(^objc.Object, objc.Screen, "screens")
 	for id, i in ids[:count] {
 		d := e.Display {
-			id    = id,
-			index = u32(i + 1),
-			frame = CGDisplayBounds(id),
+			id           = id,
+			index        = u32(i + 1),
+			native_index = u32(i + 1),
+			frame        = CGDisplayBounds(id),
 		}
 		d.usable = d.frame
 		d.label = labels[id]
@@ -207,6 +228,7 @@ refresh_displays :: proc(state: ^State) {
 		}
 		append(&m.displays, d)
 	}
+	e.order_displays(m)
 	data := SLSCopyManagedDisplaySpaces(state.connection)
 	if data == nil {
 		return
@@ -241,11 +263,11 @@ refresh_displays :: proc(state: ^State) {
 			seen[id] = true
 			s := e.space_by_id(m, id)
 			if s == nil {
-				s = e.add_space(m, id, d.id, index, d.usable)
+				s = e.add_space(m, id, d.id, index, e.usable_frame(m, d))
 			}
 			s.index = index
 			s.display = d.id
-			s.view.frame = d.usable
+			s.view.frame = e.usable_frame(m, d)
 			s.visible = d.active_space == id
 			s.fullscreen = number(dictionary(item, "type")) == 4
 			if s.uuid == "" {
@@ -258,6 +280,7 @@ refresh_displays :: proc(state: ^State) {
 		s := m.spaces[i]
 		if !seen[s.id] {
 			e.view_destroy(&s.view)
+			delete(s.overrides)
 			delete(s.uuid)
 			delete(s.label)
 			free(s)
@@ -310,6 +333,8 @@ window_frame :: proc(element: Ref) -> e.Rect {
 }
 
 refresh :: proc(state: ^State) {
+	defer {if !state.read_only &&
+		   state.manager.shadow_configured {if err := e.apply_window_shadows(&state.manager); err != "" {fmt.eprintln("shoji: shadow:", err)}}}
 	pool := pool_push()
 	defer pool_pop(pool)
 	before := snapshot(state)
@@ -355,6 +380,9 @@ refresh :: proc(state: ^State) {
 			}
 			state.applications[pid] = app
 		}
+		hidden := intrinsics.objc_send(bool, running, "isHidden")
+		app.hidden = hidden
+		state.applications[pid] = app
 		list := attribute(app.element, "AXWindows")
 		if list == nil {
 			// A temporarily unresponsive application is not evidence its windows were destroyed.
@@ -365,7 +393,6 @@ refresh :: proc(state: ^State) {
 			}
 			continue
 		}
-		hidden := intrinsics.objc_send(bool, running, "isHidden")
 		for j in 0 ..< CFArrayGetCount(list) {
 			element := CFArrayGetValueAtIndex(list, j)
 			id: u32
@@ -440,14 +467,22 @@ refresh :: proc(state: ^State) {
 			}
 			tags: u64
 			if SLSGetWindowTags(state.connection, id, &tags, 64) == 0 {
-				w.sticky = tags & (1 << 11) != 0; w.shadow = tags & (1 << 3) == 0
+				w.sticky = tags & (1 << 11) != 0;w.shadow = tags & (1 << 3) == 0
 			}
 			alpha: f32
-			if SLSGetWindowAlpha(state.connection, id, &alpha) == 0 { w.opacity = f64(alpha) }
-			position_key := cf_string("AXPosition"); size_key := cf_string("AXSize")
+			SLSGetWindowLevel(state.connection, id, &w.level)
+			w.sub_level = SLSGetWindowSubLevel(state.connection, id)
+			w.layer = w.sub_level < 0 ? "below" : (w.sub_level > 0 ? "above" : "normal")
+			if w.scratchpad != "" {
+				ordered: u8
+				if SLSWindowIsOrderedIn(state.connection, id, &ordered) ==
+				   0 {w.scratchpad_hidden = ordered == 0}
+			}
+			if SLSGetWindowAlpha(state.connection, id, &alpha) == 0 {w.opacity = f64(alpha)}
+			position_key := cf_string("AXPosition");size_key := cf_string("AXSize")
 			AXUIElementIsAttributeSettable(element, position_key, &w.can_move)
 			AXUIElementIsAttributeSettable(element, size_key, &w.can_resize)
-			CFRelease(position_key); CFRelease(size_key)
+			CFRelease(position_key);CFRelease(size_key)
 		}
 		CFRelease(list)
 	}
@@ -493,7 +528,15 @@ refresh :: proc(state: ^State) {
 			e.focus_window(m, id)
 		}
 	}
-	mouse_follow_focus(state)
+	if !state.read_only && m.window_opacity {
+		if err := e.apply_window_opacity(m); err != "" {fmt.eprintln("shoji: opacity:", err)}
+	}
+	if !state.read_only {
+		if _, err := addition_check(); err == "" {
+			if err := e.apply_window_layers(m); err != "" {fmt.eprintln("shoji: layer:", err)}
+		}
+		mouse_follow_focus(state)
+	}
 	emit_changes(state, before)
 	state.dirty = false
 }
