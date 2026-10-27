@@ -19,7 +19,7 @@ Expected Niri values are source-derived, not differential results from executing
 
 ## Native smoke test
 
-`tools/live-animation/scroll_layout.odin` creates four accessory windows owned by its process. Its backend rejects operations on other IDs. It drives the real engine and applies frames through its own NSWindows; WindowServer bounds are queried independently through `SLSGetWindowBounds`. Every window closes on exit.
+`tools/shoji-harness/fixtures/desktop/scroll_layout.odin` creates four accessory windows owned by its process. Its backend rejects operations on other IDs. It drives the real engine and applies frames through its own NSWindows; WindowServer bounds are queried independently through `SLSGetWindowBounds`. Every window closes on exit.
 
 Passed **42 bounds observations**: successive opening of four columns, proportional width change, complete-column movement, directional consumption, tabbed and normal display, fixed row height, directional expulsion and width cycling. Readback tolerance is one point for native frame rounding. [Raw final observations](evidence/scroll-24G84/owned-scroll.jsonl).
 

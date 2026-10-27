@@ -56,7 +56,7 @@ animation harness prefer `.toolchain/Odin/odin` when it exists. The harness also
 accepts an `ODIN` environment variable naming a compiler executable.
 
 ```sh
-task build:dev       # native development tools; requires Odin
+task build:tools     # dev, inspector and harness CLIs; requires Odin
 task signing:setup  # one-time local Keychain signing identity
 task build          # bin/shoji and bin/shoji-sa.dylib
 task debug          # bin/shoji-debug
@@ -65,7 +65,7 @@ task check          # compiler and unused-import/variable checks
 task test           # bin/shoji-tests; no desktop window manipulation
 task test:amd64     # Intel tests, using Rosetta on Apple Silicon
 task test:compiler  # native compiler regression checks for ARM64 calls
-task test:tooling   # launchd/release tests; no actual service installation
+task test:harness   # launchd/release tests; no actual service installation
 task validate       # build/test logs, binary hashes, desktop prerequisites
 task test:loader    # in-process self-test of the Odin arm64e loader
 task build:universal # Apple Silicon host: universal app and payload in bin/universal/
@@ -78,7 +78,7 @@ task clean          # remove outputs; keep installed runtime and compiler
 
 `bin/` holds build outputs. `artifacts/` holds ignored local research inputs,
 compressed investigation records and rollback copies; `task clean` preserves
-these and the installed `shoji`, payload, loader, native development tool and arm64e compiler. Unknown
+these and the installed `shoji`, payload, loader, native development, inspector and harness tools and arm64e compiler. Unknown
 files and symlinks are preserved. See [local artifact storage](docs/LOCAL_ARTIFACTS.md)
 for the current layout and recovery instructions.
 
@@ -235,7 +235,7 @@ paths and literal arguments. Installing does not start the daemon. See
 ```
 
 The release archive keeps `bin/shoji`, `bin/shoji-loader`, `bin/shoji-sa.dylib`
-and `bin/shoji-dev` together. Keep that directory structure when installing. Native app/payload slices
+and the `bin/shoji-dev`, `bin/shoji-inspector` and `bin/shoji-harness` CLIs together. Keep that directory structure when installing. Native app/payload slices
 use the configured signing identity for the executable; local payload/loader
 signatures remain ad hoc. CI artifacts use explicit ad-hoc signing and are not
 notarized. The loader companion is the Odin arm64e helper
@@ -244,7 +244,7 @@ not spawn it. Release packaging refuses to overwrite an existing version. The CI
 workflow is provided but has not been exercised remotely.
 
 All maintained build, signing, service, release and validation workflows run
-without Python. See [native tool commands](tools/shoji-dev/README.md) and the
+without Python. See [development tool boundaries](docs/DEVELOPMENT_TOOLS.md) and the
 [migration record](docs/PYTHON_MIGRATION.md).
 
 ## Dock scripting addition
@@ -314,8 +314,8 @@ run again. This does not protect against WindowServer failure or power loss.
 A live test harness uses only disposable owned windows:
 
 ```sh
-./bin/shoji-dev live animation
-./bin/shoji-dev live animation --dock-restart
+./bin/shoji-harness live animation
+./bin/shoji-harness live animation --dock-restart
 ```
 
 Run it from your desktop terminal as your normal user with the matching payload

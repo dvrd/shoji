@@ -136,8 +136,8 @@ its own daemon restricted to disposable windows and stops only its own children:
 
 ```sh
 ./bin/shoji service stop
-./bin/shoji-dev live desktop
-./bin/shoji-dev live spaces --load-payload
+./bin/shoji-harness live desktop
+./bin/shoji-harness live spaces --load-payload
 ./bin/shoji service start
 ```
 

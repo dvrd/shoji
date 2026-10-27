@@ -13,7 +13,7 @@ task from a plain arm64 caller: `thread_convert_thread_state` succeeds, but
 same way). An arm64e caller is required, and the multithreaded daemon cannot
 be an arm64e ABI v0 executable with this toolchain — see the TLS note below.
 `shoji --load-sa` therefore spawns `bin/shoji-loader`, an arm64e Odin helper
-built from `tools/odin-loader` that runs the same in-process injector with an
+built from `src/loader` that runs the same in-process injector with an
 arm64e personality. Upstream yabai also uses a separate arm64e loader: it
 embeds a compiled loader binary as a byte array, extracts it under
 `/Library/ScriptingAdditions`, and executes it.
@@ -125,6 +125,7 @@ an exact existing application and fails on conflicting source changes. To check
 the patched arm64e compiler without injecting or restarting Dock:
 
 ```sh
-./bin/shoji-dev check-asm --compiler bin/odin-arm64e \
+task build:harness
+./bin/shoji-harness check-asm --compiler bin/odin-arm64e \
   --library-root .toolchain/Odin --target darwin_arm64e
 ```

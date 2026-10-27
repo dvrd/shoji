@@ -6,8 +6,7 @@ Dock snapshots and VM/guest-kit records were relocated from `bin/` to
 `artifacts/dock-evidence/`, `artifacts/macos27-vm/` and `artifacts/macos27-guest/`.
 Historical paths below describe the original experiments. Project cleanup keeps
 these records and does not touch the VirtualBuddy VM outside this repository.
-The probe source and entitlements are now versioned under `tools/vm-preflight/`;
-rebuild the optional executable with `task build:vm-preflight`.
+The optional probe source, entitlements and downloader now live outside Shoji at `~/dev/tools/vm-preflight`; build there with `task build`. Historical `bin/` references below describe the original experiments.
 See [artifact storage and recovery](LOCAL_ARTIFACTS.md).
 
 ## Setup Assistant responsiveness investigation — 2026-10-25
@@ -121,25 +120,28 @@ The initial IPSW transfer stopped at 6.4% with curl error 56 (receive timeout). 
 ### Resume from the project root
 
 ```sh
-task build:vm-preflight
-./tools/vm-preflight/download.zsh
+task --dir "$HOME/dev/tools/vm-preflight" build
+"$HOME/dev/tools/vm-preflight/download.zsh"
 ```
 
 The helper resumes the existing file, makes up to 10 transfer attempts using a fresh curl process for each attempt, and runs the signed exact-image probe only after a successful transfer. It retains partial data after failure. If the download has already finished successfully, run the check directly:
 
 ```sh
-task build:vm-preflight
-./bin/shoji-vm-preflight artifacts/macos27-vm/UniversalMac_27.0.1_26A434_Restore.ipsw
+task --dir "$HOME/dev/tools/vm-preflight" build
+"$HOME/dev/tools/vm-preflight/bin/shoji-vm-preflight" \
+  "$PWD/artifacts/macos27-vm/UniversalMac_27.0.1_26A434_Restore.ipsw"
 ```
 
-Save the final probe output before selecting the next installation step. The optional executable is a local diagnostic, not release tooling. `task clean` can remove the executable but preserves the relocated research inputs. Its source and entitlements are versioned; the equivalent rebuild commands are:
+Save the final probe output before selecting the next installation step. The optional executable is a local diagnostic, not release tooling. Shoji’s `task clean` does not touch this external executable or the retained research inputs. The equivalent standalone rebuild commands are:
 
 ```sh
+cd ~/dev/tools/vm-preflight
+mkdir -p bin
 clang -Wall -Wextra -Werror -mmacosx-version-min=15.0 \
   -framework Foundation -framework Virtualization \
-  tools/vm-preflight/main.m -o bin/shoji-vm-preflight
+  main.m -o bin/shoji-vm-preflight
 codesign --force --sign - \
-  --entitlements tools/vm-preflight/entitlements.plist bin/shoji-vm-preflight
+  --entitlements entitlements.plist bin/shoji-vm-preflight
 codesign --verify --strict bin/shoji-vm-preflight
 ```
 

@@ -113,10 +113,10 @@ All 247 deterministic tests pass with warnings as errors, including shared-camer
 ```sh
 # Build candidates without updating the service or Dock.
 task build:scroll-preview
-task build:scroll-smoke
+task build:fixture
 # Run the owned-window fixture from a terminal in your logged-in macOS session.
-./bin/shoji-scroll-smoke scroll-layout
-./bin/shoji-scroll-smoke scroll-motion
+./bin/shoji-harness-fixture scroll-layout
+./bin/shoji-harness-fixture scroll-motion
 ```
 
 Layout rollback:
