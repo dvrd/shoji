@@ -65,6 +65,12 @@ tasks:
       - mkdir -p bin
       - '{{.ODIN}} build tools/resize-fade -out:bin/shoji-resize-fade -debug -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - '{{.CODESIGN}} --force --sign - bin/shoji-resize-fade'
+  build:vm-preflight:
+    desc: Build the read-only macOS restore-image compatibility probe
+    cmds:
+      - mkdir -p bin
+      - clang -Wall -Wextra -Werror -mmacosx-version-min=15.0 -framework Foundation -framework Virtualization tools/vm-preflight/main.m -o bin/shoji-vm-preflight
+      - '{{.CODESIGN}} --force --sign - --entitlements tools/vm-preflight/entitlements.plist bin/shoji-vm-preflight'
   build:scroll-smoke:
     desc: Build the native owned-window scrolling smoke test without running it
     cmds:
@@ -75,7 +81,8 @@ tasks:
     desc: Run repeatable motion scenarios without windows or a GUI session
     deps: [build:scroll-smoke]
     cmds:
-      - ./bin/shoji-scroll-smoke motion-check bin/motion-check.json 1 3
+      - mkdir -p artifacts/motion
+      - ./bin/shoji-scroll-smoke motion-check artifacts/motion/motion-check.json 1 3
   check:
     desc: Type-check all source and tests
     deps: [raven]
@@ -143,9 +150,13 @@ tasks:
         rg --files src tests -g '*.odin' -g '!calls_*.odin' -g '!registers_*.odin' -g '!state_arm64.odin' |
         while IFS= read -r file; do {{.ODINFMT}} -w=true "$file" || exit; done
   clean:
-    desc: Remove generated binaries
+    desc: Remove rebuildable outputs while preserving the installed runtime, compiler and research artifacts
     cmds:
-      - rm -rf bin
+      - python3 tools/clean.py
+  clean:preview:
+    desc: List rebuildable outputs that task clean would remove
+    cmds:
+      - python3 tools/clean.py --dry-run
   build:amd64:
     deps: [addition:amd64]
     desc: Cross-build the Intel macOS executable
