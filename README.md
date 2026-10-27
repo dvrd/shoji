@@ -39,7 +39,8 @@ Build a separate compiler from the pinned Odin source checkout (the source check
 is not modified):
 
 ```sh
-python3 tools/build_odin_arm64e.py "$(odin root)"
+task build:dev
+./bin/shoji-dev build-arm64e "$(odin root)"
 ```
 
 If the shared Odin source checkout has advanced beyond the installed compiler,
@@ -47,14 +48,15 @@ isolate its pinned libraries first with `task toolchain` (requires the pinned Gi
 revision locally). Task commands automatically use `.toolchain/Odin` when present.
 The shared source checkout is left intact. If the isolated compiler was built
 before the checker fix, rebuild it with
-`python3 tools/toolchain.py --build-compiler`, then rebuild the arm64e compiler. The arm64e compiler can then be built
-with `python3 tools/build_odin_arm64e.py "$PWD/.toolchain/Odin"`.
+`./bin/shoji-dev toolchain --build-compiler`, then rebuild the arm64e compiler. The arm64e compiler can then be built
+with `./bin/shoji-dev build-arm64e "$PWD/.toolchain/Odin"`.
 If the compiler executable has also advanced, build the matching standard compiler
-with `python3 tools/toolchain.py --build-compiler`. Task commands and the live
+with `./bin/shoji-dev toolchain --build-compiler`. Task commands and the live
 animation harness prefer `.toolchain/Odin/odin` when it exists. The harness also
 accepts an `ODIN` environment variable naming a compiler executable.
 
 ```sh
+task build:dev       # native development tools; requires Odin
 task signing:setup  # one-time local Keychain signing identity
 task build          # bin/shoji and bin/shoji-sa.dylib
 task debug          # bin/shoji-debug
@@ -76,7 +78,7 @@ task clean          # remove outputs; keep installed runtime and compiler
 
 `bin/` holds build outputs. `artifacts/` holds ignored local research inputs,
 compressed investigation records and rollback copies; `task clean` preserves
-these and the installed `shoji`, payload, loader and arm64e compiler. Unknown
+these and the installed `shoji`, payload, loader, native development tool and arm64e compiler. Unknown
 files and symlinks are preserved. See [local artifact storage](docs/LOCAL_ARTIFACTS.md)
 for the current layout and recovery instructions.
 
@@ -219,27 +221,31 @@ with `shoji -m window --scratchpad recover`. Labels must be unique.
 
 ## Service and release tooling
 
-The separate Python 3 service tool generates a per-user launchd plist using absolute
+The native `shoji service` command generates a per-user launchd plist using absolute
 paths and literal arguments. Installing does not start the daemon. See
 [SETUP.md](SETUP.md) for configuration and Accessibility requirements:
 
 ```sh
-python3 tools/service.py plist --binary "$PWD/bin/shoji" # preview only
-python3 tools/service.py install --binary "$PWD/bin/shoji"
-python3 tools/service.py start
-python3 tools/service.py status
-python3 tools/service.py stop
-python3 tools/service.py uninstall # retains log files
+./bin/shoji service plist --binary "$PWD/bin/shoji" # preview only
+./bin/shoji service install --binary "$PWD/bin/shoji"
+./bin/shoji service start
+./bin/shoji service status
+./bin/shoji service stop
+./bin/shoji service uninstall # retains log files
 ```
 
-The release archive keeps `bin/shoji`, `bin/shoji-loader` and `bin/shoji-sa.dylib`
-together. Keep that directory structure when installing. Native app/payload slices
+The release archive keeps `bin/shoji`, `bin/shoji-loader`, `bin/shoji-sa.dylib`
+and `bin/shoji-dev` together. Keep that directory structure when installing. Native app/payload slices
 use the configured signing identity for the executable; local payload/loader
 signatures remain ad hoc. CI artifacts use explicit ad-hoc signing and are not
 notarized. The loader companion is the Odin arm64e helper
 spawned by `--load-sa` on Apple Silicon; Intel Shoji injects in-process and does
 not spawn it. Release packaging refuses to overwrite an existing version. The CI
 workflow is provided but has not been exercised remotely.
+
+All maintained build, signing, service, release and validation workflows run
+without Python. See [native tool commands](tools/shoji-dev/README.md) and the
+[migration record](docs/PYTHON_MIGRATION.md).
 
 ## Dock scripting addition
 
@@ -261,7 +267,7 @@ To enable automatic loading at daemon startup and after Dock restarts:
 ```sh
 ./bin/shoji --sa "$PWD/bin/shoji-sa.dylib"
 # Or include it in the launchd service configuration:
-python3 tools/service.py install --binary "$PWD/bin/shoji" --sa "$PWD/bin/shoji-sa.dylib"
+./bin/shoji service install --binary "$PWD/bin/shoji" --sa "$PWD/bin/shoji-sa.dylib"
 ```
 
 `--sa` can be combined with `-c CONFIG`. The daemon checks the payload before
@@ -308,8 +314,8 @@ run again. This does not protect against WindowServer failure or power loss.
 A live test harness uses only disposable owned windows:
 
 ```sh
-python3 tools/live_animation.py
-python3 tools/live_animation.py --dock-restart
+./bin/shoji-dev live animation
+./bin/shoji-dev live animation --dock-restart
 ```
 
 Run it from your desktop terminal as your normal user with the matching payload

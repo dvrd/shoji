@@ -23,10 +23,12 @@ jobs:
       - name: Build pinned compiler
         run: |
           export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
-          python3 tools/toolchain.py --patch-only
           cd .toolchain/Odin
           sh build_odin.sh release
           echo "$PWD" >> "$GITHUB_PATH"
+          cd ../..
+          task build:dev
+          ./bin/shoji-dev toolchain --patch-only --build-compiler
       - name: Check and test
         run: |
           task test:compiler
@@ -41,14 +43,14 @@ jobs:
       - name: Build arm64e compiler
         run: |
           export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
-          python3 tools/build_odin_arm64e.py "$PWD/.toolchain/Odin"
-          python3 tools/check_odin_asm.py --compiler bin/odin-arm64e --library-root .toolchain/Odin --target darwin_arm64e
+          ./bin/shoji-dev build-arm64e "$PWD/.toolchain/Odin"
+          ./bin/shoji-dev check-asm --compiler bin/odin-arm64e --library-root .toolchain/Odin --target darwin_arm64e
       - name: Verify loader and assemble release
         run: |
           task test:loader
           task test:bootstrap
           task build:universal
-          python3 tools/package_release.py --version ci
+          ./bin/shoji-dev package --version ci
       - uses: actions/upload-artifact@v4
         with:
           name: shoji-macos

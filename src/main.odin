@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import mac "macos"
+import service "service"
 
 HELP_MESSAGE :: `
 Usage: shoji [-c CONFIG] [--sa PATH_TO_DYLIB]
@@ -13,6 +14,7 @@ Usage: shoji [-c CONFIG] [--sa PATH_TO_DYLIB]
        shoji --check-sa
        shoji --inspect
        shoji --version
+       shoji service install|start|stop|restart|status|uninstall
 
 Run without arguments to start the window manager.
 -c, --config FILE   Execute FILE through /bin/sh after the socket starts.
@@ -77,6 +79,9 @@ main :: proc() {
 
 	if len(args) > 0 {
 		switch args[0] {
+		case "service":
+			binary, _ := os.get_executable_path(context.allocator)
+			os.exit(service.cli(args[1:], binary))
 		case "--validate-sizes":
 			if len(args) != 2 {fmt.eprintln("--validate-sizes requires a fixture process ID"); os.exit(2)}
 			pid, valid := strconv.parse_u64(args[1])

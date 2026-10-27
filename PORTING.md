@@ -27,7 +27,7 @@ Dock injection is all-Odin. On arm64, `shoji --load-sa` spawns `bin/shoji-loader
 | Applications/windows | NSWorkspace enumeration via `objc_send`; AX observer callbacks; reconciliation; references retained/released; AX focus/frame/minimize/close/fullscreen backend, enhanced-UI frame workaround with restoration/error reporting, ordered-window reconciliation, retained inactive tabs and AX reference rebinding | Regular applications only, full upstream retry/suppression logic remains; native tab-group commands are not modeled and live tab switching remains unverified |
 | Spaces/displays | SkyLight space enumeration, display UUIDs, current space, screen usable frame, reconciliation, failed/incomplete observation preservation, Space array ordering after native reorder | Fullscreen/Mission Control transitions and OS-specific workarounds not fully ported |
 | IPC | Unix-domain socket, nonblocking incremental command collection and response delivery, framing validation, peer UID check, 32-client bound, fixed deadlines, process lock, client failure status | Command handlers still execute serially; synchronous AX/payload operations can delay the loop |
-| Startup | CLI/foreground daemon, config discovery gated on verified payload when using --sa, signal cleanup, child reaping, signed builds, separate launchd lifecycle tool, opt-in asynchronous payload startup/reload with verification and backoff | No native upstream service CLI flags; unattended reload requires existing noninteractive sudo permission |
+| Startup | CLI/foreground daemon, config discovery gated on verified payload when using --sa, signal cleanup, child reaping, signed builds, native `shoji service` launchd lifecycle commands, opt-in asynchronous payload startup/reload with verification and backoff | Unattended payload reload requires existing noninteractive sudo permission |
 
 Signal events currently emitted by reconciliation:
 
@@ -137,7 +137,7 @@ moves/swaps, compensating rollback, property projection, scratchpad recovery,
 expanded rule effects, explicit-opacity/layer reset, zoom persistence, external
 bar/display-origin settings, workspace event emission, Mission Control and gesture
 suppression, all 22 easing curves, animation restore retries, and feedback geometry
-and resource ownership. Python tests exercise service lifecycle with an injected
+and resource ownership. Native Odin tests exercise service lifecycle with an injected
 launchctl and release archive contents/checksums. They do not install a service.
 
 The original in-process Odin loader failed with `cannot start remote thread (2)`

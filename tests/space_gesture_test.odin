@@ -17,6 +17,7 @@ bsp_modified_swipe_switches_once_and_swallows_momentum :: proc(t: ^testing.T) {
 		return
 	}
 	defer mac.CFRelease(event)
+	CGEventSetLocation(event, {10, 10})
 	CGEventSetFlags(event, m.mouse.modifier)
 	CGEventSetIntegerValueField(event, 88, 1)
 	CGEventSetIntegerValueField(event, 96, 0)

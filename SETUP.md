@@ -19,7 +19,7 @@ Security → Accessibility once. When switching from an older ad-hoc build, remo
 and re-add the executable once to establish the certificate-based identity.
 Subsequent `task build` updates use the same certificate and identifier, verify
 the candidate signature, then atomically replace the executable. Restart the
-service with `python3 tools/service.py restart` to use the new build.
+service with `./bin/shoji service restart` to use the new build.
 
 Keep the signing certificate and private key in Keychain. Deleting or replacing
 the identity, using a different identifier, or installing an ad-hoc build changes
@@ -29,7 +29,7 @@ fail; it does not silently fall back to ad-hoc signing.
 To select an existing valid certificate instead of creating a local one:
 
 ```sh
-python3 tools/signing.py setup --identity CERTIFICATE_SHA1 --keychain /path/to/keychain-db
+./bin/shoji-dev signing setup --identity CERTIFICATE_SHA1 --keychain /path/to/keychain-db
 ```
 
 Use `task signing:check` to check configuration without making changes. Keep the
@@ -40,7 +40,7 @@ Re-sign an externally built update with your configured identity before installi
 it, using a candidate in the destination directory:
 
 ```sh
-python3 tools/signing.py sign bin/shoji.new --install bin/shoji
+./bin/shoji-dev signing sign bin/shoji.new --install bin/shoji
 ```
 
 [Apple’s code-signing requirements note](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)
@@ -84,12 +84,12 @@ Use only one window manager at a time. Installation writes a launchd plist but
 leaves starting the daemon as a separate step:
 
 ```sh
-python3 tools/service.py plist --binary "$PWD/bin/shoji" \
+./bin/shoji service plist --binary "$PWD/bin/shoji" \
   --config "$HOME/.config/shoji/shojirc" --sa "$PWD/bin/shoji-sa.dylib"
-python3 tools/service.py install --binary "$PWD/bin/shoji" \
+./bin/shoji service install --binary "$PWD/bin/shoji" \
   --config "$HOME/.config/shoji/shojirc" --sa "$PWD/bin/shoji-sa.dylib"
-python3 tools/service.py start
-python3 tools/service.py status
+./bin/shoji service start
+./bin/shoji service status
 ./bin/shoji -m config layout
 ./bin/shoji -m config window_gap
 ./bin/shoji -m rule --list
@@ -105,7 +105,7 @@ inspect the error log before continuing:
 
 ```sh
 tail -30 "$HOME/Library/Logs/shoji/shoji.err.log"
-python3 tools/service.py restart
+./bin/shoji service restart
 ```
 
 ## Hammerspoon
@@ -124,8 +124,8 @@ hs.hotkey.bind({"cmd"}, "k", shoji("-m window --focus north"))
 hs.hotkey.bind({"cmd"}, "l", shoji("-m window --focus east"))
 ```
 
-Service bindings should call Python with absolute paths to the interpreter and
-`tools/service.py`, followed by `start`, `stop`, or `restart`. Reload Hammerspoon
+Service bindings should execute the absolute path to `bin/shoji` with arguments
+`service start`, `service stop`, or `service restart`. Reload Hammerspoon
 and check focus, float/grid, resizing, Space navigation, and fn mouse controls.
 Check service restart and login startup during daily use.
 
@@ -135,10 +135,10 @@ Stop Shoji and any other window manager before the owned-window test. It creates
 its own daemon restricted to disposable windows and stops only its own children:
 
 ```sh
-python3 tools/service.py stop
-python3 tools/live_desktop.py
-python3 tools/live_spaces.py --load-payload
-python3 tools/service.py start
+./bin/shoji service stop
+./bin/shoji-dev live desktop
+./bin/shoji-dev live spaces --load-payload
+./bin/shoji service start
 ```
 
 The Space test tracks the exact disposable Space ID, restores original focus, and
