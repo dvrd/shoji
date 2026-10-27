@@ -1,7 +1,7 @@
 package protocol
 
 import "core:strings"
-VERSION :: "shoji-sa-1"
+VERSION :: "shoji-sa-2"
 MAX_PACKET :: 4096
 Opcode :: enum u8 {
 	Handshake = 1,
@@ -23,6 +23,7 @@ Opcode :: enum u8 {
 	Window_Order_In,
 	Window_List_To_Space,
 	Window_To_Space,
+	Space_Create_Tracked,
 }
 Capability :: enum u32 {
 	Dock_Spaces,
@@ -32,6 +33,9 @@ Capability :: enum u32 {
 	Move_Space,
 	Focus_Window,
 	Animation_Patch,
+	Transaction_Diagnostics,
+	Tracked_Space_Create,
+	Window_Layer_Keys,
 }
 Capabilities :: bit_set[Capability;u32]
 Status :: enum u8 {
@@ -40,6 +44,21 @@ Status :: enum u8 {
 	Unsupported,
 	Operation_Failed,
 	Version_Mismatch,
+	Native_Error,
+}
+Native_Stage :: enum u8 {
+	None,
+	Transaction_Create,
+	Proxy_Order,
+	System_Alpha,
+	Transaction_Commit,
+}
+Native_Failure :: struct {
+	stage: Native_Stage,
+	code:  i32,
+}
+note_native_failure :: proc(failure: ^Native_Failure, stage: Native_Stage, code: i32) {
+	if failure != nil && failure.stage == .None && code != 0 {failure^ = {stage, code}}
 }
 Packet :: struct {
 	data:  [MAX_PACKET]u8,
@@ -77,7 +96,7 @@ expected_size :: proc(op: Opcode) -> int {
 	switch op {
 	case .Handshake:
 		return 0
-	case .Space_Focus, .Space_Create, .Space_Destroy:
+	case .Space_Focus, .Space_Create, .Space_Destroy, .Space_Create_Tracked:
 		return 8
 	case .Space_Move:
 		return 25
@@ -97,7 +116,7 @@ expected_size :: proc(op: Opcode) -> int {
 	return -2
 }
 validate :: proc(op: Opcode, data: []u8) -> bool {
-	if u8(op) < 1 || u8(op) > 19 {return false}
+	if u8(op) < 1 || u8(op) > u8(Opcode.Space_Create_Tracked) {return false}
 	expected := expected_size(op)
 	if expected >= 0 {return len(data) == expected}
 	r := reader(data)
@@ -114,4 +133,26 @@ handshake :: proc(data: []u8) -> (caps: Capabilities, ok: bool) {
 	at := strings.index_byte(string(data), 0)
 	if at < 0 || string(data[:at]) != VERSION || len(data) != at + 5 {return}
 	r := reader(data[at + 1:]);caps = unpack(&r, Capabilities);ok = complete(r);return
+}
+
+// These are CGWindowLevelKey values, not native sublevels. MinimumWindow (1)
+// wraps to a positive sublevel on macOS 15; BackstopMenu (3) is the below level.
+window_layer_key :: proc(value: f64, caps: Capabilities) -> i32 {
+	if value < 0 {return .Window_Layer_Keys in caps ? 3 : 4}
+	if value > 0 {return .Window_Layer_Keys in caps ? 5 : 6}
+	return 4
+}
+
+// Preserve old clients while correcting the formerly emitted below/above keys.
+normalize_window_layer_key :: proc(key: i32) -> (i32, bool) {
+	switch key {
+	case 1, 3:
+		return 3, true
+	case 4:
+		return 4, true
+	case 5, 6:
+		return 5, true
+	case:
+		return 0, false
+	}
 }

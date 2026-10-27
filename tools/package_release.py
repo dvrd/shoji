@@ -13,7 +13,7 @@ def package(project, binaries, output, version):
         raise ValueError("version must contain only letters, numbers, dots, hyphens, and underscores")
     project, binaries, output = Path(project), Path(binaries), Path(output)
     required = [binaries / name for name in ("shoji", "shoji-loader", "shoji-sa.dylib")]
-    required += [project / name for name in ("README.md", "PORTING.md", "LICENSE", "tools/service.py")]
+    required += [project / name for name in ("README.md", "PORTING.md", "VALIDATION.md", "SETUP.md", "LICENSE", "tools/service.py", "tools/signing.py")]
     for source in required:
         if not source.is_file():
             raise ValueError(f"missing release input: {source}")
@@ -26,7 +26,7 @@ def package(project, binaries, output, version):
         (stage / "bin").mkdir(parents=True)
         (stage / "tools").mkdir()
         for source in required:
-            target = stage / ("bin" if source.parent == binaries else "tools" if source.name == "service.py" else "") / source.name
+            target = stage / ("bin" if source.parent == binaries else "tools" if source.parent == project / "tools" else "") / source.name
             shutil.copy2(source, target)
         manifest = []
         for source in sorted(stage.rglob("*")):

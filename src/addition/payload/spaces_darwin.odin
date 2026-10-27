@@ -28,7 +28,7 @@ focus_space :: proc(id: u64) -> wire.Status {
 	set_ivar(display, "_currentSpace", target)
 	return .OK
 }
-space_action :: proc(op: wire.Opcode, r: ^wire.Reader) -> wire.Status {
+space_action :: proc(op: wire.Opcode, r: ^wire.Reader, created_space: ^u64) -> wire.Status {
 	id := wire.unpack(r, u64)
 	if g.dock == nil || id == 0 {return .Unsupported}
 	uuid := SLSCopyManagedDisplayForSpace(g.cid, id)
@@ -38,7 +38,7 @@ space_action :: proc(op: wire.Opcode, r: ^wire.Reader) -> wire.Status {
 	#partial switch op {
 	case .Space_Focus:
 		return focus_space(id)
-	case .Space_Create:
+	case .Space_Create, .Space_Create_Tracked:
 		if g.add == nil {return .Unsupported}
 		fresh: Object
 		if g.version.major >=
@@ -47,6 +47,10 @@ space_action :: proc(op: wire.Opcode, r: ^wire.Reader) -> wire.Status {
 		if fresh == nil {return .Operation_Failed}
 		// Preserve upstream ownership at this private Swift boundary.
 		b.call_add(rawptr(fresh), rawptr(display), g.add)
+		if op == .Space_Create_Tracked {
+			created_space^ = send(u64, fresh, "spid")
+			if created_space^ == 0 {return .Operation_Failed}
+		}
 	case .Space_Destroy:
 		if g.remove == nil {return .Unsupported}
 		// Never destroy the display's only user space.

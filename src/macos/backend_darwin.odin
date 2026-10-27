@@ -2,7 +2,9 @@ package macos
 
 import e "../engine"
 import "base:intrinsics"
+import "base:runtime"
 import "core:fmt"
+import "core:mem"
 import "core:strings"
 import objc "core:sys/darwin/Foundation"
 
@@ -10,28 +12,60 @@ Application :: struct {
 	element, observer: Ref,
 	name:              string,
 	hidden:            bool,
+	policy:            int,
 }
 
 State :: struct {
-	feedback:          map[u32]Feedback_Window,
-	feedback_backend:  Feedback_Backend,
-	read_only:         bool,
-	animations:        map[u32]Animation_Job,
-	animation_backend: Animation_Backend,
-	event_sink:        proc(user: rawptr, event: Event),
-	event_user:        rawptr,
-	workspace_events:  Workspace_State,
-	mouse:             Mouse_State,
-	manager:           e.Manager,
-	windows:           map[u32]Ref,
-	applications:      map[i32]Application,
-	connection:        i32,
-	dirty:             bool,
+	opening_tracking: bool,
+	opening_collecting: bool,
+	structural_dirty: bool,
+	opening_backend: e.Opening_Backend,
+	opening_guards: map[u32]Opening_Guard,
+	opening_notice: Owned_Surface,
+	resize_covers: map[u32]Resize_Cover,
+	resize_cover_backend: Resize_Cover_Backend,
+	resize_snapshots: map[u32]Resize_Snapshots,
+	resize_cover_retry: f64,
+	resize_cover_cancel: bool,
+	display_clock: Display_Clock,
+	opening_windows: map[u32]bool,
+	frame_updates:         Frame_Updates,
+	validation_pid:        i32,
+	display_probe:         Display_Probe,
+	window_probe:          Window_Probe,
+	animation_journal:     Animation_Journal,
+	observed:              Snapshot,
+	display_focus_backend: Display_Focus_Backend,
+	feedback:              map[u32]Feedback_Window,
+	feedback_backend:      Feedback_Backend,
+	read_only:             bool,
+	animations:            map[u32]Animation_Job,
+	animation_backend:     Animation_Backend,
+	event_sink:            proc(user: rawptr, event: Event),
+	event_user:            rawptr,
+	workspace_events:      Workspace_State,
+	mouse:                 Mouse_State,
+	manager:               e.Manager,
+	windows:               map[u32]Ref,
+	applications:          map[i32]Application,
+	connection:            i32,
+	dirty:                 bool,
 }
 
 observer_callback :: proc "c" (observer, element, notification: Ref, user: rawptr) {
+	context = runtime.default_context()
 	state := (^State)(user)
 	state.dirty = true
+	scratch: mem.Dynamic_Arena
+	mem.dynamic_arena_init(&scratch);defer mem.dynamic_arena_destroy(&scratch)
+	context.temp_allocator = mem.dynamic_arena_allocator(&scratch)
+	name := text(notification)
+	if name == "AXUIElementDestroyed" {state.structural_dirty = true;opening_destroyed(state, element);return}
+	// AXCreated can precede AXWindowCreated for AppKit, but also announces
+	// controls. Only independent windows require a structural refresh.
+	if name == "AXWindowCreated" || (name == "AXCreated" && attribute_text(element, "AXRole") == "AXWindow") {
+		state.structural_dirty = true;opening_created(state, observer, element)
+	}
 }
 
 observe :: proc(state: ^State, observer, element: Ref, name: string) {
@@ -41,31 +75,32 @@ observe :: proc(state: ^State, observer, element: Ref, name: string) {
 }
 
 state_init :: proc(state: ^State) {
+	// Initialize Cocoa before requesting the WindowServer connection, as yabai does.
+	NSApplicationLoad()
 	state.windows = make(map[u32]Ref)
 	state.applications = make(map[i32]Application)
 	state.connection = SLSMainConnectionID()
 	state.dirty = true
 	e.manager_init(&state.manager, perform, state)
+	state.manager.resize_fade = true
+	state.manager.scroll_animate = true
+	state.manager.scroll_frame_pacing = true
 }
 
 state_destroy :: proc(state: ^State) {
+	resize_cover_stop(state)
+	display_clock_stop(&state.display_clock)
+	opening_stop(state)
+	snapshot_destroy(&state.observed)
 	feedback_stop(state)
 	animation_stop(state)
+	animation_journal_close(&state.animation_journal)
 	for _, element in state.windows {
 		CFRelease(element)
 	}
 	delete(state.windows)
 	for _, app in state.applications {
-		if app.observer != nil {
-			CFRunLoopRemoveSource(
-				CFRunLoopGetMain(),
-				AXObserverGetRunLoopSource(app.observer),
-				kCFRunLoopDefaultMode,
-			)
-			CFRelease(app.observer)
-		}
-		CFRelease(app.element)
-		delete(app.name)
+		application_destroy(app)
 	}
 	delete(state.applications)
 	e.manager_destroy(&state.manager)
@@ -73,7 +108,23 @@ state_destroy :: proc(state: ^State) {
 
 perform :: proc(user: rawptr, action: e.Action) -> string {
 	state := (^State)(user)
-	if state.read_only {return "window operations are disabled in read-only inspection"}
+	if state.read_only {
+		return "window operations are disabled in read-only inspection"
+	}
+	if state.validation_pid != 0 {
+		if action.kind >= .Display_Focus || action.kind == .Space {
+			return(
+				"global desktop operations are disabled during owned-window validation" \
+			)
+		}
+		window := state.manager.windows[action.window]
+		if window == nil || window.pid != state.validation_pid {
+			return "window is outside the validation fixture"
+		}
+	}
+	if action.kind == .Display_Focus {
+		return focus_display(state, action.display)
+	}
 	element := state.windows[action.window]
 	if action.kind >= .Space_Focus ||
 	   action.kind == .Focus_Without_Raise ||
@@ -84,33 +135,35 @@ perform :: proc(user: rawptr, action: e.Action) -> string {
 	   action.kind == .Shadow ||
 	   action.kind == .Order ||
 	   action.kind == .Scale {
-		err := addition_action(action);if err == "" {state.dirty = true};return err
+		err := addition_action(action); if err == "" {
+			state.dirty = true
+		}; return err
 	}
 	if element == nil {
 		return "window no longer has an Accessibility reference"
 	}
 	#partial switch action.kind {
 	case .Expose:
-		if err := perform(state, {kind = .Focus, window = action.window}); err != "" {return err}
+		if err := perform(state, {kind = .Focus, window = action.window});
+		   err != "" {
+			return err
+		}
 		notification := cf_string("com.apple.expose.front.awake")
 		defer CFRelease(notification)
-		if CoreDockSendNotification(notification, 0) !=
-		   0 {return "could not request application Expose"}
-	case .Frame:
-		if action.duration > 0 {return animation_start(state, action)}
-		p := Point{action.frame.x, action.frame.y}
-		size := Size{action.frame.w, action.frame.h}
-		position := AXValueCreate(1, &p)
-		defer CFRelease(position)
-		dimensions := AXValueCreate(2, &size)
-		defer CFRelease(dimensions)
-		// Some applications clamp a size change at the old position; repeat after moving.
-		set_attribute(element, "AXSize", dimensions)
-		a := set_attribute(element, "AXPosition", position)
-		b := set_attribute(element, "AXSize", dimensions)
-		if a != 0 || b != 0 {
-			return fmt.tprintf("Accessibility could not set window frame (%d, %d)", a, b)
+		if CoreDockSendNotification(notification, 0) != 0 {
+			return "could not request application Expose"
 		}
+	case .Frame:
+		if action.duration > 0 {
+			return animation_start(
+				state,
+				animation_frame_action(state, action),
+			)
+		}
+		if err := animation_interrupt(state, action.window); err != "" {
+			return err
+		}
+		return apply_frame_now(state, action.window, action.frame)
 	case .Focus:
 		w := state.manager.windows[action.window]
 		if w == nil {
@@ -122,7 +175,8 @@ perform :: proc(user: rawptr, action: e.Action) -> string {
 			"runningApplicationWithProcessIdentifier:",
 			w.pid,
 		)
-		if app == nil || !intrinsics.objc_send(bool, app, "activateWithOptions:", uint(2)) {
+		if app == nil ||
+		   !intrinsics.objc_send(bool, app, "activateWithOptions:", uint(2)) {
 			return "could not activate application"
 		}
 		set_attribute(element, "AXMain", kCFBooleanTrue)
@@ -167,8 +221,35 @@ perform :: proc(user: rawptr, action: e.Action) -> string {
 	return ""
 }
 
+Display_Probe :: struct {
+	list: proc(state: ^State, ids: []u32, count: ^u32) -> i32,
+	spaces: proc(state: ^State) -> Ref,
+}
+native_display_list :: proc(_: ^State, ids: []u32, count: ^u32) -> i32 {
+	return CGGetActiveDisplayList(u32(len(ids)), raw_data(ids), count)
+}
+native_display_spaces :: proc(state: ^State) -> Ref {return SLSCopyManagedDisplaySpaces(state.connection)}
+
 refresh_displays :: proc(state: ^State) {
 	m := &state.manager
+	probe := state.display_probe
+	if probe.list == nil {probe = {native_display_list, native_display_spaces}}
+	ids: [64]u32
+	count: u32
+	// A failed observation must not destroy labels, display membership or trees.
+	if probe.list(state, ids[:], &count) != 0 || count == 0 || count > len(ids) {return}
+	data := probe.spaces(state)
+	if data == nil {return}
+	defer CFRelease(data)
+	if CFArrayGetCount(data) == 0 {return}
+	for i in 0 ..< CFArrayGetCount(data) {
+		entry := CFArrayGetValueAtIndex(data, i)
+		spaces := dictionary(entry, "Spaces")
+		if spaces == nil || CFArrayGetCount(spaces) == 0 {return}
+		for j in 0 ..< CFArrayGetCount(spaces) {
+			if number(dictionary(CFArrayGetValueAtIndex(spaces, j), "id64")) == 0 {return}
+		}
+	}
 	labels := make(map[u32]string, context.temp_allocator)
 	for &d in m.displays {
 		labels[d.id] = d.label
@@ -180,11 +261,6 @@ refresh_displays :: proc(state: ^State) {
 		for _, label in labels {
 			delete(label)
 		}
-	}
-	ids: [64]u32
-	count: u32
-	if CGGetActiveDisplayList(len(ids), &ids[0], &count) != 0 {
-		return
 	}
 	primary_height := CGDisplayBounds(CGMainDisplayID()).h
 	m.main_display = CGMainDisplayID()
@@ -229,11 +305,6 @@ refresh_displays :: proc(state: ^State) {
 		append(&m.displays, d)
 	}
 	e.order_displays(m)
-	data := SLSCopyManagedDisplaySpaces(state.connection)
-	if data == nil {
-		return
-	}
-	defer CFRelease(data)
 	seen := make(map[u64]bool, context.temp_allocator)
 	index: u32 = 0
 	for i in 0 ..< CFArrayGetCount(data) {
@@ -287,6 +358,11 @@ refresh_displays :: proc(state: ^State) {
 			ordered_remove(&m.spaces, i)
 		}
 	}
+	for i in 1 ..< len(m.spaces) {
+		for j := i; j > 0 && m.spaces[j - 1].index > m.spaces[j].index; j -= 1 {
+			m.spaces[j - 1], m.spaces[j] = m.spaces[j], m.spaces[j - 1]
+		}
+	}
 	active := SLSCopyActiveMenuBarDisplayIdentifier(state.connection)
 	if active != nil {
 		sid := SLSManagedDisplayGetCurrentSpace(state.connection, active)
@@ -300,9 +376,9 @@ refresh_displays :: proc(state: ^State) {
 
 window_space :: proc(state: ^State, id: u32) -> u64 {
 	id := id
-	number := CFNumberCreate(nil, 3, &id)
-	defer CFRelease(number)
-	array := CFArrayCreate(nil, &number, 1, nil)
+	value := CFNumberCreate(nil, 3, &id)
+	defer CFRelease(value)
+	array := CFArrayCreate(nil, &value, 1, nil)
 	defer CFRelease(array)
 	spaces := SLSCopySpacesForWindows(state.connection, 7, array)
 	if spaces == nil {
@@ -312,10 +388,30 @@ window_space :: proc(state: ^State, id: u32) -> u64 {
 	if CFArrayGetCount(spaces) == 0 {
 		return 0
 	}
-	return number_value(CFArrayGetValueAtIndex(spaces, 0))
+	return number(CFArrayGetValueAtIndex(spaces, 0))
 }
 
-number_value :: number
+window_is_root :: proc(state: ^State, id: u32, element, application: Ref) -> bool {
+	id := id
+	number := CFNumberCreate(nil, 3, &id);defer CFRelease(number)
+	array := CFArrayCreate(nil, &number, 1, nil);defer CFRelease(array)
+	query := SLSWindowQueryWindows(state.connection, array, 1)
+	parent_id: u32
+	if query != nil {
+		defer CFRelease(query)
+		iterator := SLSWindowQueryResultCopyWindows(query)
+		if iterator != nil {
+			defer CFRelease(iterator)
+			if SLSWindowIteratorGetCount(iterator) == 1 && SLSWindowIteratorAdvance(iterator) {
+				parent_id = SLSWindowIteratorGetParentID(iterator)
+			}
+		}
+	}
+	if parent_id == 0 {return true}
+	parent := attribute(element, "AXParent")
+	if parent == nil {return false};defer CFRelease(parent)
+	return CFEqual(parent, application)
+}
 window_frame :: proc(element: Ref) -> e.Rect {
 	p: Point
 	size: Size
@@ -332,211 +428,15 @@ window_frame :: proc(element: Ref) -> e.Rect {
 	return {p.x, p.y, size.w, size.h}
 }
 
-refresh :: proc(state: ^State) {
-	defer {if !state.read_only &&
-		   state.manager.shadow_configured {if err := e.apply_window_shadows(&state.manager); err != "" {fmt.eprintln("shoji: shadow:", err)}}}
-	pool := pool_push()
-	defer pool_pop(pool)
-	before := snapshot(state)
-	refresh_displays(state)
-	m := &state.manager
-	apps := intrinsics.objc_send(^objc.Object, workspace(), "runningApplications")
-	seen := make(map[u32]bool, context.temp_allocator)
-	seen_apps := make(map[i32]bool, context.temp_allocator)
-	for i in 0 ..< intrinsics.objc_send(uint, apps, "count") {
-		running := intrinsics.objc_send(^objc.Object, apps, "objectAtIndex:", i)
-		pid := intrinsics.objc_send(i32, running, "processIdentifier")
-		if pid == getpid() {
-			continue
-		}
-		policy := intrinsics.objc_send(int, running, "activationPolicy")
-		if policy != 0 {
-			continue
-		}
-		seen_apps[pid] = true
-		app, exists := state.applications[pid]
-		if !exists {
-			app.element = AXUIElementCreateApplication(pid)
-			AXUIElementSetMessagingTimeout(app.element, 0.25)
-			app.name = strings.clone(
-				objc_text(intrinsics.objc_send(^objc.Object, running, "localizedName")),
-			)
-			if AXObserverCreate(pid, observer_callback, &app.observer) == 0 {
-				for name in ([]string {
-						"AXWindowCreated",
-						"AXFocusedWindowChanged",
-						"AXApplicationActivated",
-						"AXApplicationDeactivated",
-						"AXApplicationHidden",
-						"AXApplicationShown",
-					}) {
-					observe(state, app.observer, app.element, name)
-				}
-				CFRunLoopAddSource(
-					CFRunLoopGetMain(),
-					AXObserverGetRunLoopSource(app.observer),
-					kCFRunLoopDefaultMode,
-				)
-			}
-			state.applications[pid] = app
-		}
-		hidden := intrinsics.objc_send(bool, running, "isHidden")
-		app.hidden = hidden
-		state.applications[pid] = app
-		list := attribute(app.element, "AXWindows")
-		if list == nil {
-			// A temporarily unresponsive application is not evidence its windows were destroyed.
-			for id, w in m.windows {
-				if w.pid == pid {
-					seen[id] = true
-				}
-			}
-			continue
-		}
-		for j in 0 ..< CFArrayGetCount(list) {
-			element := CFArrayGetValueAtIndex(list, j)
-			id: u32
-			if _AXUIElementGetWindow(element, &id) != 0 || id == 0 {
-				continue
-			}
-			seen[id] = true
-			sid := window_space(state, id)
-			s := e.space_by_id(m, sid)
-			did: u32
-			if s != nil {
-				did = s.display
-			}
-			w := m.windows[id]
-			title := attribute_text(element, "AXTitle")
-			if w == nil {
-				state.windows[id] = CFRetain(element)
-				w = e.add_window(
-					m,
-					e.Window {
-						id = id,
-						pid = pid,
-						app = app.name,
-						title = title,
-						role = attribute_text(element, "AXRole"),
-						subrole = attribute_text(element, "AXSubrole"),
-						frame = window_frame(element),
-						space = sid,
-						display = did,
-						hidden = hidden,
-						minimized = attribute_bool(element, "AXMinimized"),
-						fullscreen = attribute_bool(element, "AXFullScreen"),
-						opacity = 1,
-						layer = "normal",
-					},
-				)
-				if app.observer != nil {
-					for name in ([]string {
-							"AXUIElementDestroyed",
-							"AXMoved",
-							"AXResized",
-							"AXTitleChanged",
-							"AXWindowMiniaturized",
-							"AXWindowDeminiaturized",
-						}) {
-						observe(state, app.observer, element, name)
-					}
-				}
-			} else {
-				was_managed := e.managed(w)
-				old_space := w.space
-				w.hidden = hidden
-				w.minimized = attribute_bool(element, "AXMinimized")
-				w.fullscreen = attribute_bool(element, "AXFullScreen")
-				w.frame = window_frame(element)
-				if w.title != title {
-					delete(w.title)
-					w.title = strings.clone(title)
-				}
-				if sid != 0 {
-					w.space = sid
-					w.display = did
-				}
-				if was_managed != e.managed(w) || old_space != w.space {
-					if previous := e.space_by_id(m, old_space); previous != nil {
-						e.remove(&previous.view, id)
-					}
-					if current := e.space_by_id(m, w.space); current != nil && e.managed(w) {
-						e.add(&current.view, id, m.focused)
-					}
-				}
-			}
-			tags: u64
-			if SLSGetWindowTags(state.connection, id, &tags, 64) == 0 {
-				w.sticky = tags & (1 << 11) != 0;w.shadow = tags & (1 << 3) == 0
-			}
-			alpha: f32
-			SLSGetWindowLevel(state.connection, id, &w.level)
-			w.sub_level = SLSGetWindowSubLevel(state.connection, id)
-			w.layer = w.sub_level < 0 ? "below" : (w.sub_level > 0 ? "above" : "normal")
-			if w.scratchpad != "" {
-				ordered: u8
-				if SLSWindowIsOrderedIn(state.connection, id, &ordered) ==
-				   0 {w.scratchpad_hidden = ordered == 0}
-			}
-			if SLSGetWindowAlpha(state.connection, id, &alpha) == 0 {w.opacity = f64(alpha)}
-			position_key := cf_string("AXPosition");size_key := cf_string("AXSize")
-			AXUIElementIsAttributeSettable(element, position_key, &w.can_move)
-			AXUIElementIsAttributeSettable(element, size_key, &w.can_resize)
-			CFRelease(position_key);CFRelease(size_key)
-		}
-		CFRelease(list)
-	}
-	gone := make([dynamic]u32, 0, 8, context.temp_allocator)
-	for id in m.windows {
-		if !seen[id] {
-			append(&gone, id)
-		}
-	}
-	for id in gone {
-		CFRelease(state.windows[id])
-		delete_key(&state.windows, id)
-		e.remove_window(m, id)
-	}
-	terminated := make([dynamic]i32, 0, 8, context.temp_allocator)
-	for pid in state.applications {
-		if !seen_apps[pid] {
-			append(&terminated, pid)
-		}
-	}
-	for pid in terminated {
-		app := state.applications[pid]
-		if app.observer != nil {
-			CFRunLoopRemoveSource(
-				CFRunLoopGetMain(),
-				AXObserverGetRunLoopSource(app.observer),
-				kCFRunLoopDefaultMode,
-			)
-			CFRelease(app.observer)
-		}
-		CFRelease(app.element)
-		delete(app.name)
-		delete_key(&state.applications, pid)
-	}
-	front := intrinsics.objc_send(^objc.Object, workspace(), "frontmostApplication")
-	pid := intrinsics.objc_send(i32, front, "processIdentifier")
-	if app, ok := state.applications[pid]; ok {
-		focused := attribute(app.element, "AXFocusedWindow")
-		if focused != nil {
-			id: u32
-			_AXUIElementGetWindow(focused, &id)
-			CFRelease(focused)
-			e.focus_window(m, id)
-		}
-	}
-	if !state.read_only && m.window_opacity {
-		if err := e.apply_window_opacity(m); err != "" {fmt.eprintln("shoji: opacity:", err)}
-	}
-	if !state.read_only {
-		if _, err := addition_check(); err == "" {
-			if err := e.apply_window_layers(m); err != "" {fmt.eprintln("shoji: layer:", err)}
-		}
-		mouse_follow_focus(state)
-	}
-	emit_changes(state, before)
-	state.dirty = false
+observe_application :: proc(
+	state: ^State,
+	pid: i32,
+	activation_policy: int,
+) -> bool {
+	// Accessory apps include System Information's About This Mac window.
+	// Prohibited/background apps remain outside window management.
+	return(
+		(activation_policy == 0 || activation_policy == 1) &&
+		(state.validation_pid == 0 || pid == state.validation_pid) \
+	)
 }

@@ -27,6 +27,8 @@ layout_name :: proc(layout: Layout) -> string {
 		return "bsp"
 	case .Stack:
 		return "stack"
+	case .Scroll:
+		return "scroll"
 	case .Float:
 		return "float"
 	}
@@ -39,6 +41,8 @@ parse_layout :: proc(text: string) -> (Layout, bool) {
 		return .BSP, true
 	case "stack":
 		return .Stack, true
+	case "scroll":
+		return .Scroll, true
 	case "float":
 		return .Float, true
 	}
@@ -125,6 +129,8 @@ execute :: proc(m: ^Manager, args: []string) -> Response {
 		return failure("missing command domain")
 	}
 	switch args[0] {
+	case "debug":
+		return motion_debug(m, args[1:])
 	case "query":
 		return query(m, args[1:])
 	case "config":

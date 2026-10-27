@@ -20,6 +20,7 @@ Rule :: struct {
 	opacity:                                        Maybe(f64),
 	sticky, native_fullscreen, mouse_follows_focus: Maybe(bool),
 	one_shot:                                       bool,
+	pending_window:                                 u32,
 }
 
 Signal :: struct {
@@ -60,24 +61,70 @@ apply_rules :: proc(
 	w: ^Window,
 	existing: bool = false,
 	selected: int = -1,
-) -> string {
-	for i := 0; i < len(m.rules); {
+	initial: bool = false,
+) -> (
+	err: string,
+) {
+	previous_space := w.space
+	was_pending := w.rules_pending
+	defer {
+		// Explicit reapply excludes one-shots and must not cancel a creation retry.
+		if !existing {w.rules_pending = err != ""}
+		if !existing || !was_pending || err != "" {
+			delete(w.rule_error);w.rule_error = strings.clone(err)
+		}
+	}
+	// Resolve precedence before issuing operations. A failed earlier destination
+	// must not prevent a later management rule from taking effect.
+	effects: Rule
+	one_shots := make([dynamic]int, context.temp_allocator)
+	matched := false
+	for i in 0 ..< len(m.rules) {
 		r := &m.rules[i]
-		if (existing && r.one_shot) || (selected >= 0 && i != selected) || !rule_matches(r^, w) {
-			i += 1
+		matches := rule_matches(r^, w)
+		if r.pending_window == w.id && !matches {r.pending_window = 0}
+		if (existing && r.one_shot) ||
+		   (selected >= 0 && i != selected) ||
+		   !matches ||
+		   (r.one_shot && r.pending_window != 0 && r.pending_window != w.id) {
 			continue
 		}
-		if enabled, ok := r.manage.?; ok {
-			w.floating = !enabled
-			w.manage_override = enabled
-		}
-		if err := apply_rule_effects(m, w, r^); err != "" {return err}
+		matched = true
+		if r.manage != nil {effects.manage = r.manage}
+		if r.opacity != nil {effects.opacity = r.opacity}
+		if r.sticky != nil {effects.sticky = r.sticky}
+		if r.native_fullscreen != nil {effects.native_fullscreen = r.native_fullscreen}
+		if r.mouse_follows_focus != nil {effects.mouse_follows_focus = r.mouse_follows_focus}
+		for pair in ([5][2]^string {
+				{&effects.space, &r.space},
+				{&effects.display, &r.display},
+				{&effects.grid, &r.grid},
+				{&effects.scratchpad, &r.scratchpad},
+				{&effects.sub_layer, &r.sub_layer},
+			}) {if pair[1]^ != "" {pair[0]^ = pair[1]^}}
 		if r.one_shot {
-			rule_destroy(r)
-			ordered_remove(&m.rules, i)
-		} else {
-			i += 1
+			r.pending_window = w.id
+			append(&one_shots, i)
 		}
+	}
+	if !matched {return ""}
+	if enabled, ok := effects.manage.?; ok {
+		w.floating = !enabled;w.manage_override = enabled
+		if !managed(w) {if s := space_by_id(m, w.space); s != nil {remove(&s.view, w.id)}}
+	}
+	if value, ok := effects.mouse_follows_focus.?; ok {w.mouse_follows_focus = value}
+	err = apply_rule_effects(m, w, effects)
+	// Even a partial backend failure can change management or destination.
+	// Reconcile only those changes; unchanged membership keeps its original node.
+	if !initial {
+		if membership_error := sync_window_membership(m, w, previous_space);
+		   membership_error != "" && membership_error != err {
+			err = err == "" ? membership_error : errorf("%s; %s", err, membership_error)
+		}
+	}
+	if err != "" {return err}
+	for i := len(one_shots) - 1; i >= 0; i -= 1 {
+		index := one_shots[i];rule_destroy(&m.rules[index]);ordered_remove(&m.rules, index)
 	}
 	return ""
 }
@@ -95,9 +142,14 @@ apply_rule_effects :: proc(m: ^Manager, w: ^Window, r: Rule) -> string {
 	}
 	if r.space != "" || r.display != "" {
 		if target == nil {return "rule destination could not be located"}
-		if err := perform(m, {kind = .Space, window = w.id, space = target.id});
-		   err != "" {return err}
-		w.space, w.display = target.id, target.display
+		if target.id != w.space {
+			if managed(w) &&
+			   target.view.layout != .Float &&
+			   !can_add(&target.view, m.focused) {return "rule destination tiling tree is full"}
+			if err := perform(m, {kind = .Space, window = w.id, space = target.id});
+			   err != "" {return err}
+			w.space, w.display = target.id, target.display
+		}
 		if follow {if err := perform(m, {kind = .Space_Focus, space = target.id}); err != "" {return err}}
 	}
 	if value, ok := r.sticky.?; ok {

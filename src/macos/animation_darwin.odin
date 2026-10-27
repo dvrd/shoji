@@ -1,137 +1,163 @@
 package macos
 
 import wire "../addition/protocol"
+import recovery "../addition/recovery"
 import e "../engine"
 import "core:fmt"
 import "core:time"
 
 Animation_Proxy :: struct {
-	window, id: u32,
-	ctx:        Ref,
-	frame:      e.Rect,
+	window: u32,
+	using surface: Owned_Surface,
+}
+Live_Resize :: struct {
+	current: e.Rect,
+}
+Animation_Presentation :: union {
+	Live_Resize,
+	Animation_Proxy,
 }
 Animation_Job :: struct {
-	proxy:    Animation_Proxy,
-	target:   e.Rect,
-	began:    time.Time,
+	presentation: Animation_Presentation,
+	from: e.Rect,
+	target: e.Rect,
+	began: time.Time,
 	duration: f64,
-	easing:   e.Easing,
+	easing: e.Easing,
+	progress: f64,
+}
+animation_is_live :: proc(job: Animation_Job) -> bool {
+	_, live := job.presentation.(Live_Resize)
+	return live
 }
 Animation_Backend :: struct {
-	create:  proc(state: ^State, window: u32) -> (Animation_Proxy, string),
-	update:  proc(state: ^State, proxy: Animation_Proxy, frame: e.Rect) -> string,
+	create: proc(state: ^State, window: u32) -> (Animation_Proxy, string),
+	update: proc(
+		state: ^State,
+		proxy: Animation_Proxy,
+		frame: e.Rect,
+	) -> string,
 	restore: proc(state: ^State, proxy: Animation_Proxy) -> string,
 	destroy: proc(state: ^State, proxy: Animation_Proxy),
-	apply:   proc(state: ^State, action: e.Action) -> string,
+	apply: proc(state: ^State, window: u32, frame: e.Rect) -> string,
 }
 
 foreign import animation_sls "system:SkyLight.framework"
 foreign import animation_cg "system:CoreGraphics.framework"
-Animation_Transform :: struct {
-	a, b, c, d, tx, ty: f64,
-}
 @(default_calling_convention = "c")
 foreign animation_sls {
 	SLSHWCaptureWindowList :: proc(cid: i32, windows: ^u32, count, options: i32) -> Ref ---
-	CGSNewRegionWithRect :: proc(rect: ^e.Rect, region: ^Ref) -> i32 ---
-	CGRegionCreateEmptyRegion :: proc() -> Ref ---
-	SLSNewWindowWithOpaqueShapeAndContext :: proc(cid, type: i32, region, empty: Ref, flags: i32, tags: ^u64, x, y: f32, tag_size: i32, window: ^u32, ctx: rawptr) -> i32 ---
-	SLWindowContextCreate :: proc(cid: i32, window: u32, options: Ref) -> Ref ---
-	SLSReleaseWindow :: proc(cid: i32, window: u32) -> i32 ---
-	SLSSetWindowOpacity :: proc(cid: i32, window: u32, opaque: bool) -> i32 ---
-	SLSSetWindowResolution :: proc(cid: i32, window: u32, scale: f64) -> i32 ---
-	SLSSetWindowAlpha :: proc(cid: i32, window: u32, alpha: f32) -> i32 ---
-	SLSSetWindowLevel :: proc(cid: i32, window: u32, level: i32) -> i32 ---
-	SLSSetWindowSubLevel :: proc(cid: i32, window: u32, level: i32) -> i32 ---
-	SLSSetWindowTransform :: proc(cid: i32, window: u32, transform: Animation_Transform) -> i32 ---
 }
 @(default_calling_convention = "c")
 foreign animation_cg {
 	CGPreflightScreenCaptureAccess :: proc() -> bool ---
-	CGContextClearRect :: proc(ctx: Ref, rect: e.Rect) ---
 	CGContextDrawImage :: proc(ctx: Ref, rect: e.Rect, image: Ref) ---
-	CGContextFlush :: proc(ctx: Ref) ---
-	CGContextRelease :: proc(ctx: Ref) ---
 }
 
 animation_swap :: proc(proxy: Animation_Proxy, hide: bool) -> string {
 	packet := wire.begin(hide ? wire.Opcode.Proxy_In : wire.Opcode.Proxy_Out)
-	wire.pack(&packet, i32(1));wire.pack(&packet, proxy.window);wire.pack(&packet, proxy.id)
+	wire.pack(&packet, i32(1)); wire.pack(&packet, proxy.window)
+	wire.pack(&packet, proxy.id)
 	_, err := addition_exchange(&packet)
 	return err
 }
 
 native_proxy_destroy :: proc(state: ^State, proxy: Animation_Proxy) {
-	if proxy.ctx != nil {CGContextRelease(proxy.ctx)}
-	if proxy.id != 0 {SLSReleaseWindow(state.connection, proxy.id)}
+	surface_destroy(state, proxy.surface)
 }
 
-native_proxy_create :: proc(state: ^State, window: u32) -> (proxy: Animation_Proxy, err: string) {
+native_proxy_create :: proc(
+	state: ^State,
+	window: u32,
+) -> (
+	proxy: Animation_Proxy,
+	err: string,
+) {
 	window := window
-	if !CGPreflightScreenCaptureAccess(
-		
-	) {return {}, "Screen Recording permission is required for window animations"}
-	if _, error := addition_check(); error != "" {return {}, error}
+	if window in state.animation_journal.entries {
+		return {}, "window has pending animation recovery"
+	}
+	if !CGPreflightScreenCaptureAccess() {
+		return {},
+			"Screen Recording permission is required for window animations"
+	}
+	if _, error := addition_check(); error != "" {
+		return {}, error
+	}
 	proxy.window = window
 	if SLSGetWindowBounds(state.connection, window, &proxy.frame) != 0 ||
 	   proxy.frame.w <= 0 ||
-	   proxy.frame.h <= 0 {return {}, "could not capture window bounds"}
-	images := SLSHWCaptureWindowList(state.connection, &window, 1, (1 << 11) | (1 << 8))
-	if images == nil {return {}, "could not capture window image"}
-	defer CFRelease(images)
-	if CFArrayGetCount(images) == 0 {return {}, "window capture returned no images"}
-	region: Ref
-	if CGSNewRegionWithRect(&proxy.frame, &region) != 0 ||
-	   region == nil {return {}, "could not allocate proxy region"}
-	defer CFRelease(region)
-	empty := CGRegionCreateEmptyRegion()
-	if empty == nil {return {}, "could not allocate empty proxy region"}
-	defer CFRelease(empty)
-	tags: u64 = 1 << 46
-	if SLSNewWindowWithOpaqueShapeAndContext(
-		   state.connection,
-		   2,
-		   region,
-		   empty,
-		   13 | (1 << 18),
-		   &tags,
-		   0,
-		   0,
-		   64,
-		   &proxy.id,
-		   nil,
-	   ) !=
-	   0 {return {}, "could not create animation proxy"}
-	success := false
-	defer {if !success {native_proxy_destroy(state, proxy)}}
-	proxy.ctx = SLWindowContextCreate(state.connection, proxy.id, nil)
-	if proxy.ctx == nil {return {}, "could not create proxy drawing context"}
-	alpha: f32 = 1;level: i32
-	SLSGetWindowAlpha(state.connection, window, &alpha)
-	SLSGetWindowLevel(state.connection, window, &level)
-	SLSSetWindowOpacity(state.connection, proxy.id, false)
-	SLSSetWindowResolution(state.connection, proxy.id, 2)
-	SLSSetWindowAlpha(state.connection, proxy.id, alpha)
-	SLSSetWindowLevel(state.connection, proxy.id, level)
-	SLSSetWindowSubLevel(
+	   proxy.frame.h <= 0 {
+		return {}, "could not capture window bounds"
+	}
+	images := SLSHWCaptureWindowList(
 		state.connection,
-		proxy.id,
-		SLSGetWindowSubLevel(state.connection, window),
+		&window,
+		1,
+		(1 << 11) | (1 << 8),
 	)
+	if images == nil {
+		return {}, "could not capture window image"
+	}
+	defer CFRelease(images)
+	if CFArrayGetCount(images) == 0 {
+		return {}, "window capture returned no images"
+	}
+	surface, surface_error := surface_create(
+		state,
+		proxy.frame,
+		window,
+		1 << 46,
+		13 | (1 << 18),
+		2,
+	)
+	if surface_error != "" {
+		return {}, surface_error
+	}
+	proxy.surface = surface
+	success := false
+	defer {
+		if !success {
+			native_proxy_destroy(state, proxy)
+		}
+	}
+	alpha: f32 = 1
+	SLSGetWindowAlpha(state.connection, window, &alpha)
+	SLSSetWindowAlpha(state.connection, proxy.id, alpha)
 	frame := e.Rect{0, 0, proxy.frame.w, proxy.frame.h}
 	CGContextClearRect(proxy.ctx, frame)
 	CGContextDrawImage(proxy.ctx, frame, CFArrayGetValueAtIndex(images, 0))
 	CGContextFlush(proxy.ctx)
-	if error := native_proxy_update(state, proxy, proxy.frame); error != "" {return {}, error}
+	if error := native_proxy_update(state, proxy, proxy.frame); error != "" {
+		return {}, error
+	}
+	owner, real_ok := animation_recovery_query_owner(state.connection, window)
+	proxy_owner, proxy_ok := animation_recovery_query_owner(
+		state.connection,
+		proxy.id,
+	)
+	if !real_ok || !proxy_ok {
+		return {}, "could not identify animation window owners"
+	}
+	if error := animation_journal_record(
+		&state.animation_journal,
+		recovery.Entry{window, proxy.id, owner, proxy_owner},
+	); error != "" {
+		return {}, error
+	}
 	if error := animation_swap(proxy, true); error != "" {
 		// An exchange may time out after Dock has hidden the real window.
 		// Attempt restoration before releasing the proxy.
 		if restored := animation_swap(proxy, false); restored != "" {
-			if state.animations == nil {state.animations = make(map[u32]Animation_Job)}
+			if state.animations == nil {
+				state.animations = make(map[u32]Animation_Job)
+			}
 			state.animations[window] = Animation_Job {
-				proxy = proxy,
+				presentation = proxy,
 			}
 			success = true
+		} else {
+			animation_journal_remove(&state.animation_journal, window)
 		}
 		return {}, error
 	}
@@ -139,61 +165,168 @@ native_proxy_create :: proc(state: ^State, window: u32) -> (proxy: Animation_Pro
 	return proxy, ""
 }
 
-native_proxy_update :: proc(state: ^State, proxy: Animation_Proxy, frame: e.Rect) -> string {
-	transform := Animation_Transform {
-		a = proxy.frame.w / frame.w,
-		d = proxy.frame.h / frame.h,
-	}
-	transform.tx, transform.ty = -frame.x * transform.a, -frame.y * transform.d
-	if SLSSetWindowTransform(state.connection, proxy.id, transform) !=
-	   0 {return "could not transform animation proxy"}
-	return ""
+native_proxy_update :: proc(
+	state: ^State,
+	proxy: Animation_Proxy,
+	frame: e.Rect,
+) -> string {
+	return surface_update(state, proxy.surface, frame)
 }
 native_proxy_restore :: proc(
 	state: ^State,
 	proxy: Animation_Proxy,
-) -> string {return animation_swap(proxy, false)}
-native_proxy_apply :: proc(state: ^State, action: e.Action) -> string {return perform(
-		state,
-		action,
-	)}
-
+) -> string {
+	entry, exists := state.animation_journal.entries[proxy.window]
+	if !exists {return "animation recovery entry is missing"}
+	backend := recovery.Backend{animation_recovery_owner, animation_recovery_restore, state}
+	if result := recovery.restore(entry, backend, false); result == .Retry {return "could not restore animated window"}
+	return animation_journal_remove(&state.animation_journal, proxy.window)
+}
 animation_backend :: proc(state: ^State) -> Animation_Backend {
-	if state.animation_backend.create != nil {return state.animation_backend}
+	if state.animation_backend.create != nil {
+		return state.animation_backend
+	}
 	return {
 		native_proxy_create,
 		native_proxy_update,
 		native_proxy_restore,
 		native_proxy_destroy,
-		native_proxy_apply,
+		apply_frame_now,
 	}
 }
 
 animation_finish :: proc(state: ^State, window: u32) -> string {
 	job, exists := state.animations[window]
-	if !exists {return ""}
+	if !exists {
+		return ""
+	}
 	backend := animation_backend(state)
-	if err := backend.restore(state, job.proxy); err != "" {return err}
-	backend.destroy(state, job.proxy)
+	if animation_is_live(job) {
+		if state.manager.windows[window] != nil &&
+		   job.presentation.(Live_Resize).current != job.target {
+			if err := backend.apply(state, window, job.target); err != "" {
+				return err
+			}
+		}
+		delete_key(&state.animations, window)
+		state.dirty = true
+		return ""
+	}
+	if err := backend.restore(state, job.presentation.(Animation_Proxy));
+	   err != "" {
+		return err
+	}
+	backend.destroy(state, job.presentation.(Animation_Proxy))
+	delete_key(&state.animations, window)
+	return ""
+}
+
+// An immediate frame supersedes animation rather than completing its stale
+// target. Captured proxies must restore their real window before it moves.
+animation_interrupt :: proc(state: ^State, window: u32) -> string {
+	job, exists := state.animations[window]
+	if !exists {
+		return ""
+	}
+	if !animation_is_live(job) {
+		backend := animation_backend(state)
+		if err := backend.restore(state, job.presentation.(Animation_Proxy));
+		   err != "" {
+			return err
+		}
+		backend.destroy(state, job.presentation.(Animation_Proxy))
+	}
 	delete_key(&state.animations, window)
 	return ""
 }
 
 animation_start :: proc(state: ^State, action: e.Action) -> string {
-	if err := animation_finish(state, action.window); err != "" {return err}
-	backend := animation_backend(state)
-	proxy, err := backend.create(state, action.window)
-	if err != "" {return err}
-	if state.animations == nil {state.animations = make(map[u32]Animation_Job)}
-	state.animations[action.window] = Animation_Job {
-		proxy,
-		action.frame,
-		time.now(),
-		action.duration,
-		state.manager.animation_easing,
+	return animation_start_at(state, action, time.now())
+}
+
+animation_frame_action :: proc(state: ^State, action: e.Action) -> e.Action {
+	result := action
+	if w := state.manager.windows[action.window]; w != nil {
+		if w.opening.phase == .Opening || w.frame.w != action.frame.w || w.frame.h != action.frame.h {result.live_resize = true}
 	}
-	raw := action;raw.duration = 0
-	if err := backend.apply(state, raw); err != "" {
+	if job, exists := state.animations[action.window]; exists && animation_is_live(job) {result.live_resize = true}
+	return result
+}
+
+animation_start_at :: proc(
+	state: ^State,
+	action: e.Action,
+	now: time.Time,
+) -> string {
+	backend := animation_backend(state)
+	if action.live_resize {
+		w := state.manager.windows[action.window]
+		if w == nil {
+			return "window no longer exists"
+		}
+		from := w.frame
+		if job, exists := state.animations[action.window];
+		   exists && animation_is_live(job) {
+			from = job.presentation.(Live_Resize).current
+		} else if err := animation_finish(state, action.window); err != "" {
+			return err
+		}
+		if state.animations == nil {
+			state.animations = make(map[u32]Animation_Job)
+		}
+		// Resize the app itself so text and controls redraw at their native
+		// scale. No captured surface is stretched or hidden for this transition.
+		state.animations[action.window] = Animation_Job {
+			presentation = Live_Resize{from},
+			from         = from,
+			target       = action.frame,
+			began        = now,
+			duration     = action.duration,
+			easing       = state.manager.animation_easing,
+		}
+		return ""
+	}
+	if job, exists := state.animations[action.window];
+	   exists && animation_is_live(job) {
+		if err := animation_finish(state, action.window); err != "" {
+			return err
+		}
+	}
+	if job, exists := state.animations[action.window];
+	   exists && job.duration > 0 {
+		// Keep the original captured surface and recovery record. Restoring and
+		// recapturing here would flash the real window at its previous target.
+		t := time.duration_seconds(time.diff(job.began, now)) / job.duration
+		from := e.interpolate_frame(job.from, job.target, t, job.easing)
+		if err := backend.apply(state, action.window, action.frame);
+		   err != "" {
+			return err
+		}
+		job.from, job.target, job.began, job.duration =
+			from, action.frame, now, action.duration
+		job.easing = state.manager.animation_easing
+		state.animations[action.window] = job
+		return ""
+	}
+	if err := animation_finish(state, action.window); err != "" {
+		return err
+	}
+	proxy, err := backend.create(state, action.window)
+	if err != "" {
+		return err
+	}
+	if state.animations == nil {
+		state.animations = make(map[u32]Animation_Job)
+	}
+	state.animations[action.window] = Animation_Job {
+		presentation = proxy,
+		from         = proxy.frame,
+		target       = action.frame,
+		began        = now,
+		duration     = action.duration,
+		easing       = state.manager.animation_easing,
+	}
+	if err := backend.apply(state, action.window, action.frame); err != "" {
 		animation_finish(state, action.window)
 		return err
 	}
@@ -202,29 +335,83 @@ animation_start :: proc(state: ^State, action: e.Action) -> string {
 
 animation_tick :: proc(state: ^State, now: time.Time) {
 	backend := animation_backend(state)
+	live_batch := false
+	for _, job in state.animations {
+		if animation_is_live(job) {
+			live_batch = true; break
+		}
+	}
+	if live_batch {
+		if err := frame_updates_begin(state); err != "" {
+			fmt.eprintln("shoji:", err); return
+		}
+		defer {
+			if err := frame_updates_end(state); err != "" {
+				fmt.eprintln("shoji:", err)
+			}
+		}
+	}
 	finished := make([dynamic]u32, context.temp_allocator)
 	for window, job in state.animations {
-		if job.duration <= 0 {append(&finished, window);continue}
+		if job.duration <= 0 {
+			append(&finished, window); continue
+		}
 		t := time.duration_seconds(time.diff(job.began, now)) / job.duration
+		if animation_is_live(job) {
+			if state.manager.suspended ||
+			   state.manager.gesture_active ||
+			   state.manager.windows[window] == nil {
+				append(&finished, window); continue
+			}
+			frame := e.interpolate_frame(job.from, job.target, t, job.easing)
+			updated := job
+			updated.presentation, updated.progress = Live_Resize{frame}, e.ease(job.easing, t)
+			state.animations[window] = updated
+			if err := backend.apply(state, window, frame); err != "" {
+				fmt.eprintln("shoji: live resize:", err)
+				delete_key(&state.animations, window); state.dirty = true
+				continue
+			}
+			if t >= 1 {
+				append(&finished, window)
+			}
+			continue
+		}
 		if state.manager.suspended ||
 		   state.manager.gesture_active ||
 		   state.manager.windows[window] == nil ||
-		   t >= 1 {append(&finished, window);continue}
+		   t >= 1 {
+			append(&finished, window); continue
+		}
 		if err := backend.update(
 			state,
-			job.proxy,
-			e.interpolate_frame(job.proxy.frame, job.target, t, job.easing),
-		); err != "" {append(&finished, window)}
+			job.presentation.(Animation_Proxy),
+			e.interpolate_frame(job.from, job.target, t, job.easing),
+		); err != "" {
+			append(&finished, window)
+		}
 	}
-	for window in finished {animation_finish(state, window)}
+	for window in finished { animation_finish(state, window) }
 }
 
 animation_stop :: proc(state: ^State) {
-	for window in state.animations {
-		if err := animation_finish(state, window);
-		   err != "" {fmt.eprintln("shoji: could not restore animated window", window, ":", err)}
+	backend := animation_backend(state)
+	for window, job in state.animations {
+		if err := animation_finish(state, window); err != "" {
+			fmt.eprintln(
+				"shoji: animated window recovery deferred",
+				window,
+				":",
+				err,
+			)
+			// The committed journal survives shutdown. Releasing the proxy also
+			// lets the live payload watchdog restore the real window immediately.
+			if proxy, captured := job.presentation.(Animation_Proxy);
+			   captured {
+				backend.destroy(state, proxy)
+			}
+			delete_key(&state.animations, window)
+		}
 	}
-	// Failed restores remain owned for a retry rather than deleting the only
-	// visible representation of a window after a transport timeout.
-	if len(state.animations) == 0 {delete(state.animations);state.animations = nil}
+	delete(state.animations); state.animations = nil
 }

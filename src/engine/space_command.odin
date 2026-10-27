@@ -30,6 +30,20 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		return failure("could not locate space")
 	}
 	switch op {
+	case "--scroll":
+		if s.view.layout != .Scroll {return failure("scroll requires scroll layout")}
+		parts := strings.split(operand, ":", context.temp_allocator)
+		if len(parts) != 2 {return failure("scroll expects abs:pixels or rel:pixels")}
+		value, ok := strconv.parse_f64(parts[1])
+		if !ok || math.is_nan(value) || math.is_inf(value) {return failure("invalid scroll offset")}
+		switch parts[0] {
+		case "abs":
+		case "rel": value += s.view.scroll.offset
+		case: return failure("scroll expects abs or rel")
+		}
+		scroll_pan(&s.view, value)
+		s.view.scroll.centered = false
+		s.view.scroll.focused = m.focused;s.view.scroll.reveal = false
 	case "--layout":
 		layout, ok := parse_layout(operand)
 		if !ok {
@@ -38,17 +52,20 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		set_layout(m, s, layout)
 		s.overrides["layout"] = true
 	case "--rotate":
+		if s.view.layout == .Scroll {return failure("rotation is unavailable in scroll layout")}
 		angle, ok := strconv.parse_int(operand)
 		if !ok || (angle != 90 && angle != 180 && angle != 270) {
 			return failure("rotate expects 90, 180, or 270")
 		}
 		rotate(s.view.root, angle)
 	case "--mirror":
+		if s.view.layout == .Scroll {return failure("mirroring is unavailable in scroll layout")}
 		if operand != "x-axis" && operand != "y-axis" {
 			return failure("mirror expects x-axis or y-axis")
 		}
 		mirror(s.view.root, operand == "x-axis" ? .Horizontal : .Vertical)
 	case "--balance", "--equalize":
+		if s.view.layout == .Scroll {return failure("balance/equalize split ratios are unavailable in scroll layout")}
 		axis: Split
 		switch operand {
 		case "", "both":
@@ -141,8 +158,7 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		if s.index < target.index {return result(move_space_after(m, s, target))}
 		previous := previous_space_on_display(m, target)
 		if previous != nil {return result(move_space_after(m, s, previous))}
-		if err := move_space_after(m, s, target); err != "" {return failure(err)}
-		return result(move_space_after(m, target, s))
+		return result(move_space_pair(m, s, target, target, s))
 	case "--swap", "--switch":
 		target := select_space(m, operand)
 		if op == "--switch" {s = select_space(m, "")}
@@ -160,8 +176,7 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 			if earlier.index > later.index {earlier, later = later, earlier}
 			previous := previous_space_on_display(m, later)
 			if previous == earlier {previous = later}
-			if err := move_space_after(m, later, earlier); err != "" {return failure(err)}
-			if err := move_space_after(m, earlier, previous); err != "" {return failure(err)}
+			if err := move_space_pair(m, later, earlier, earlier, previous); err != "" {return failure(err)}
 		}
 		if op == "--switch" {return result(perform(m, {kind = .Space_Focus, space = target.id}))}
 		return success()
@@ -181,6 +196,25 @@ previous_space_on_display :: proc(m: ^Manager, target: ^Space) -> ^Space {
 	previous: ^Space
 	for s in m.spaces {if s == target {return previous};if s.display == target.display {previous = s}}
 	return nil
+}
+
+move_space_pair :: proc(m: ^Manager, first, first_anchor, second, second_anchor: ^Space) -> string {
+	original := make([dynamic]^Space, context.temp_allocator)
+	for space in m.spaces {if space.display == first.display {append(&original, space)}}
+	if err := move_space_after(m, first, first_anchor); err != "" {return err}
+	if err := move_space_after(m, second, second_anchor); err != "" {
+		// Rebuild the original adjacency through real backend moves. Updating only
+		// the array would conceal the partial reorder that already reached Dock.
+		for i in 1 ..< len(original) {
+			space, anchor := original[i], original[i - 1]
+			if previous_space_on_display(m, space) == anchor {continue}
+			if rollback := move_space_after(m, space, anchor); rollback != "" {
+				return errorf("%s; rollback failed: %s", err, rollback)
+			}
+		}
+		return err
+	}
+	return ""
 }
 
 move_space_after :: proc(m: ^Manager, s, anchor: ^Space) -> string {
@@ -232,11 +266,20 @@ swap_space_windows :: proc(m: ^Manager, a, b: ^Space) -> string {
 	}
 	for move in moves {
 		if !move.moved {continue}
-		remove(&move.source.view, move.window.id)
 		move.window.space, move.window.display = move.target.id, move.target.display
-		if managed(move.window) {add(&move.target.view, move.window.id)}
+		if err != "" {
+			remove(&move.source.view, move.window.id)
+			if layout_admitted(move.window) {add(&move.target.view, move.window.id)}
+		}
 	}
 	if err != "" {return err}
+	// The windows and their complete virtual desktop move together. Keep native
+	// Space identity and destination geometry, including when one side is empty.
+	a_frame, b_frame := a.view.frame, b.view.frame
+	a.view, b.view = b.view, a.view
+	a.view.frame, b.view.frame = a_frame, b_frame
+	a.overrides, b.overrides = b.overrides, a.overrides
+	a.label, b.label = b.label, a.label
 	if err := flush(m, a); err != "" {return err}
 	return flush(m, b)
 }

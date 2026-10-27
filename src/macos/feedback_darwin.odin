@@ -7,12 +7,18 @@ foreign import feedback_sls "system:SkyLight.framework"
 foreign import feedback_cg "system:CoreGraphics.framework"
 
 Feedback_Window :: struct {
-	plan:  e.Feedback_Plan,
-	proxy: Animation_Proxy,
+	plan: e.Feedback_Plan,
+	surface: Owned_Surface,
 }
 Feedback_Backend :: struct {
-	create:  proc(state: ^State, plan: e.Feedback_Plan) -> (Animation_Proxy, string),
-	destroy: proc(state: ^State, proxy: Animation_Proxy),
+	create: proc(
+		state: ^State,
+		plan: e.Feedback_Plan,
+	) -> (
+		Owned_Surface,
+		string,
+	),
+	destroy: proc(state: ^State, surface: Owned_Surface),
 }
 
 @(default_calling_convention = "c")
@@ -33,49 +39,31 @@ native_feedback_create :: proc(
 	state: ^State,
 	plan: e.Feedback_Plan,
 ) -> (
-	proxy: Animation_Proxy,
+	surface: Owned_Surface,
 	err: string,
 ) {
-	if plan.frame.w <= 2 || plan.frame.h <= 2 {return {}, "feedback area is too small"}
-	proxy.window, proxy.frame = plan.window, plan.frame
-	region: Ref
-	if CGSNewRegionWithRect(&proxy.frame, &region) != 0 ||
-	   region == nil {return {}, "could not allocate feedback region"}
-	defer CFRelease(region)
-	empty := CGRegionCreateEmptyRegion()
-	if empty == nil {return {}, "could not allocate feedback shape"}
-	defer CFRelease(empty)
-	tags: u64 = (1 << 1) | (1 << 9)
-	if SLSNewWindowWithOpaqueShapeAndContext(
-		   state.connection,
-		   2,
-		   region,
-		   empty,
-		   13,
-		   &tags,
-		   0,
-		   0,
-		   64,
-		   &proxy.id,
-		   nil,
-	   ) !=
-	   0 {return {}, "could not create feedback window"}
-	success := false
-	defer {if !success {native_proxy_destroy(state, proxy)}}
-	proxy.ctx = SLWindowContextCreate(state.connection, proxy.id, nil)
-	if proxy.ctx == nil {return {}, "could not create feedback context"}
-	shadow: u64 = 1 << 3
-	SLSSetWindowTags(state.connection, proxy.id, &shadow, 64)
-	SLSSetWindowResolution(state.connection, proxy.id, 1)
-	SLSSetWindowOpacity(state.connection, proxy.id, false)
-	level: i32
-	SLSGetWindowLevel(state.connection, plan.window, &level)
-	SLSSetWindowLevel(state.connection, proxy.id, level)
-	SLSSetWindowSubLevel(
-		state.connection,
-		proxy.id,
-		SLSGetWindowSubLevel(state.connection, plan.window),
+	if plan.frame.w <= 2 || plan.frame.h <= 2 {
+		return {}, "feedback area is too small"
+	}
+	surface, err = surface_create(
+		state,
+		plan.frame,
+		plan.window,
+		(1 << 1) | (1 << 9),
+		13,
+		1,
 	)
+	if err != "" {
+		return {}, err
+	}
+	success := false
+	defer {
+		if !success {
+			surface_destroy(state, surface)
+		}
+	}
+	shadow: u64 = 1 << 3
+	SLSSetWindowTags(state.connection, surface.id, &shadow, 64)
 	r, g, b, a :=
 		f64((plan.color >> 16) & 255) /
 		255,
@@ -86,23 +74,28 @@ native_feedback_create :: proc(
 		f64(plan.color >> 24) /
 		255
 	frame := e.Rect{0, 0, plan.frame.w, plan.frame.h}
-	CGContextClearRect(proxy.ctx, frame)
-	CGContextSetRGBFillColor(proxy.ctx, r, g, b, a * 0.25)
-	CGContextFillRect(proxy.ctx, frame)
-	CGContextSetRGBStrokeColor(proxy.ctx, r, g, b, a)
-	CGContextSetLineWidth(proxy.ctx, 2)
-	CGContextStrokeRect(proxy.ctx, {1, 1, frame.w - 2, frame.h - 2})
-	CGContextFlush(proxy.ctx)
-	if error := native_proxy_update(state, proxy, proxy.frame); error != "" {return {}, error}
-	if SLSOrderWindow(state.connection, proxy.id, 1, plan.window) !=
-	   0 {return {}, "could not order feedback window"}
+	CGContextClearRect(surface.ctx, frame)
+	CGContextSetRGBFillColor(surface.ctx, r, g, b, a * 0.25)
+	CGContextFillRect(surface.ctx, frame)
+	CGContextSetRGBStrokeColor(surface.ctx, r, g, b, a)
+	CGContextSetLineWidth(surface.ctx, 2)
+	CGContextStrokeRect(surface.ctx, {1, 1, frame.w - 2, frame.h - 2})
+	CGContextFlush(surface.ctx)
+	if error := surface_update(state, surface, surface.frame); error != "" {
+		return {}, error
+	}
+	if SLSOrderWindow(state.connection, surface.id, 1, plan.window) != 0 {
+		return {}, "could not order feedback window"
+	}
 	success = true
-	return proxy, ""
+	return surface, ""
 }
 
 feedback_backend :: proc(state: ^State) -> Feedback_Backend {
-	if state.feedback_backend.create != nil {return state.feedback_backend}
-	return {native_feedback_create, native_proxy_destroy}
+	if state.feedback_backend.create != nil {
+		return state.feedback_backend
+	}
+	return {native_feedback_create, surface_destroy}
 }
 
 feedback_sync :: proc(state: ^State, plans: map[u32]e.Feedback_Plan) {
@@ -110,17 +103,24 @@ feedback_sync :: proc(state: ^State, plans: map[u32]e.Feedback_Plan) {
 	removed := make([dynamic]u32, context.temp_allocator)
 	for key, window in state.feedback {
 		plan, exists := plans[key]
-		if !exists ||
-		   plan != window.plan {backend.destroy(state, window.proxy);append(&removed, key)}
+		if !exists || plan != window.plan {
+			backend.destroy(state, window.surface); append(&removed, key)
+		}
 	}
-	for key in removed {delete_key(&state.feedback, key)}
+	for key in removed { delete_key(&state.feedback, key) }
 	for key, plan in plans {
-		if _, exists := state.feedback[key]; exists {continue}
-		proxy, err := backend.create(state, plan)
-		if err != "" {fmt.eprintln("shoji: feedback:", err)}
-		if state.feedback == nil {state.feedback = make(map[u32]Feedback_Window)}
+		if _, exists := state.feedback[key]; exists {
+			continue
+		}
+		surface, err := backend.create(state, plan)
+		if err != "" {
+			fmt.eprintln("shoji: feedback:", err)
+		}
+		if state.feedback == nil {
+			state.feedback = make(map[u32]Feedback_Window)
+		}
 		// Cache failed plans too, avoiding a log/allocation storm every frame.
-		state.feedback[key] = Feedback_Window{plan, proxy}
+		state.feedback[key] = Feedback_Window{plan, surface}
 	}
 }
 
@@ -128,17 +128,22 @@ feedback_tick :: proc(state: ^State) {
 	plans := make(map[u32]e.Feedback_Plan, context.temp_allocator)
 	if !state.read_only {
 		for s in state.manager.spaces {
-			if plan, valid := e.insertion_feedback(&state.manager, s);
-			   valid {plans[plan.window] = plan}
+			if plan, valid := e.insertion_feedback(&state.manager, s); valid {
+				plans[plan.window] = plan
+			}
 		}
 		mouse := &state.mouse
-		if mouse.moved && !mouse.finished && !mouse.failed {
+		if mouse_drag_moved(mouse) &&
+		   !mouse_drag_finished(mouse) &&
+		   !mouse.failed {
 			if plan, valid := e.drag_feedback(
 				&state.manager,
 				mouse.drag,
 				mouse.target,
 				mouse.point,
-			); valid {plans[0] = plan}
+			); valid {
+				plans[0] = plan
+			}
 		}
 	}
 	feedback_sync(state, plans)
@@ -146,6 +151,6 @@ feedback_tick :: proc(state: ^State) {
 
 feedback_stop :: proc(state: ^State) {
 	backend := feedback_backend(state)
-	for _, window in state.feedback {backend.destroy(state, window.proxy)}
-	delete(state.feedback);state.feedback = nil
+	for _, window in state.feedback { backend.destroy(state, window.surface) }
+	delete(state.feedback); state.feedback = nil
 }

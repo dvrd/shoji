@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 
+from toolchain import patch_compiler
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("source", type=Path, help="Odin source checkout (e.g. odin root)")
 args = parser.parse_args()
@@ -39,6 +41,7 @@ with tempfile.TemporaryDirectory(prefix="shoji-odin-arm64e-") as directory:
             if reverse.returncode != 0:
                 raise SystemExit(f"Cannot apply arm64e patch to {name}:\n{check.stderr}")
 
+    patch_compiler(build)
     subprocess.run(["sh", "build_odin.sh", "release"], cwd=build, check=True,
                    env=os.environ.copy())
     output.parent.mkdir(exist_ok=True)

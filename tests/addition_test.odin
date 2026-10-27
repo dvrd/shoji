@@ -7,8 +7,30 @@ import wire "../src/addition/protocol"
 import "core:testing"
 
 @(test)
+proxy_diagnostics_preserve_the_first_native_failure :: proc(t: ^testing.T) {
+	failure: wire.Native_Failure
+	wire.note_native_failure(&failure, .Proxy_Order, 0)
+	testing.expect_value(t, failure.stage, wire.Native_Stage.None)
+	wire.note_native_failure(&failure, .System_Alpha, 1000)
+	wire.note_native_failure(&failure, .Transaction_Commit, 1001)
+	testing.expect_value(t, failure.stage, wire.Native_Stage.System_Alpha)
+	testing.expect_value(t, failure.code, i32(1000))
+	wire.note_native_failure(nil, .Proxy_Order, 1002)
+	packet := wire.Packet{valid = true}
+	wire.pack(&packet, wire.Status.Native_Error)
+	wire.pack(&packet, failure.stage)
+	wire.pack(&packet, failure.code)
+	testing.expect_value(t, packet.count, 6)
+	r := wire.reader(packet.data[:packet.count])
+	testing.expect_value(t, wire.unpack(&r, wire.Status), wire.Status.Native_Error)
+	testing.expect_value(t, wire.unpack(&r, wire.Native_Stage), wire.Native_Stage.System_Alpha)
+	testing.expect_value(t, wire.unpack(&r, i32), i32(1000))
+	testing.expect(t, wire.complete(r))
+}
+
+@(test)
 addition_protocol_rejects_truncation_and_trailing_bytes :: proc(t: ^testing.T) {
-	for code in 1 ..= 19 {
+	for code in 1 ..= 20 {
 		op := wire.Opcode(code);n := wire.expected_size(op)
 		if n < 0 {continue}
 		data: [32]u8
@@ -106,6 +128,7 @@ addition_bootstrap_worker_uses_explicit_abi :: proc(t: ^testing.T) {
 	loader.remote_worker(&data)
 	testing.expect_value(t, data.detach_result, i32(0))
 	testing.expect_value(t, data.done, u32(1))
+	testing.expect_value(t, data.worker_finished, u32(1))
 	testing.expect_value(t, uintptr(data.handle), uintptr(42))
 	size: uint
 	section := loader.getsectiondata(

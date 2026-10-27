@@ -4,12 +4,29 @@ import "core:encoding/json"
 import "core:strings"
 
 Window_JSON :: struct {
+	opening_state: string `json:"opening-state"`,
+	resize_transitioning: bool `json:"resize-transitioning"`,
+	size_request_pending: bool `json:"size-request-pending"`,
+	width_adjusted: bool `json:"width-adjusted"`,
+	height_adjusted: bool `json:"height-adjusted"`,
+	accepted_width: f64 `json:"accepted-width"`,
+	accepted_height: f64 `json:"accepted-height"`,
+	layout_frame: Rect `json:"layout-frame"`,
+	column_index: int `json:"column-index"`,
+	column_tabbed: bool `json:"column-tabbed"`,
+	column_active: bool `json:"column-active"`,
+	column_full: bool `json:"column-full-width"`,
+	column_width_request: f64 `json:"column-width-request"`,
+	column_width_proportional: bool `json:"column-width-proportional"`,
+	row_height_request: f64 `json:"row-height-request"`,
+	row_weight: f64 `json:"row-weight"`,
 	id:                   u32,
 	pid:                  i32,
 	app, title:           string,
 	scratchpad:           string,
 	frame:                Rect,
 	role, subrole:        string,
+	root_window:          bool `json:"root-window"`,
 	display:              u32,
 	space:                u32,
 	level:                int,
@@ -33,9 +50,17 @@ Window_JSON :: struct {
 	is_hidden:            bool `json:"is-hidden"`,
 	is_floating:          bool `json:"is-floating"`,
 	is_sticky:            bool `json:"is-sticky"`,
+	is_grabbed:           bool `json:"is-grabbed"`,
 }
 
 Space_JSON :: struct {
+	scroll_resizing: bool `json:"scroll-resizing"`,
+	scroll_position: f64 `json:"scroll-position"`,
+	scroll_velocity: f64 `json:"scroll-velocity"`,
+	scroll_animating: bool `json:"scroll-animating"`,
+	scroll_interacting: bool `json:"scroll-interacting"`,
+	scroll_offset:        f64 `json:"scroll-offset"`,
+	scroll_width:         f64 `json:"scroll-width"`,
 	id:                   u64,
 	uuid:                 string,
 	index:                u32,
@@ -68,6 +93,13 @@ json_text :: proc(value: $T) -> string {
 
 window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 	result := Window_JSON {
+		opening_state = w.opening.phase == .Pending ? (w.opening.wait == .Space ? "needs-more-room" : (w.opening.wait == .Backend ? "waiting-for-backend" : "preparing")) : (w.opening.phase == .Opening ? "opening" : "settled"),
+		resize_transitioning = w.resize_transitioning,
+		size_request_pending = w.size_feedback.pending,
+		width_adjusted = w.size_feedback.width_valid,
+		height_adjusted = w.size_feedback.height_valid,
+		accepted_width = w.size_feedback.width_valid ? w.size_feedback.accepted.w : 0,
+		accepted_height = w.size_feedback.height_valid ? w.size_feedback.accepted.h : 0,
 		id                   = w.id,
 		pid                  = w.pid,
 		app                  = w.app,
@@ -75,6 +107,8 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 		frame                = w.frame,
 		role                 = w.role,
 		subrole              = w.subrole,
+		root_window          = w.root_window.? or_else true,
+		is_grabbed           = w.grabbed,
 		scratchpad           = w.scratchpad,
 		opacity              = w.opacity,
 		layer                = w.layer,
@@ -84,14 +118,14 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 		has_focus            = w.focused,
 		has_shadow           = w.shadow,
 		can_move             = w.can_move,
-		can_resize           = w.can_resize,
+		can_resize           = w.can_resize.? or_else false,
 		has_ax_reference     = true,
 		is_native_fullscreen = w.fullscreen,
 		is_minimized         = w.minimized,
 		is_hidden            = w.hidden,
 		is_floating          = w.floating,
 		is_sticky            = w.sticky,
-		is_visible           = !w.hidden && !w.minimized && !w.scratchpad_hidden,
+		is_visible           = (w.ordered_in.? or_else true) && !w.hidden && !w.minimized && !w.scratchpad_hidden,
 		split_type           = "none",
 		split_child          = "none",
 	}
@@ -100,8 +134,16 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 	}
 	if s := space_by_id(m, w.space); s != nil {
 		result.space = s.index
-		result.is_visible = result.is_visible && s.visible
+		result.is_visible = result.is_visible && (w.sticky || s.visible)
 		if n := find(s.view.root, w.id); n != nil {
+			if s.view.layout == .Scroll {
+				result.layout_frame = size_feedback_frame(w, scroll_window_frame(&s.view, n, w.id, false))
+				result.column_tabbed, result.column_active, result.column_full = n.column_tabbed, n.order[0] == w.id, n.column_full
+				size := n.column_size.kind == .Default ? s.view.scroll_options.default_width : n.column_size
+				result.column_width_request, result.column_width_proportional = size.value, size.kind == .Proportion
+				result.row_height_request, result.row_weight = w.row_fixed, w.row_weight > 0 ? w.row_weight : 1
+				for column := first(s.view.root); column != nil; column = next(column) {result.column_index += 1; if column == n {break}}
+			}
 			for i in 0 ..< n.count {
 				if n.windows[i] == w.id {
 					result.stack_index = i + 1
@@ -120,6 +162,13 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 
 space_json :: proc(m: ^Manager, s: ^Space) -> Space_JSON {
 	result := Space_JSON {
+		scroll_resizing = s.view.scroll.geometry_active,
+		scroll_position = m.scroll_animate && s.view.scroll.motion.initialized ? s.view.scroll.motion.position : s.view.scroll.offset,
+		scroll_velocity = s.view.scroll.motion.velocity,
+		scroll_animating = s.view.scroll.motion.active,
+		scroll_interacting = s.view.scroll.dragging,
+		scroll_offset = s.view.scroll.offset,
+		scroll_width = s.view.scroll.content_width,
 		id                   = s.id,
 		uuid                 = s.uuid,
 		index                = s.index,

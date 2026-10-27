@@ -10,6 +10,8 @@ foreign import cf "system:CoreFoundation.framework"
 foreign import cg "system:CoreGraphics.framework"
 foreign import ax "system:ApplicationServices.framework"
 foreign import sls "system:SkyLight.framework"
+foreign import cocoa "system:Cocoa.framework"
+foreign cocoa {NSApplicationLoad :: proc "c" () -> bool ---}
 foreign import libc "system:c"
 Ref :: rawptr
 Point :: struct {
@@ -23,6 +25,7 @@ Size :: struct {
 AX_Callback :: proc "c" (observer, element, notification: Ref, user: rawptr)
 @(default_calling_convention = "c")
 foreign cf {
+	CFEqual :: proc(a, b: Ref) -> bool ---
 	CFRelease :: proc(ref: Ref) ---
 	CFRetain :: proc(ref: Ref) -> Ref ---
 	CFGetTypeID :: proc(ref: Ref) -> uint ---
@@ -47,6 +50,7 @@ foreign cf {
 }
 @(default_calling_convention = "c")
 foreign cg {
+	CGWindowListCopyWindowInfo :: proc(options, relative: u32) -> Ref ---
 	CGGetActiveDisplayList :: proc(maximum: u32, displays: [^]u32, count: ^u32) -> i32 ---
 	CGMainDisplayID :: proc() -> u32 ---
 	CGDisplayBounds :: proc(display: u32) -> e.Rect ---
@@ -67,11 +71,18 @@ foreign ax {
 	AXValueGetValue :: proc(value: Ref, type: u32, output: rawptr) -> bool ---
 	_AXUIElementGetWindow :: proc(element: Ref, window: ^u32) -> i32 ---
 	AXObserverCreate :: proc(pid: i32, callback: AX_Callback, observer: ^Ref) -> i32 ---
+	AXObserverRemoveNotification :: proc(observer, element, notification: Ref) -> i32 ---
 	AXObserverAddNotification :: proc(observer, element, notification: Ref, user: rawptr) -> i32 ---
 	AXObserverGetRunLoopSource :: proc(observer: Ref) -> Ref ---
 }
 @(default_calling_convention = "c")
 foreign sls {
+	SLSWindowQueryWindows :: proc(connection: i32, windows: Ref, count: i32) -> Ref ---
+	SLSWindowQueryResultCopyWindows :: proc(query: Ref) -> Ref ---
+	SLSWindowIteratorGetCount :: proc(iterator: Ref) -> i32 ---
+	SLSWindowIteratorAdvance :: proc(iterator: Ref) -> bool ---
+	SLSWindowIteratorGetParentID :: proc(iterator: Ref) -> u32 ---
+	SLSSetActiveMenuBarDisplayIdentifier :: proc(connection: i32, uuid, repeat_uuid: Ref) -> i32 ---
 	SLSMainConnectionID :: proc() -> i32 ---
 	CoreDockSendNotification :: proc(notification: Ref, unknown: i32) -> i32 ---
 	SLSCopyManagedDisplaySpaces :: proc(connection: i32) -> Ref ---
@@ -192,11 +203,4 @@ Workspace :: struct {
 @(objc_class = "NSRunningApplication")
 Running_Application :: struct {
 	using _: objc.Object,
-}
-
-attribute_settable :: proc(ref: Ref, name: string) -> bool {
-	key := cf_string(name)
-	defer CFRelease(key)
-	settable: bool
-	return AXUIElementIsAttributeSettable(ref, key, &settable) == 0 && settable
 }

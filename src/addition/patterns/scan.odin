@@ -5,6 +5,9 @@ import "core:strings"
 Version :: struct {
 	major, minor, patch: int,
 }
+// Explicit candidate builds allow target-OS validation without changing the
+// default acceptance policy for the daily-use payload.
+MACOS27_CANDIDATE :: #config(SHOJI_MACOS27_CANDIDATE, false)
 Pattern :: struct {
 	bytes:    []u8,
 	wildcard: []bool,
@@ -44,5 +47,5 @@ decode_adrp_add :: proc(adrp, add: u32, pc: u64) -> (u64, bool) {
 	return u64(i64(pc & ~u64(4095)) + (immediate << 12)) + offset, true
 }
 supported :: proc(v: Version) -> bool {
-	when ODIN_ARCH == .arm64 {return v.major == 12 || v.major == 13 || v.major == 14 || v.major == 15 || v.major == 26} else {return v.major == 11 || v.major == 12 || v.major == 13 || v.major == 14 || v.major == 15 || v.major == 26}
+	when ODIN_ARCH == .arm64 {return v.major == 12 || v.major == 13 || v.major == 14 || v.major == 15 || v.major == 26 || (MACOS27_CANDIDATE && v == (Version{27, 0, 1}))} else {return v.major == 11 || v.major == 12 || v.major == 13 || v.major == 14 || v.major == 15 || v.major == 26}
 }

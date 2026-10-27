@@ -4,3 +4,6 @@
 /dist/
 __pycache__/
 /.toolchain/
+/.task/
+/nvim.log
+.mel/

@@ -1,5 +1,6 @@
 package payload
 
+import recovery "../recovery"
 import e "../../engine"
 import m "../../macos"
 import wire "../protocol"
@@ -10,6 +11,31 @@ Fade :: struct {
 	start, end: f32,
 	began:      time.Time,
 	duration:   f64,
+}
+hidden_proxies: map[u32]recovery.Entry
+payload_recovery_owner :: proc(user: rawptr, window: u32) -> (i32, bool) {
+	owner: i32
+	code := SLSGetWindowOwner(g.cid, window, &owner)
+	return owner, code == 0
+}
+payload_recovery_restore :: proc(user: rawptr, entry: recovery.Entry, proxy_valid: bool) -> bool {
+	transaction := SLSTransactionCreate(g.cid)
+	if transaction == nil {return false}; defer m.CFRelease(transaction)
+	SLSTransactionSetWindowSystemAlpha(transaction, entry.window, 1)
+	if proxy_valid {SLSTransactionOrderWindowGroup(transaction, entry.proxy, 0, entry.window)}
+	SLSTransactionCommit(transaction, 0)
+	// This acknowledges a restoration request, not a pixel-level observation.
+	// Ownership was checked by recovery.restore before this callback.
+	return true
+}
+tick_proxy_recovery :: proc() {
+	done := make([dynamic]u32, context.temp_allocator)
+	backend := recovery.Backend {payload_recovery_owner, payload_recovery_restore, nil}
+	for window, entry in hidden_proxies {
+		result := recovery.restore(entry, backend, true)
+		if result == .Restored || result == .Gone {append(&done, window)}
+	}
+	for window in done {delete_key(&hidden_proxies, window)}
 }
 fades: map[u32]Fade
 status :: proc(code: i32) -> wire.Status {return code == 0 ? .OK : .Operation_Failed}
@@ -23,7 +49,7 @@ tick_fades :: proc() {
 	}
 	for id in done {delete_key(&fades, id)}
 }
-window_action :: proc(op: wire.Opcode, r: ^wire.Reader) -> wire.Status {
+window_action :: proc(op: wire.Opcode, r: ^wire.Reader, diagnostic: ^wire.Native_Failure) -> wire.Status {
 	if op == .Window_To_Space || op == .Window_List_To_Space {
 		sid := wire.unpack(r, u64);if sid == 0 {return .Invalid_Message}
 		values := make([dynamic]u64, 0, 8, context.temp_allocator)
@@ -38,25 +64,48 @@ window_action :: proc(op: wire.Opcode, r: ^wire.Reader) -> wire.Status {
 	}
 	if op == .Proxy_In || op == .Proxy_Out || op == .Window_Order_In {
 		count := wire.unpack(r, i32)
+		// Register every window before any transaction can hide it, including
+		// transactions whose commit reports an ambiguous failure.
+		check := r^
+		ids := make([dynamic]u32, context.temp_allocator)
+		for _ in 0..<count {
+			id := wire.unpack(&check, u32)
+			if id == 0 {continue}
+			append(&ids, id)
+			if op == .Window_Order_In {continue}
+			proxy := wire.unpack(&check, u32)
+			if op != .Proxy_In {continue}
+			owner, real_ok := payload_recovery_owner(nil, id)
+			proxy_owner, proxy_ok := payload_recovery_owner(nil, proxy)
+			if !real_ok || !proxy_ok || proxy == 0 || id == proxy {return .Invalid_Message}
+			entry := recovery.Entry {id, proxy, owner, proxy_owner}
+			if previous, exists := hidden_proxies[id]; exists && previous != entry {return .Operation_Failed}
+			if len(hidden_proxies) >= 256 && id not_in hidden_proxies {return .Operation_Failed}
+			hidden_proxies[id] = entry
+		}
 		transaction := SLSTransactionCreate(g.cid)
-		if transaction == nil {return .Operation_Failed};defer m.CFRelease(transaction)
-		code: i32
+		if transaction == nil {wire.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed};defer m.CFRelease(transaction)
 		for _ in 0 ..< count {
 			id := wire.unpack(r, u32);if id == 0 {continue}
 			if op ==
-			   .Window_Order_In {code |= SLSTransactionOrderWindowGroup(transaction, id, 1, 0)} else {
+			   .Window_Order_In {
+				SLSTransactionOrderWindowGroup(transaction, id, 1, 0)
+			} else {
 				proxy := wire.unpack(r, u32)
 				if op == .Proxy_In {
-					code |= SLSTransactionOrderWindowGroup(transaction, proxy, 1, id)
-					code |= SLSTransactionSetWindowSystemAlpha(transaction, id, 0)
+					SLSTransactionOrderWindowGroup(transaction, proxy, 1, id)
+					SLSTransactionSetWindowSystemAlpha(transaction, id, 0)
 				} else {
-					code |= SLSTransactionSetWindowSystemAlpha(transaction, id, 1)
-					code |= SLSTransactionOrderWindowGroup(transaction, proxy, 0, id)
+					SLSTransactionSetWindowSystemAlpha(transaction, id, 1)
+					if proxy != 0 {
+						SLSTransactionOrderWindowGroup(transaction, proxy, 0, id)
+					}
 				}
 			}
 		}
-		code |= SLSTransactionCommit(transaction, 0)
-		return status(code)
+		SLSTransactionCommit(transaction, 0)
+		if op == .Proxy_Out {for id in ids {delete_key(&hidden_proxies, id)}}
+		return .OK
 	}
 	id := wire.unpack(r, u32)
 	if id == 0 {return .Invalid_Message}
@@ -83,8 +132,8 @@ window_action :: proc(op: wire.Opcode, r: ^wire.Reader) -> wire.Status {
 		fades[id] = Fade{start, alpha, time.now(), f64(duration)}
 		return .OK
 	case .Window_Layer:
-		layer := wire.unpack(r, i32)
-		if layer != 1 && layer != 4 && layer != 6 {return .Invalid_Message}
+		layer, valid := wire.normalize_window_layer_key(wire.unpack(r, i32))
+		if !valid {return .Invalid_Message}
 		return status(SLSSetWindowSubLevel(g.cid, id, CGWindowLevelForKey(layer)))
 	case .Window_Sticky, .Window_Shadow:
 		enabled := wire.unpack(r, u8)
@@ -103,7 +152,14 @@ window_action :: proc(op: wire.Opcode, r: ^wire.Reader) -> wire.Status {
 	case .Window_Order:
 		order := wire.unpack(r, i32);relative := wire.unpack(r, u32)
 		if order < -1 || order > 1 {return .Invalid_Message}
-		return status(SLSOrderWindow(g.cid, id, order, relative))
+		// Commit group ordering explicitly; the ordinary setter can acknowledge
+		// without publishing the new order for windows owned by another app.
+		transaction := SLSTransactionCreate(g.cid)
+		if transaction == nil {wire.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
+		defer m.CFRelease(transaction)
+		SLSTransactionOrderWindowGroup(transaction, id, order, relative)
+		SLSTransactionCommit(transaction, 1)
+		return .OK
 	case .Window_Scale:
 		x := wire.unpack(r, f32);y := wire.unpack(r, f32);width := wire.unpack(r, f32)
 		height := wire.unpack(r, f32)

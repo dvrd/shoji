@@ -28,6 +28,24 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		return failure("opacity settings are global")
 	}
 	switch name {
+	case "window_resize_animation":
+		if s != nil {return failure("window_resize_animation is global")}
+		if !setting {return success(m.resize_fade ? "fade" : "off")}
+		if value != "fade" && value != "off" {return failure("window_resize_animation expects fade or off")}
+		m.resize_fade = value == "fade"
+	case "scroll_frame_pacing":
+		if s != nil {return failure("scroll_frame_pacing is global")}
+		if !setting {return success(m.scroll_frame_pacing ? "on" : "off")}
+		if value != "on" && value != "off" {return failure("scroll_frame_pacing expects on or off")}
+		m.scroll_frame_pacing = value == "on"
+	case "scroll_animation":
+		if s != nil {return failure("scroll_animation is global")}
+		if !setting {return success(m.scroll_animate ? "on" : "off")}
+		if value != "on" && value != "off" {return failure("scroll_animation expects on or off")}
+		m.scroll_animate = value == "on"
+	case "scroll_gestures": return mouse_config(m, s, name, value, setting)
+	case "scroll_center_focused_column", "scroll_center_single_column", "scroll_default_column_width", "scroll_width_presets", "scroll_height_presets", "scroll_warp_pointer":
+		return scroll_config(m, s, name, value, setting)
 	case "insert_feedback_color":
 		if s != nil {return failure("insert_feedback_color is global")}
 		if !setting {return success(fmt.tprintf("0x%08x", m.feedback_color))}
@@ -174,7 +192,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		layout, ok := parse_layout(value)
 		if !ok {
-			return failure("layout expects bsp, stack, or float")
+			return failure("layout expects bsp, stack, scroll, or float")
 		}
 		if s == nil {
 			m.default_layout = layout
@@ -324,6 +342,12 @@ mark_space_override :: proc(s: ^Space, name: string) {
 	// IPC setting names borrow the request buffer; retain only static keys.
 	for key in ([]string {
 			"layout",
+			"scroll_center_focused_column",
+			"scroll_center_single_column",
+			"scroll_warp_pointer",
+			"scroll_default_column_width",
+			"scroll_width_presets",
+			"scroll_height_presets",
 			"window_gap",
 			"top_padding",
 			"bottom_padding",
