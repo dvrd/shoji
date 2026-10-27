@@ -66,7 +66,7 @@ tasks:
     cmds:
       - ./bin/shoji-dev signing check
       - mkdir -p bin
-      - '{{.ODIN}} build src -out:{{.BINARY}}.new -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} build src -warnings-as-errors -out:{{.BINARY}}.new -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - './bin/shoji-dev signing sign {{.BINARY}}.new --install {{.BINARY}} --codesign {{.CODESIGN}}'
   debug:
     deps: [addition, build:dev]
@@ -74,7 +74,7 @@ tasks:
     cmds:
       - ./bin/shoji-dev signing check
       - mkdir -p bin
-      - '{{.ODIN}} build src -out:bin/shoji-debug.new -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} build src -warnings-as-errors -out:bin/shoji-debug.new -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - './bin/shoji-dev signing sign bin/shoji-debug.new --install bin/shoji-debug --identifier tech.shoji.window-manager.debug --codesign {{.CODESIGN}}'
   build:scroll-preview:
     deps: [build:dev]
@@ -112,15 +112,20 @@ tasks:
     desc: Type-check all source and tests
     deps: [raven]
     cmds:
-      - '{{.ODIN}} check src -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/addition/payload -no-entry-point -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check tests -no-entry-point -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check tools/shoji-dock -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/dockscan -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src -warnings-as-errors -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/addition/payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check tests -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check tools/shoji-dock -warnings-as-errors -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/dockscan -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/compositor-probe -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/resize-fade -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/shoji-dev -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/shoji-dev/tests -no-entry-point -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/live-animation -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/odin-loader -define:SHOJI_ODIN_LOADER=true -no-thread-local -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/shoji-dev/fixtures/cancellation -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - clang -fsyntax-only -Wall -Wextra -Werror -mmacosx-version-min=15.0 tools/vm-preflight/main.m
+      - /bin/zsh -n tools/vm-preflight/download.zsh
   dockscan:
     desc: Build the standalone Apple silicon Dock compatibility diagnostic
     deps: [raven]
@@ -168,7 +173,7 @@ tasks:
     desc: Run deterministic tests without controlling desktop windows
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} test tests -out:bin/shoji-tests -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} test tests -warnings-as-errors -out:bin/shoji-tests -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
   fmt:
     desc: Format Odin source and tests
     cmds:
@@ -192,7 +197,7 @@ tasks:
     cmds:
       - ./bin/shoji-dev signing check
       - mkdir -p bin
-      - '{{.ODIN}} build src -target:darwin_amd64 -out:bin/shoji-amd64.new -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} build src -warnings-as-errors -target:darwin_amd64 -out:bin/shoji-amd64.new -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - './bin/shoji-dev signing sign bin/shoji-amd64.new --install bin/shoji-amd64 --codesign {{.CODESIGN}}'
   addition:
     deps: [build:dev]
@@ -202,14 +207,14 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build src/addition/payload -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build src/addition/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/shoji-dev normalize-arm64e bin/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build src/addition/payload -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} build src/addition/payload -warnings-as-errors -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa-amd64.dylib'
   addition:macos27:
     deps: [build:dev]
@@ -219,7 +224,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin/macos27
-      - '{{.ODIN_ARM64E}} build src/addition/payload -target:darwin_arm64e -target-features:pauth -define:SHOJI_MACOS27_CANDIDATE=true -build-mode:shared -out:bin/macos27/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build src/addition/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_MACOS27_CANDIDATE=true -build-mode:shared -out:bin/macos27/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/shoji-dev normalize-arm64e bin/macos27/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/macos27/shoji-sa.dylib'
   addition:transaction-fix:
@@ -237,7 +242,7 @@ tasks:
     desc: Run Intel tests (requires Intel macOS or Rosetta)
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} test tests -target:darwin_amd64 -out:bin/shoji-tests-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} test tests -warnings-as-errors -target:darwin_amd64 -out:bin/shoji-tests-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
   test:compiler:
     deps: [build:dev]
     desc: Verify ARM64 call diagnostics and preserve genuine assembly warnings
@@ -285,7 +290,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/odin-loader -target:darwin_arm64e -target-features:pauth -define:SHOJI_ODIN_LOADER=true -no-thread-local -out:bin/shoji-loader -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build tools/odin-loader -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_ODIN_LOADER=true -no-thread-local -out:bin/shoji-loader -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/shoji-dev normalize-arm64e bin/shoji-loader
       - '{{.CODESIGN}} --force --sign - bin/shoji-loader'
   test:loader:

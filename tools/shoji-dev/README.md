@@ -32,8 +32,17 @@ inspection commands remain platform dependencies.
 newly created Space and never accept a pre-existing Space as a cleanup target.
 Dock restart is available only through the explicit `live animation --dock-restart`
 option, with noninteractive sudo policy checks and recovery guards. Ctrl-C or
-SIGTERM cancels owned child processes and permits deferred fixture/Space cleanup.
+SIGTERM cancels owned command process groups, including nested compiler/shell
+children, and permits deferred fixture/Space cleanup. A bounded graceful stop
+precedes forced termination; unrelated process groups are never selected.
 SIGKILL cannot run cleanup handlers.
+
+Binary hash errors, command-log/report write failures and fixture cleanup
+failures cause a nonzero exit status. Evidence finalization runs after workflow
+cleanup and retains the original check error alongside persistence/cleanup errors.
+These tools do not certify a passing check if its required evidence could not be
+saved. All maintained Odin build/test/check tasks treat warnings as errors;
+compiler diagnostic fixtures retain their explicit expected-warning behavior.
 
 `task test:tooling` runs native service, signing, packaging, cleanup, timeout,
 cancellation and live-safety regressions. Service/Dock mutations are mocked;

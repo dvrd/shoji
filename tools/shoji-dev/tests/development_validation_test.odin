@@ -4,10 +4,83 @@ import s "../../../src/support"
 import d "../tooling"
 import "core:mem"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import posix "core:sys/posix"
 import "core:testing"
 import "core:time"
+
+@(test)
+native_evidence_failures_propagate_and_preserve_original_failures :: proc(
+	t: ^testing.T,
+) {
+	arena: mem.Dynamic_Arena; mem.dynamic_arena_init(&arena)
+	defer mem.dynamic_arena_destroy(&arena)
+	context.allocator = mem.dynamic_arena_allocator(&arena)
+	context.temp_allocator = context.allocator
+	root, _ := s.temp("shoji-evidence-error-test"); defer os.remove_all(root)
+	blocked := s.join(root, "blocked"); _ = s.mkdir(blocked)
+	report := d.Validation_Report {
+		status = "desktop-preflight-passed",
+	}
+	err: string
+	d.finish_validation(&report, blocked, "original check failure", &err)
+	testing.expect_value(t, report.status, "failed")
+	testing.expect(
+		t,
+		strings.contains(err, "original check failure") &&
+		strings.contains(err, "report evidence"),
+	)
+	for status in ([]string{"desktop-blocked", "target-mismatch"}) {
+		report.status = status
+		d.finish_validation(
+			&report,
+			s.join(root, "validation.json"),
+			"preflight failed",
+			&err,
+		)
+		testing.expect_value(t, report.status, status)
+		testing.expect_value(t, err, "preflight failed")
+	}
+	l := d.Live {
+		evidence = root,
+	}
+	_ = s.mkdir(s.join(root, "commands.json"))
+	d.record_cleanup(&l, "owned child", "could not reap")
+	d.save_live(&l, "original live failure", &err)
+	testing.expect_value(t, l.report.status, "failed")
+	testing.expect(
+		t,
+		d.finish_live(&l, "returned check error") != "",
+		"final evidence failure must determine the caller's returned status",
+	)
+	testing.expect(
+		t,
+		strings.contains(err, "original live failure") &&
+		strings.contains(err, "could not reap") &&
+		strings.contains(err, "command evidence"),
+	)
+	saved: d.Live_Report
+	testing.expect_value(
+		t,
+		s.read_json(s.join(root, "report.json"), &saved),
+		"",
+	)
+	testing.expect_value(t, saved.status, "failed")
+	_ = os.remove(s.join(root, "report.json"))
+	_ = s.mkdir(s.join(root, "report.json"))
+	d.save_live(&l, "", &err)
+	testing.expect(t, strings.contains(err, "report evidence"))
+	testing.expect_value(t, l.report.status, "failed")
+	// A missing/unreadable binary must prevent checks from starting without a hash.
+	prepared, hash_error := d.prepare_live(
+		{root = root},
+		"shoji-missing-hash-test",
+	)
+	defer os.remove_all(prepared.evidence)
+	testing.expect(t, strings.contains(hash_error, "binary evidence"))
+	testing.expect_value(t, prepared.report.status, "failed")
+}
 
 @(test)
 native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
@@ -16,26 +89,92 @@ native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
 	context.allocator = mem.dynamic_arena_allocator(&arena)
 	context.temp_allocator = context.allocator
 	root, _ := s.temp("shoji-interrupt-test"); defer os.remove_all(root)
-	c := d.Context{root = d.project_root()}
+	c := d.Context {
+		root = d.project_root(),
+	}
 	fixture := s.join(root, "cancellation")
-	result := s.run({}, []string{d.compiler(c), "build", s.join(c.root, "tools/shoji-dev/fixtures/cancellation"), s.cat("-out:", fixture), "-warnings-as-errors"}, env = d.compiler_env(c))
+	result := s.run(
+		{},
+		[]string {
+			d.compiler(c),
+			"build",
+			s.join(c.root, "tools/shoji-dev/fixtures/cancellation"),
+			s.cat("-out:", fixture),
+			"-warnings-as-errors",
+		},
+		env = d.compiler_env(c),
+	)
 	testing.expect(t, result.code == 0, result.diagnostic)
-	if result.code != 0 { return }
-	l := d.Live{c = c, evidence = root}
-	child, err := d.start_child(&l, []string{fixture}, "interrupt")
-	testing.expect_value(t, err, ""); if err != "" { return }
-	defer d.stop_child(&child)
-	line, startup_error := d.first_line(&child)
-	testing.expect_value(t, startup_error, "")
-	testing.expect_value(t, line, "ready")
-	// Signal only the fixture process created by this test, never the test runner.
-	testing.expect_value(t, posix.kill(posix.pid_t(child.process.pid), .SIGINT), nil)
-	state, wait_error := os.process_wait(child.process, 3 * time.Second)
-	testing.expect_value(t, wait_error, nil)
-	if wait_error == nil { child.active = false }
-	testing.expect_value(t, int(state.exit_code), 130)
-	output, _ := s.read(child.stdout)
-	testing.expect(t, strings.contains(output, "cleanup completed"))
+	if result.code != 0 {
+		return
+	}
+	l := d.Live {
+		c        = c,
+		evidence = root,
+	}
+	unrelated, unrelated_error := d.start_child(
+		&l,
+		[]string{"/bin/sleep", "30"},
+		"unrelated",
+	)
+	testing.expect_value(t, unrelated_error, "")
+	if unrelated_error != "" {
+		return
+	}
+	defer d.stop_child(&unrelated)
+	for mode in ([]string{"interrupt", "timeout", "stubborn"}) {
+		pidfile := s.join(root, s.cat(mode, ".pid"))
+		child, err := d.start_child(&l, []string{fixture, mode, pidfile}, mode)
+		testing.expect_value(t, err, ""); if err != "" {
+			return
+		}
+		defer d.stop_child(&child)
+		line, startup_error := d.first_line(&child)
+		testing.expect_value(t, startup_error, "")
+		testing.expect_value(t, line, "ready")
+		// Signal only the fixture process created by this test, never the test runner.
+		started := time.tick_now()
+		for !s.regular(pidfile) &&
+		    time.tick_since(started) <
+			    2 * time.Second { time.sleep(10 * time.Millisecond) }
+		text, read_error := s.read(pidfile)
+		testing.expect_value(t, read_error, "")
+		pid, valid := strconv.parse_i64(s.trim(text))
+		testing.expect(t, valid && pid > 1)
+		if !valid || pid <= 1 {
+			return
+		}
+		defer posix.kill(posix.pid_t(pid), .SIGKILL) // Emergency cleanup if the regression fails.
+		if mode == "interrupt" {
+			testing.expect_value(
+				t,
+				posix.kill(posix.pid_t(child.process.pid), .SIGINT),
+				nil,
+			)
+		}
+		state, wait_error := os.process_wait(child.process, 3 * time.Second)
+		testing.expect_value(t, wait_error, nil)
+		if wait_error == nil {
+			child.active = false
+		}
+		testing.expect_value(t, int(state.exit_code), 130)
+		output, _ := s.read(child.stdout)
+		testing.expect(t, strings.contains(output, "cleanup completed"))
+		deadline := time.tick_now()
+		for posix.kill(posix.pid_t(pid), posix.Signal(0)) == nil &&
+		    time.tick_since(deadline) <
+			    time.Second { time.sleep(10 * time.Millisecond) }
+		testing.expect(
+			t,
+			posix.kill(posix.pid_t(pid), posix.Signal(0)) != nil,
+			"owned descendant survived command cleanup",
+		)
+		testing.expect(
+			t,
+			d.child_alive(&unrelated),
+			"cleanup must preserve unrelated processes",
+		)
+	}
 }
 
 @(test)
@@ -113,11 +252,7 @@ native_live_guards_preserve_existing_daemons_and_preexisting_spaces :: proc(
 	}; c := tool_context("/test", &r)
 	testing.expect(t, d.desktop_guard(c) != "")
 	testing.expect_value(t, len(r.calls), 1)
-	for id in ([3]u64 {
-			0,
-			1,
-			2,
-		}) {
+	for id in ([3]u64{0, 1, 2}) {
 		allowed, err := d.space_cleanup_allowed(
 			id,
 			1,
@@ -250,15 +385,39 @@ native_bootstrap_inspection_rejects_external_references :: proc(
 }
 
 @(test)
-native_live_helper_emits_valid_json_without_windowserver :: proc(t:^testing.T){
- arena:mem.Dynamic_Arena;mem.dynamic_arena_init(&arena);defer mem.dynamic_arena_destroy(&arena)
- context.allocator=mem.dynamic_arena_allocator(&arena);context.temp_allocator=context.allocator
- root,_:=s.temp("shoji-helper-output-test");defer os.remove_all(root)
- c:=d.Context{root=d.project_root()};helper:=s.join(root,"helper")
- r:=s.run({},[]string{d.compiler(c),"build",s.join(c.root,"tools/live-animation"),s.cat("-out:",helper),"-extra-linker-flags:-F/System/Library/PrivateFrameworks"},timeout=120*time.Second,env=d.compiler_env(c))
- testing.expect(t,r.code==0,s.cat(r.out,r.diagnostic))
- if r.code!=0{return}
- output:=s.run({},[]string{helper,"--self-test-output"},timeout=15*time.Second)
- testing.expect_value(t,output.code,0)
- alpha,err:=d.parse_alpha(output.out,123);testing.expect_value(t,err,"");testing.expect_value(t,alpha,f64(.5))
+native_live_helper_emits_valid_json_without_windowserver :: proc(
+	t: ^testing.T,
+) {
+	arena: mem.Dynamic_Arena; mem.dynamic_arena_init(&arena)
+	defer mem.dynamic_arena_destroy(&arena)
+	context.allocator = mem.dynamic_arena_allocator(&arena)
+	context.temp_allocator = context.allocator
+	root, _ := s.temp("shoji-helper-output-test"); defer os.remove_all(root)
+	c := d.Context {
+		root = d.project_root(),
+	}; helper := s.join(root, "helper")
+	r := s.run(
+		{},
+		[]string {
+			d.compiler(c),
+			"build",
+			s.join(c.root, "tools/live-animation"),
+			s.cat("-out:", helper),
+			"-extra-linker-flags:-F/System/Library/PrivateFrameworks",
+		},
+		timeout = 120 * time.Second,
+		env = d.compiler_env(c),
+	)
+	testing.expect(t, r.code == 0, s.cat(r.out, r.diagnostic))
+	if r.code != 0 {
+		return
+	}
+	output := s.run(
+		{},
+		[]string{helper, "--self-test-output"},
+		timeout = 15 * time.Second,
+	)
+	testing.expect_value(t, output.code, 0)
+	alpha, err := d.parse_alpha(output.out, 123)
+	testing.expect_value(t, err, ""); testing.expect_value(t, alpha, f64(.5))
 }

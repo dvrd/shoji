@@ -184,6 +184,7 @@ uninstall :: proc(m: Manager) -> string {
 	}; return ""
 }
 cli :: proc(args: []string, default_binary: string) -> int {
+	s.configure_signals()
 	if len(args) == 0 || args[0] == "--help" {
 		fmt.println(
 			"Usage: shoji service plist|install|start|stop|restart|status|uninstall [--binary PATH] [--config PATH] [--sa PATH]",
@@ -232,6 +233,6 @@ cli :: proc(args: []string, default_binary: string) -> int {
 		err = "unknown service command"
 	}
 	if err != "" {
-		fmt.eprintln("service:", err); return 1
+		fmt.eprintln("service:", err); return s.interrupted() ? 130 : 1
 	}; return 0
 }

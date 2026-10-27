@@ -9,11 +9,10 @@ import "core:sync"
 import posix "core:sys/posix"
 import "core:time"
 
-process_mutex: sync.Mutex
 interrupt_requested: i32
 cleanup_depth: int
 
-// Only the development CLI installs these handlers; the daemon owns its signals.
+// CLI entry points install these handlers; the daemon owns its signals.
 configure_signals :: proc() {
 	posix.signal(.SIGINT, interrupt_handler)
 	posix.signal(.SIGTERM, interrupt_handler)
@@ -21,17 +20,12 @@ configure_signals :: proc() {
 interrupt_handler :: proc "c" (_: posix.Signal) {
 	sync.atomic_store(&interrupt_requested, 1)
 }
-interrupted :: proc() -> bool { return sync.atomic_load(&interrupt_requested) != 0 }
+interrupted :: proc() -> bool {
+	return sync.atomic_load(&interrupt_requested) != 0
+}
 cancelled :: proc() -> bool { return interrupted() && cleanup_depth == 0 }
 begin_cleanup :: proc() { cleanup_depth += 1 }
 end_cleanup :: proc() { cleanup_depth -= 1 }
-
-// Odin's process_start changes inherited descriptors and is not thread safe.
-start :: proc(desc: os.Process_Desc) -> (os.Process, os.Error) {
-	sync.mutex_lock(&process_mutex)
-	defer sync.mutex_unlock(&process_mutex)
-	return os.process_start(desc)
-}
 
 Request :: struct {
 	args: []string,
@@ -56,7 +50,9 @@ run :: proc(
 	timeout: time.Duration = 30 * time.Second,
 	env: []string = nil,
 ) -> Result {
-	if cancelled() { return {130, "", "interrupted", false} }
+	if cancelled() {
+		return {130, "", "interrupted", false}
+	}
 	r := Request{args, dir, input, timeout, env}
 	if e.execute != nil {
 		return e.execute(e.user, r)
@@ -73,7 +69,9 @@ run :: proc(
 	_ = os.chmod(stage, {.Read_User, .Write_User, .Execute_User})
 	outpath, errpath, inpath :=
 		join(stage, "stdout"), join(stage, "stderr"), join(stage, "stdin")
-	_ = os.write_entire_file(inpath, input)
+	if err := os.write_entire_file(inpath, input); err != nil {
+		return {-1, "", fmt.tprintf("command input: %v", err), false}
+	}
 	out, a := os.create(outpath); if a != nil {
 		return {-1, "", fmt.tprintf("stdout: %v", a), false}
 	}; defer os.close(out)
@@ -83,7 +81,7 @@ run :: proc(
 	stdin, c := os.open(inpath); if c != nil {
 		return {-1, "", fmt.tprintf("stdin: %v", c), false}
 	}; defer os.close(stdin)
-	child, start_error := start(
+	child, group, start_error := start(
 		{
 			command = args,
 			working_dir = dir,
@@ -92,6 +90,7 @@ run :: proc(
 			stderr = stderr,
 			stdin = stdin,
 		},
+		command = true,
 	)
 	if start_error != nil {
 		return {
@@ -106,15 +105,34 @@ run :: proc(
 	wait: os.Error
 	for {
 		remaining := timeout - time.tick_since(began)
-		state, wait = os.process_wait(child, clamp(remaining, 0, 100 * time.Millisecond))
-		if wait != .Timeout || remaining <= 0 || cancelled() { break }
+		state, wait = os.process_wait(
+			child,
+			clamp(remaining, 0, 100 * time.Millisecond),
+		)
+		if wait != .Timeout || remaining <= 0 || cancelled() {
+			break
+		}
 	}
 	timed := wait == .Timeout
-	if wait != nil {
-		_ = os.process_kill(child); _, _ = os.process_wait(child)
+	cleanup_error := stop_tree(child, group, wait == nil)
+	output, output_error := os.read_entire_file(outpath, context.allocator)
+	diagnostic, diagnostic_error := os.read_entire_file(
+		errpath,
+		context.allocator,
+	)
+	if output_error != nil || diagnostic_error != nil {
+		return {
+			-1,
+			"",
+			fmt.tprintf(
+				"command evidence read: %v / %v; cleanup: %s",
+				output_error,
+				diagnostic_error,
+				cleanup_error,
+			),
+			timed,
+		}
 	}
-	output, _ := os.read_entire_file(outpath, context.allocator)
-	diagnostic, _ := os.read_entire_file(errpath, context.allocator)
 	code := int(state.exit_code)
 	if wait != nil {
 		code = -1
@@ -125,7 +143,24 @@ run :: proc(
 			wait,
 		)
 	}
-	if cancelled() { return {130, string(output), "interrupted", false} }
+	if cancelled() {
+		return {
+			130,
+			string(output),
+			cleanup_error == "" \
+				? "interrupted" \
+				: cat("interrupted; cleanup: ", cleanup_error),
+			false,
+		}
+	}
+	if cleanup_error != "" {
+		return {
+			-1,
+			string(output),
+			cat(string(diagnostic), "; ", cleanup_error),
+			timed,
+		}
+	}
 	return {code, string(output), string(diagnostic), timed}
 }
 checked :: proc(
@@ -313,8 +348,12 @@ parse :: proc(args: []string, values, flags: []string) -> (Options, string) {
 get :: proc(o: Options, key: string, default_value: string = "") -> string {
 	v, ok := o.values[key]; return ok ? v : default_value
 }
-environment :: proc(key, value: string) -> []string {
-	old, _ := os.environ(context.allocator); result := make([dynamic]string)
+environment :: proc(key, value: string, base: []string = nil) -> []string {
+	old := base
+	if old == nil {
+		old, _ = os.environ(context.allocator)
+	}
+	result := make([dynamic]string)
 	for item in old {
 		if !strings.has_prefix(item, cat(key, "=")) {
 			append(&result, item)

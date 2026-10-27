@@ -34,7 +34,6 @@ foreign libc {
 	setsockopt :: proc(fd, level, option: i32, value: rawptr, length: u32) -> i32 ---
 	chmod :: proc(path: cstring, mode: u16) -> i32 ---
 	unlink :: proc(path: cstring) -> i32 ---
-	mkdir :: proc(path: cstring, mode: u16) -> i32 ---
 	flock :: proc(fd, operation: i32) -> i32 ---
 	poll :: proc(fds: ^Poll_FD, count: u32, timeout: i32) -> i32 ---
 	getpeereid :: proc(fd: i32, uid, gid: ^u32) -> i32 ---

@@ -20,6 +20,63 @@ contains :: proc(values: []string, value: string) -> bool {
 		}
 	}; return false
 }
+macho_header :: proc(header: []u8) -> bool {
+	if len(header) < 4 {
+		return false
+	}
+	magic := le32(header[:4])
+	return(
+		magic == 0xfeedfacf ||
+		magic == 0xfeedface ||
+		magic == 0xcffaedfe ||
+		magic == 0xcefaedfe ||
+		magic == 0xbebafeca ||
+		magic == 0xcafebabe \
+	)
+}
+generated_directory :: proc(path, name: string) -> (bool, string) {
+	allowed: []string
+	switch name {
+	case "universal":
+		allowed = []string {
+			"shoji",
+			"shoji.new",
+			"shoji-loader",
+			"shoji-sa.dylib",
+			"shoji-dev",
+		}
+	case "transaction-fix", "macos27":
+		allowed = []string{"shoji-sa.dylib", "shoji-sa.dylib.new"}
+	case:
+		return false, ""
+	}
+	entries, err := os.read_directory_by_path(path, -1, context.allocator)
+	if err != nil {
+		return false, fmt.tprintf(
+			"cannot inspect generated directory %s: %v",
+			path,
+			err,
+		)
+	}
+	for entry in entries {
+		// A backup, evidence file, subdirectory or symlink makes this a retained input.
+		if entry.type != .Regular || !contains(allowed, entry.name) {
+			return false, ""
+		}
+		file, open_error := os.open(s.join(path, entry.name))
+		if open_error != nil {
+			return false, fmt.tprintf(
+				"cannot inspect generated output: %v",
+				open_error,
+			)
+		}
+		header: [4]u8; n, _ := os.read(file, header[:]); os.close(file)
+		if !macho_header(header[:n]) {
+			return false, ""
+		}
+	}
+	return true, ""
+}
 clean_outputs :: proc(c: Context) -> ([]string, string) {
 	directory := root_file(c, "bin")
 	if s.kind(directory) == .Symlink {
@@ -39,6 +96,13 @@ clean_outputs :: proc(c: Context) -> ([]string, string) {
 		}
 		path := s.join(directory, entry.name)
 		if entry.type == .Directory {
+			generated, inspect_error := generated_directory(path, entry.name)
+			if inspect_error != "" {
+				return nil, inspect_error
+			}
+			if generated {
+				append(&found, path); continue
+			}
 			if strings.has_suffix(entry.name, ".dSYM") ||
 			   contains(
 				   []string {
@@ -55,14 +119,7 @@ clean_outputs :: proc(c: Context) -> ([]string, string) {
 				return nil, fmt.tprintf("cannot inspect output: %v", e)
 			}
 			header: [8]u8; n, _ := os.read(f, header[:]); os.close(f)
-			magic := n >= 4 ? le32(header[:4]) : 0
-			macho :=
-				magic == 0xfeedfacf ||
-				magic == 0xfeedface ||
-				magic == 0xcffaedfe ||
-				magic == 0xcefaedfe ||
-				magic == 0xbebafeca ||
-				magic == 0xcafebabe
+			macho := macho_header(header[:n])
 			if strings.has_prefix(entry.name, "shoji-") && macho ||
 			   entry.name == "libshoji-raven.a" &&
 				   n == 8 &&

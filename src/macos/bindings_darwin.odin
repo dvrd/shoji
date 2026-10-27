@@ -39,7 +39,6 @@ foreign cf {
 	CFNumberCreate :: proc(allocator: Ref, type: i32, value: rawptr) -> Ref ---
 	CFNumberGetValue :: proc(ref: Ref, type: i32, value: rawptr) -> bool ---
 	CFBooleanGetValue :: proc(ref: Ref) -> bool ---
-	CFUUIDCreateFromString :: proc(allocator, string: Ref) -> Ref ---
 	CFUUIDCreateString :: proc(allocator, uuid: Ref) -> Ref ---
 	CFRunLoopGetMain :: proc() -> Ref ---
 	CFRunLoopAddSource :: proc(loop, source, mode: Ref) ---
@@ -55,13 +54,11 @@ foreign cg {
 	CGMainDisplayID :: proc() -> u32 ---
 	CGDisplayBounds :: proc(display: u32) -> e.Rect ---
 	CGDisplayCreateUUIDFromDisplayID :: proc(display: u32) -> Ref ---
-	CGDisplayGetDisplayIDFromUUID :: proc(uuid: Ref) -> u32 ---
 }
 @(default_calling_convention = "c")
 foreign ax {
 	AXIsProcessTrusted :: proc() -> bool ---
 	AXUIElementCreateApplication :: proc(pid: i32) -> Ref ---
-	AXUIElementCreateSystemWide :: proc() -> Ref ---
 	AXUIElementCopyAttributeValue :: proc(element, attribute: Ref, value: ^Ref) -> i32 ---
 	AXUIElementSetAttributeValue :: proc(element, attribute, value: Ref) -> i32 ---
 	AXUIElementIsAttributeSettable :: proc(element, attribute: Ref, value: ^bool) -> i32 ---
@@ -89,7 +86,6 @@ foreign sls {
 	SLSCopyActiveMenuBarDisplayIdentifier :: proc(connection: i32) -> Ref ---
 	SLSManagedDisplayGetCurrentSpace :: proc(connection: i32, display: Ref) -> u64 ---
 	SLSCopySpacesForWindows :: proc(connection, selector: i32, windows: Ref) -> Ref ---
-	SLSCopyManagedDisplayForWindow :: proc(connection: i32, window: u32) -> Ref ---
 	SLSGetWindowBounds :: proc(connection: i32, window: u32, frame: ^e.Rect) -> i32 ---
 	SLSGetWindowLevel :: proc(connection: i32, window: u32, level: ^i32) -> i32 ---
 	SLSGetWindowSubLevel :: proc(connection: i32, window: u32) -> i32 ---

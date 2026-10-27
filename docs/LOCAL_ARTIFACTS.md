@@ -24,6 +24,11 @@ tar -tzf artifacts/validation/investigations-2026-10-27.tar.gz
 
 `task clean` does not remove research artifacts or unknown files, follow symlinks, stop/restart Shoji, or modify the Dock. It removes optional helper executables too; rebuild them with their named tasks when needed. Decoder libraries rebuild through `task raven`, and `task check` declares that prerequisite. An unrecognized future output stays in place until its cleanup policy is explicit.
 
+The known `bin/universal/`, `bin/transaction-fix/` and `bin/macos27/` output
+directories are also removable when every entry is an expected Mach-O output.
+Unknown files, backups, subdirectories, nonbinary inputs or symlinks preserve the
+entire directory. Preview the exact removal list with `task clean:preview`.
+
 The VirtualBuddy VM is outside this repository at `~/Library/Application Support/VirtualBuddy/Misty Pony.vbvm`; project cleanup does not touch it. The read-only restore compatibility probe now has maintained source/entitlements under `tools/vm-preflight/` and can be rebuilt with `task build:vm-preflight`.
 
 Ignored artifacts and rollback copies are local conveniences, not remote backups. Git checkpoints preserve the maintained code and versioned validation evidence; large Apple images and raw archives are not committed.

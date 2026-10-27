@@ -132,14 +132,20 @@ wait_desktop :: proc(
 	}
 	return fmt.tprintf("timed out waiting for desktop fixture check %v", check)
 }
-live_desktop :: proc(c: Context) -> (err: string) {
-	l, e := prepare_live(c, "shoji-desktop"); if e != "" {
+live_desktop :: proc(c: Context) -> string {
+	l: Live
+	err := live_desktop_run(c, &l)
+	return finish_live(&l, err)
+}
+live_desktop_run :: proc(c: Context, l: ^Live) -> (err: string) {
+	prepared, e := prepare_live(c, "shoji-desktop"); if e != "" {
 		return e
-	}; defer save_live(&l, err)
+	}
+	l^ = prepared
 	if err = desktop_guard(c); err != "" {
 		return err
 	}
-	if _, err = live_command(&l, []string{binary(c, "shoji"), "--inspect"});
+	if _, err = live_command(l, []string{binary(c, "shoji"), "--inspect"});
 	   err != "" {
 		return err
 	}
@@ -147,7 +153,7 @@ live_desktop :: proc(c: Context) -> (err: string) {
 		return err
 	}
 	fixture, e1 := start_child(
-		&l,
+		l,
 		[]string {
 			binary(c, "shoji-live-animation"),
 			"desktop",
@@ -156,7 +162,7 @@ live_desktop :: proc(c: Context) -> (err: string) {
 		"fixture",
 	); if e1 != "" {
 		return e1
-	}; defer stop_child(&fixture)
+	}; defer record_cleanup(l, "fixture", stop_child(&fixture))
 	line, e2 := first_line(&fixture); if e2 != "" {
 		return e2
 	}
@@ -186,7 +192,7 @@ live_desktop :: proc(c: Context) -> (err: string) {
 		return err
 	}
 	daemon, e3 := start_child(
-		&l,
+		l,
 		[]string {
 			binary(c, "shoji"),
 			"-c",
@@ -197,10 +203,10 @@ live_desktop :: proc(c: Context) -> (err: string) {
 		"daemon",
 	); if e3 != "" {
 		return e3
-	}; defer stop_child(&daemon)
+	}; defer record_cleanup(l, "daemon", stop_child(&daemon))
 	first, second := owned.windows[0], owned.windows[1]
 	first_id, second_id := fmt.tprintf("%d", first), fmt.tprintf("%d", second)
-	if err = wait_desktop(&l, owned.pid, first, second, .Ready, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Ready, &daemon);
 	   err != "" {
 		return err
 	}
@@ -210,26 +216,26 @@ live_desktop :: proc(c: Context) -> (err: string) {
 		{"config", "layout", "bsp"},
 	}
 	for args in configs {
-		if _, err = live_client(&l, ..args); err != "" {
+		if _, err = live_client(l, ..args); err != "" {
 			return err
 		}
 	}
-	if err = wait_desktop(&l, owned.pid, first, second, .Frames, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Frames, &daemon);
 	   err != "" {
 		return err
 	}
-	if _, err = live_client(&l, "window", first_id, "--focus"); err != "" {
+	if _, err = live_client(l, "window", first_id, "--focus"); err != "" {
 		return err
 	}
-	if err = wait_desktop(&l, owned.pid, first, second, .Focus, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Focus, &daemon);
 	   err != "" {
 		return err
 	}
-	if _, err = live_client(&l, "window", first_id, "--swap", second_id);
+	if _, err = live_client(l, "window", first_id, "--swap", second_id);
 	   err != "" {
 		return err
 	}
-	windows, e4 := owned_windows(&l, owned.pid); if e4 != "" {
+	windows, e4 := owned_windows(l, owned.pid); if e4 != "" {
 		return e4
 	}
 	space := u32(0); for window in windows {
@@ -247,34 +253,33 @@ live_desktop :: proc(c: Context) -> (err: string) {
 		{"window", first_id, "--toggle", "float", "--grid", "4:4:1:1:2:2"},
 	}
 	for args in operations {
-		if _, err = live_client(&l, ..args); err != "" {
+		if _, err = live_client(l, ..args); err != "" {
 			return err
 		}
 	}
-	if err = wait_desktop(&l, owned.pid, first, second, .Floating, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Floating, &daemon);
 	   err != "" {
 		return err
 	}
-	if err = wait_desktop(&l, owned.pid, first, second, .Frames, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Frames, &daemon);
 	   err != "" {
 		return err
 	}
-	if _, err = live_client(&l, "window", first_id, "--resize", "right:20:0");
+	if _, err = live_client(l, "window", first_id, "--resize", "right:20:0");
 	   err != "" {
 		return err
 	}
-	if _, err = live_client(&l, "window", first_id, "--minimize"); err != "" {
+	if _, err = live_client(l, "window", first_id, "--minimize"); err != "" {
 		return err
 	}
-	if err = wait_desktop(&l, owned.pid, first, second, .Minimized, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Minimized, &daemon);
 	   err != "" {
 		return err
 	}
-	if _, err = live_client(&l, "window", first_id, "--deminimize");
-	   err != "" {
+	if _, err = live_client(l, "window", first_id, "--deminimize"); err != "" {
 		return err
 	}
-	if err = wait_desktop(&l, owned.pid, first, second, .Restored, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Restored, &daemon);
 	   err != "" {
 		return err
 	}
@@ -285,16 +290,18 @@ live_desktop :: proc(c: Context) -> (err: string) {
 		{"window", second_id, "--close"},
 	}
 	for args in finishing {
-		if _, err = live_client(&l, ..args); err != "" {
+		if _, err = live_client(l, ..args); err != "" {
 			return err
 		}
 	}
-	if err = wait_desktop(&l, owned.pid, first, second, .Closed, &daemon);
+	if err = wait_desktop(l, owned.pid, first, second, .Closed, &daemon);
 	   err != "" {
 		return err
 	}
-	stop_child(&fixture)
-	if err = wait_desktop(&l, owned.pid, first, second, .Empty, &daemon);
+	if cleanup_error := stop_child(&fixture); cleanup_error != "" {
+		return s.cat("fixture cleanup: ", cleanup_error)
+	}
+	if err = wait_desktop(l, owned.pid, first, second, .Empty, &daemon);
 	   err != "" {
 		return err
 	}

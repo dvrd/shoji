@@ -3,23 +3,30 @@ package development
 import s "../../../src/support"
 import "core:fmt"
 
-live_spaces :: proc(c: Context, load_payload: bool) -> (err: string) {
-	l, e := prepare_live(c, "shoji-spaces"); if e != "" {
+live_spaces :: proc(c: Context, load_payload: bool) -> string {
+	l: Live
+	err := live_spaces_run(c, load_payload, &l)
+	return finish_live(&l, err)
+}
+live_spaces_run :: proc(
+	c: Context,
+	load_payload: bool,
+	l: ^Live,
+) -> (
+	err: string,
+) {
+	prepared, e := prepare_live(c, "shoji-spaces"); if e != "" {
 		return e
 	}
-	defer save_live(&l, err)
+	l^ = prepared
 	created, original: u64; protected: []u64
 	defer {
 		s.begin_cleanup()
 		defer s.end_cleanup()
 		if created != 0 {
-			if cleanup := restore_space(&l, created, original, protected);
+			if cleanup := restore_space(l, created, original, protected);
 			   cleanup != "" {
-				err = s.cat(
-					err,
-					"; disposable Space cleanup failed: ",
-					cleanup,
-				)
+				record_cleanup(l, "disposable Space", cleanup)
 			}
 		}
 	}
@@ -28,7 +35,7 @@ live_spaces :: proc(c: Context, load_payload: bool) -> (err: string) {
 	}
 	if load_payload {
 		if _, err = live_command(
-			&l,
+			l,
 			[]string {
 				"sudo",
 				"-n",
@@ -40,11 +47,11 @@ live_spaces :: proc(c: Context, load_payload: bool) -> (err: string) {
 			return err
 		}
 	}
-	if _, err = live_command(&l, []string{binary(c, "shoji"), "--check-sa"});
+	if _, err = live_command(l, []string{binary(c, "shoji"), "--check-sa"});
 	   err != "" {
 		return err
 	}
-	before, e1 := space_snapshot(&l); if e1 != "" {
+	before, e1 := space_snapshot(l); if e1 != "" {
 		return e1
 	}; protected = space_ids(before)
 	focused := 0
@@ -59,7 +66,7 @@ live_spaces :: proc(c: Context, load_payload: bool) -> (err: string) {
 		return "cannot identify the original focused Space"
 	}
 	text, e2 := live_helper(
-		&l,
+		l,
 		"space-create-tracked",
 		fmt.tprintf("%d", original),
 	); if e2 != "" {
@@ -72,24 +79,24 @@ live_spaces :: proc(c: Context, load_payload: bool) -> (err: string) {
 		return "payload returned a pre-existing Space; refusing cleanup target"
 	}
 	created = fresh; l.report.created_space = created
-	if err = wait_space(&l, created, true, false); err != "" {
+	if err = wait_space(l, created, true, false); err != "" {
 		return err
 	}
-	if _, err = live_helper(&l, "space-focus", fmt.tprintf("%d", created));
+	if _, err = live_helper(l, "space-focus", fmt.tprintf("%d", created));
 	   err != "" {
 		return err
 	}
-	if err = wait_space(&l, created, true, true); err != "" {
+	if err = wait_space(l, created, true, true); err != "" {
 		return err
 	}
-	if err = restore_space(&l, created, original, protected); err != "" {
+	if err = restore_space(l, created, original, protected); err != "" {
 		return err
 	}
-	if err = wait_space(&l, created, false, false); err != "" {
+	if err = wait_space(l, created, false, false); err != "" {
 		return err
 	}
 	created = 0
-	after, e3 := space_snapshot(&l); if e3 != "" {
+	after, e3 := space_snapshot(l); if e3 != "" {
 		return e3
 	}
 	for id in protected {

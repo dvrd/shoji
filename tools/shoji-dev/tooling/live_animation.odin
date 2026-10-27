@@ -71,7 +71,9 @@ restart_dock :: proc(
 	}
 	began := time.tick_now()
 	for time.tick_since(began) < timeout {
-		if s.cancelled() { return "interrupted" }
+		if s.cancelled() {
+			return "interrupted"
+		}
 		current, current_error := user_dock(c, uid)
 		if current_error == "" && current != before {
 			replaced = true; break
@@ -104,15 +106,17 @@ start_animation_fixture :: proc(
 		return {}, 0, err
 	}
 	line, e := first_line(&child); if e != "" {
-		stop_child(&child); return {}, 0, e
+		return {}, 0, with_error(e, "fixture cleanup", stop_child(&child))
 	}
 	id, id_error := parse_id(line); if id_error != "" || id > 0xffffffff {
-		stop_child(&child); diagnostic, _ := s.read(child.stderr)
-		return {}, 0, s.cat(
+		cleanup_error := stop_child(&child)
+		diagnostic, _ := s.read(child.stderr)
+		reason := s.cat(
 			"fixture could not create an owned window: ",
 			diagnostic,
 			line,
 		)
+		return {}, 0, with_error(reason, "fixture cleanup", cleanup_error)
 	}
 	return child, u32(id), ""
 }
@@ -144,6 +148,15 @@ replay_journal :: proc(l: ^Live, journal: string, window: u32) -> string {
 live_animation :: proc(
 	c: Context,
 	reload_payload, dock_restart: bool,
+) -> string {
+	l: Live
+	err := live_animation_run(c, reload_payload, dock_restart, &l)
+	return finish_live(&l, err)
+}
+live_animation_run :: proc(
+	c: Context,
+	reload_payload, dock_restart: bool,
+	l: ^Live,
 ) -> (
 	err: string,
 ) {
@@ -158,37 +171,41 @@ live_animation :: proc(
 	if err = build_live_helper(c); err != "" {
 		return err
 	}
-	l, e := prepare_live(c, "shoji-live-crash"); if e != "" {
+	prepared, e := prepare_live(c, "shoji-live-crash"); if e != "" {
 		return e
-	}; l.report.dock_restart = dock_restart || reload_payload
-	defer save_live(&l, err)
-	real, window, e1 := start_animation_fixture(&l, []string{"real"}, "real")
+	}
+	l^ = prepared
+	l.report.dock_restart = dock_restart || reload_payload
+
+	real, window, e1 := start_animation_fixture(l, []string{"real"}, "real")
 	if e1 != "" {
 		return e1
-	}; defer stop_child(&real)
+	}; defer record_cleanup(l, "real window", stop_child(&real))
 	l.report.fixture_pid = real.process.pid
-	baseline, e2 := query_alpha(&l, window); if e2 != "" {
+	baseline, e2 := query_alpha(l, window); if e2 != "" {
 		return e2
 	}; if baseline < .99 {
 		return "owned-window baseline opacity is not one"
 	}
 	journal := s.join(l.evidence, "watchdog.json")
 	proxy, _, e3 := start_animation_fixture(
-		&l,
+		l,
 		[]string{"proxy", fmt.tprintf("%d", window), journal},
 		"watchdog-proxy",
 	); if e3 != "" {
 		return e3
-	}; defer stop_child(&proxy)
-	hidden, e4 := query_alpha(&l, window); if e4 != "" {
+	}; defer record_cleanup(l, "proxy", stop_child(&proxy))
+	hidden, e4 := query_alpha(l, window); if e4 != "" {
 		return e4
 	}; if hidden > .01 {
 		return "fixture did not hide its owned real window"
 	}
-	stop_child(&proxy, true)
+	if cleanup_error := stop_child(&proxy, true); cleanup_error != "" {
+		return s.cat("proxy cleanup: ", cleanup_error)
+	}
 	start := time.tick_now(); restored := false
 	for time.tick_since(start) < 5 * time.Second {
-		alpha, alpha_error := query_alpha(&l, window); if alpha_error != "" {
+		alpha, alpha_error := query_alpha(l, window); if alpha_error != "" {
 			return alpha_error
 		}; if alpha >= .99 {
 			restored = true; break
@@ -197,37 +214,40 @@ live_animation :: proc(
 	if !restored {
 		return "payload watchdog did not restore the owned real window"
 	}
-	if err = replay_journal(&l, journal, window); err != "" {
+	if err = replay_journal(l, journal, window); err != "" {
 		return err
 	}
 	fmt.println("PASS: owned-window SIGKILL watchdog restoration")
 	journal = s.join(l.evidence, "replay.json")
 	second, _, e5 := start_animation_fixture(
-		&l,
+		l,
 		[]string{"proxy", fmt.tprintf("%d", window), journal},
 		"replay-proxy",
 	); if e5 != "" {
 		return e5
-	}; defer stop_child(&second)
-	second_alpha, e6 := query_alpha(&l, window); if e6 != "" {
+	}; defer record_cleanup(l, "replay", stop_child(&second))
+	second_alpha, e6 := query_alpha(l, window); if e6 != "" {
 		return e6
 	}; if second_alpha > .01 {
 		return "second fixture did not prove its hide"
 	}
-	if err = replay_journal(&l, journal, window); err != "" {
+	if err = replay_journal(l, journal, window); err != "" {
 		return err
-	}; stop_child(&second)
+	}
+	if cleanup_error := stop_child(&second); cleanup_error != "" {
+		return s.cat("replay cleanup: ", cleanup_error)
+	}
 	fmt.println("PASS: fresh-process journal replay")
 	if dock_restart {
 		journal = s.join(l.evidence, "dock.json")
 		third, _, e7 := start_animation_fixture(
-			&l,
+			l,
 			[]string{"proxy", fmt.tprintf("%d", window), journal},
 			"dock-proxy",
 		); if e7 != "" {
 			return e7
-		}; defer stop_child(&third)
-		third_alpha, e8 := query_alpha(&l, window); if e8 != "" {
+		}; defer record_cleanup(l, "restart fixture", stop_child(&third))
+		third_alpha, e8 := query_alpha(l, window); if e8 != "" {
 			return e8
 		}; if third_alpha > .01 {
 			return "Dock-restart fixture did not prove its hide"
@@ -235,7 +255,7 @@ live_animation :: proc(
 		if err = restart_dock(c, os.get_uid()); err != "" {
 			return err
 		}
-		if err = replay_journal(&l, journal, window); err != "" {
+		if err = replay_journal(l, journal, window); err != "" {
 			return err
 		}
 		fmt.println("PASS: journal recovery after explicit Dock restart")
