@@ -79,4 +79,4 @@ Proposals use the source table's existing OS version fields. The patch comment r
 
 `task test:dockscan` exercises malformed/truncated and universal Mach-O images, offset mapping, pattern ambiguity, normalized ranking with real disassembly, catalog/build metadata, snapshot tampering and patch evidence checks. Parsing is also exercised against 500 mutated Mach-O headers. CI runs these tests on Apple silicon.
 
-`task test:raven` runs upstream native decoder vectors, corruption and mutation tests. The pinned source, license and provenance are in `vendor/liblzraven/`.
+`task test:raven` runs upstream native decoder vectors, corruption and mutation tests. The pinned source, license and provenance are in [vendor/liblzraven/SHOJI.md](vendor/liblzraven/SHOJI.md), alongside this tool.

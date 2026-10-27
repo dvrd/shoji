@@ -36,6 +36,6 @@ See [investigation procedure](../tools/DOCK_COMPATIBILITY.md) and [domain vocabu
 
 ## macOS 27 implementation evidence
 
-Build 26A434 packages Dock inside a MobileAsset ZIP with pbzm/LZRAVEN payloads. The container reader and acquisition logic remain in Odin. Codec decoding uses the pinned, unmodified 0BSD C library documented in `vendor/liblzraven/SHOJI.md`, linked statically into the diagnostic. This avoids requiring macOS 27's newer Apple Archive decoder on the validation host. Real extraction and a seven-target unique static scan now pass; see [validation](DOCK_SCANNER_VALIDATION.md).
+Build 26A434 packages Dock inside a MobileAsset ZIP with pbzm/LZRAVEN payloads. The container reader and acquisition logic remain in Odin. Codec decoding uses the pinned, unmodified 0BSD C library documented in [`tools/shoji-dock/vendor/liblzraven/SHOJI.md`](../tools/shoji-dock/vendor/liblzraven/SHOJI.md), linked statically into the diagnostic. This avoids requiring macOS 27's newer Apple Archive decoder on the validation host. Real extraction and a seven-target unique static scan now pass; see [validation](DOCK_SCANNER_VALIDATION.md).
 
 The user subsequently requested preparing the actual compatibility patch. Version-specific tables were added for 27.0.1, and a separate opt-in candidate payload can be built for target-OS validation. The scanner still never applies proposals or loads payloads, and the normal runtime OS gate remains unchanged.
