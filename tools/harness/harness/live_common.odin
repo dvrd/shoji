@@ -57,7 +57,7 @@ live_client :: proc(l: ^Live, args: ..string) -> (string, string) {
 }
 live_helper :: proc(l: ^Live, args: ..string) -> (string, string) {
 	cmd := make([dynamic]string)
-	append(&cmd, tc.binary(l.c, "shoji-harness-fixture")); append(&cmd, ..args)
+	append(&cmd, tc.binary(l.c, "harness-fixture")); append(&cmd, ..args)
 	return live_command(l, cmd[:])
 }
 record_cleanup :: proc(l: ^Live, operation, err: string) {
@@ -117,8 +117,8 @@ build_live_helper :: proc(c: tc.Context) -> string {
 		tc.compiler(c),
 		"build",
 		"-warnings-as-errors",
-		tc.root_file(c, "tools/shoji-harness/fixtures/desktop"),
-		s.cat("-out:", tc.binary(c, "shoji-harness-fixture")),
+		tc.root_file(c, "tools/harness/fixtures/desktop"),
+		s.cat("-out:", tc.binary(c, "harness-fixture")),
 		"-extra-linker-flags:-F/System/Library/PrivateFrameworks",
 	)
 	when ODIN_ARCH == .arm64 { append(&args, "-target-features:pauth") }

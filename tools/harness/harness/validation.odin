@@ -2,7 +2,7 @@ package harness
 
 import s "../../../src/support"
 import tc "../../common"
-import i "../../shoji-inspector/inspect"
+import i "../../inspector/inspect"
 import "core:fmt"
 import "core:time"
 
@@ -188,7 +188,7 @@ validation_run :: proc(
 				return s.cat("validation task failed: ", task)
 			}
 		}
-		dev := tc.binary(c, "shoji-dev")
+		dev := tc.binary(c, "dev")
 		report.checks["loader-self-test"] = validation_execute(
 			c,
 			[]string{tc.binary(c, "shoji-loader"), "--self-test"},
@@ -198,7 +198,7 @@ validation_run :: proc(
 		report.checks["bootstrap-relocation"] = validation_execute(
 			c,
 			[]string {
-				tc.binary(c, "shoji-inspector"),
+				tc.binary(c, "inspector"),
 				"check-bootstrap",
 				tc.binary(c, "shoji-amd64"),
 				tc.binary(c, "shoji-loader"),
@@ -262,7 +262,7 @@ validation_run :: proc(
 			command := make([dynamic]string)
 			append(
 				&command,
-				tc.binary(c, "shoji-harness"),
+				tc.binary(c, "harness"),
 				"live",
 				"animation",
 			)

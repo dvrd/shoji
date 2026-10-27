@@ -4,7 +4,7 @@ Source, tests, vendored decoder sources and concise validation evidence are save
 
 | Path | Purpose |
 | --- | --- |
-| `bin/` | Rebuildable executables, tests and libraries. Cleanup preserves the installed `shoji`, `shoji-loader`, `shoji-sa.dylib`, the native `shoji-dev`, `shoji-inspector` and `shoji-harness` commands and the local `odin-arm64e` compiler. |
+| `bin/` | Rebuildable executables, tests and libraries. Cleanup preserves the installed `shoji`, `shoji-loader`, `shoji-sa.dylib`, the native `dev`, `inspector` and `harness` commands and the local `odin-arm64e` compiler. |
 | `.toolchain/` | Pinned compiler and Odin libraries required for reproducible local builds. |
 | `artifacts/dock-evidence/` | Retained current/baseline/macOS 27 Dock binaries, acquisition manifests and comparison reports. |
 | `artifacts/macos27-vm/` | Restore acquisition and VM installation records; any retained IPSW belongs here. |

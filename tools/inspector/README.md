@@ -1,11 +1,11 @@
 # Binary and release inspector
 
-`task build:inspector` builds `bin/shoji-inspector`.
+`task build:inspector` builds `bin/inspector`.
 
 ```sh
-./bin/shoji-inspector check-bootstrap bin/shoji-loader
-./bin/shoji-inspector check-archive dist/shoji-local-macos.tar.gz
-./bin/shoji-inspector normalize-arm64e bin/shoji-loader.new
+./bin/inspector check-bootstrap bin/shoji-loader
+./bin/inspector check-archive dist/shoji-local-macos.tar.gz
+./bin/inspector normalize-arm64e bin/shoji-loader.new
 ```
 
 The inspector owns Mach-O header validation/ABI normalization, copied-bootstrap

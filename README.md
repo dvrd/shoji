@@ -40,7 +40,7 @@ is not modified):
 
 ```sh
 task build:dev
-./bin/shoji-dev build-arm64e "$(odin root)"
+./bin/dev build-arm64e "$(odin root)"
 ```
 
 If the shared Odin source checkout has advanced beyond the installed compiler,
@@ -48,10 +48,10 @@ isolate its pinned libraries first with `task toolchain` (requires the pinned Gi
 revision locally). Task commands automatically use `.toolchain/Odin` when present.
 The shared source checkout is left intact. If the isolated compiler was built
 before the checker fix, rebuild it with
-`./bin/shoji-dev toolchain --build-compiler`, then rebuild the arm64e compiler. The arm64e compiler can then be built
-with `./bin/shoji-dev build-arm64e "$PWD/.toolchain/Odin"`.
+`./bin/dev toolchain --build-compiler`, then rebuild the arm64e compiler. The arm64e compiler can then be built
+with `./bin/dev build-arm64e "$PWD/.toolchain/Odin"`.
 If the compiler executable has also advanced, build the matching standard compiler
-with `./bin/shoji-dev toolchain --build-compiler`. Task commands and the live
+with `./bin/dev toolchain --build-compiler`. Task commands and the live
 animation harness prefer `.toolchain/Odin/odin` when it exists. The harness also
 accepts an `ODIN` environment variable naming a compiler executable.
 
@@ -235,7 +235,7 @@ paths and literal arguments. Installing does not start the daemon. See
 ```
 
 The release archive keeps `bin/shoji`, `bin/shoji-loader`, `bin/shoji-sa.dylib`
-and the `bin/shoji-dev`, `bin/shoji-inspector` and `bin/shoji-harness` CLIs together. Keep that directory structure when installing. Native app/payload slices
+and the `bin/dev`, `bin/inspector` and `bin/harness` CLIs together. Keep that directory structure when installing. Native app/payload slices
 use the configured signing identity for the executable; local payload/loader
 signatures remain ad hoc. CI artifacts use explicit ad-hoc signing and are not
 notarized. The loader companion is the Odin arm64e helper
@@ -314,8 +314,8 @@ run again. This does not protect against WindowServer failure or power loss.
 A live test harness uses only disposable owned windows:
 
 ```sh
-./bin/shoji-harness live animation
-./bin/shoji-harness live animation --dock-restart
+./bin/harness live animation
+./bin/harness live animation --dock-restart
 ```
 
 Run it from your desktop terminal as your normal user with the matching payload

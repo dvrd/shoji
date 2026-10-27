@@ -28,7 +28,7 @@ jobs:
           echo "$PWD" >> "$GITHUB_PATH"
           cd ../..
           task build:tools
-          ./bin/shoji-dev toolchain --patch-only --build-compiler
+          ./bin/dev toolchain --patch-only --build-compiler
       - name: Check and test
         run: |
           task test:compiler
@@ -42,15 +42,15 @@ jobs:
       - name: Build arm64e compiler
         run: |
           export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
-          ./bin/shoji-dev build-arm64e "$PWD/.toolchain/Odin"
-          ./bin/shoji-harness check-asm --compiler bin/odin-arm64e --library-root .toolchain/Odin --target darwin_arm64e
+          ./bin/dev build-arm64e "$PWD/.toolchain/Odin"
+          ./bin/harness check-asm --compiler bin/odin-arm64e --library-root .toolchain/Odin --target darwin_arm64e
       - name: Verify loader and assemble release
         run: |
           task test:loader
           task test:bootstrap
           task build:universal
-          ./bin/shoji-dev package --version ci
-          ./bin/shoji-inspector check-archive dist/shoji-ci-macos.tar.gz
+          ./bin/dev package --version ci
+          ./bin/inspector check-archive dist/shoji-ci-macos.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: shoji-macos

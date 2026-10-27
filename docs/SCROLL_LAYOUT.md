@@ -115,8 +115,8 @@ All 247 deterministic tests pass with warnings as errors, including shared-camer
 task build:scroll-preview
 task build:fixture
 # Run the owned-window fixture from a terminal in your logged-in macOS session.
-./bin/shoji-harness-fixture scroll-layout
-./bin/shoji-harness-fixture scroll-motion
+./bin/harness-fixture scroll-layout
+./bin/harness-fixture scroll-motion
 ```
 
 Layout rollback:

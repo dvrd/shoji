@@ -27,7 +27,7 @@ modified; the compiler is built in a temporary directory.
 
 ```sh
 task build:dev
-./bin/shoji-dev build-arm64e "$(odin root)"
+./bin/dev build-arm64e "$(odin root)"
 task build         # payload + loader + executable
 task test:loader   # in-process self-test of the arm64e loader
 ```
@@ -126,6 +126,6 @@ the patched arm64e compiler without injecting or restarting Dock:
 
 ```sh
 task build:harness
-./bin/shoji-harness check-asm --compiler bin/odin-arm64e \
+./bin/harness check-asm --compiler bin/odin-arm64e \
   --library-root .toolchain/Odin --target darwin_arm64e
 ```

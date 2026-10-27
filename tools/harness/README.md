@@ -1,13 +1,13 @@
 # Test and validation harness
 
-`task build:harness` builds `bin/shoji-harness`. Use `task build:tools` to prepare
+`task build:harness` builds `bin/harness`. Use `task build:tools` to prepare
 its companion dev and inspector executables for the complete validation workflow.
 
 ```sh
 task test:harness
 task test:compiler
 task test:motion
-./bin/shoji-harness validate --preflight-only
+./bin/harness validate --preflight-only
 ```
 
 The harness owns compiler regression fixtures, validation reports, disposable
@@ -20,9 +20,9 @@ other desktop processes.
 Live checks are explicit:
 
 ```sh
-./bin/shoji-harness live desktop
-./bin/shoji-harness live spaces
-./bin/shoji-harness live animation
+./bin/harness live desktop
+./bin/harness live spaces
+./bin/harness live animation
 ```
 
 The desktop check refuses an existing daemon. Space cleanup uses only the

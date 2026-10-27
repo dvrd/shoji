@@ -12,9 +12,9 @@ CLEAN_KEEP := []string {
 	"shoji-loader",
 	"shoji-sa.dylib",
 	"odin-arm64e",
-	"shoji-dev",
-	"shoji-inspector",
-	"shoji-harness",
+	"dev",
+	"inspector",
+	"harness",
 }
 macho_header :: proc(header: []u8) -> bool {
 	if len(header) < 4 {
@@ -39,9 +39,9 @@ generated_directory :: proc(path, name: string) -> (bool, string) {
 			"shoji.new",
 			"shoji-loader",
 			"shoji-sa.dylib",
-			"shoji-dev",
-			"shoji-inspector",
-			"shoji-harness",
+			"dev",
+			"inspector",
+			"harness",
 		}
 	case "transaction-fix", "macos27":
 		allowed = []string{"shoji-sa.dylib", "shoji-sa.dylib.new"}
@@ -118,7 +118,8 @@ clean_outputs :: proc(c: tc.Context) -> ([]string, string) {
 			}
 			header: [8]u8; n, _ := os.read(f, header[:]); os.close(f)
 			macho := macho_header(header[:n])
-			if strings.has_prefix(entry.name, "shoji-") && macho ||
+			tool_output := tc.contains([]string{"dev-amd64", "inspector-amd64", "harness-amd64", "harness-fixture", "harness-tests"}, entry.name)
+			if (strings.has_prefix(entry.name, "shoji-") || tool_output) && macho ||
 			   entry.name == "libshoji-raven.a" &&
 				   n == 8 &&
 				   string(header[:]) == "!<arch>\n" {

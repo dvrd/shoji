@@ -6,24 +6,24 @@ and test modules have been removed. Their workflows live in Odin:
 | Previous entry point | Native replacement |
 | --- | --- |
 | `tools/service.py` | `bin/shoji service COMMAND` |
-| `tools/signing.py` | `bin/shoji-dev signing COMMAND` |
-| `tools/toolchain.py` | `bin/shoji-dev toolchain` |
-| `tools/build_odin_arm64e.py` | `bin/shoji-dev build-arm64e SOURCE` |
-| `tools/normalize_arm64e_abi.py` | `bin/shoji-inspector normalize-arm64e BINARY` |
-| `tools/check_odin_asm.py` | `bin/shoji-harness check-asm` |
-| `tests/check_bootstrap.py` | `bin/shoji-inspector check-bootstrap BINARY…` |
-| `tools/package_release.py` | `bin/shoji-dev package` |
-| `tools/clean.py` | `bin/shoji-dev clean` |
-| `tools/validate.py` | `bin/shoji-harness validate` |
-| `tools/live_desktop.py` | `bin/shoji-harness live desktop` |
-| `tools/live_spaces.py` | `bin/shoji-harness live spaces` |
-| `tools/live_animation.py` | `bin/shoji-harness live animation` |
+| `tools/signing.py` | `bin/dev signing COMMAND` |
+| `tools/toolchain.py` | `bin/dev toolchain` |
+| `tools/build_odin_arm64e.py` | `bin/dev build-arm64e SOURCE` |
+| `tools/normalize_arm64e_abi.py` | `bin/inspector normalize-arm64e BINARY` |
+| `tools/check_odin_asm.py` | `bin/harness check-asm` |
+| `tests/check_bootstrap.py` | `bin/inspector check-bootstrap BINARY…` |
+| `tools/package_release.py` | `bin/dev package` |
+| `tools/clean.py` | `bin/dev clean` |
+| `tools/validate.py` | `bin/harness validate` |
+| `tools/live_desktop.py` | `bin/harness live desktop` |
+| `tools/live_spaces.py` | `bin/harness live spaces` |
+| `tools/live_animation.py` | `bin/harness live animation` |
 | Python tooling regression tests | `task test:harness` |
 
 Taskfile and CI invoke these commands. Bootstrap the developer executable with
 `task build:dev`; persistent application signing is a separate step. Release
-archives contain `shoji`, `shoji-loader`, `shoji-sa.dylib`, `shoji-dev`,
-`shoji-inspector` and `shoji-harness`. The current native tool boundaries are
+archives contain `shoji`, `shoji-loader`, `shoji-sa.dylib`, `dev`,
+`inspector` and `harness`. The current native tool boundaries are
 documented in [DEVELOPMENT_TOOLS.md](DEVELOPMENT_TOOLS.md).
 
 The launchd label remains `tech.shoji.window-manager`. The per-user plist,
@@ -45,7 +45,7 @@ original provenance and are not current setup instructions.
 
 ## Validation on 2026-10-27
 
-The native `shoji-harness validate` command completed on macOS 15.6 (24G84), arm64,
+The native `harness validate` command completed on macOS 15.6 (24G84), arm64,
 with status `automated-checks-passed-live-pending`. Local reports and command logs
 are retained under `artifacts/validation/native-migration/`.
 

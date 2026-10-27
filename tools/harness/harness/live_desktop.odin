@@ -156,7 +156,7 @@ live_desktop_run :: proc(c: tc.Context, l: ^Live) -> (err: string) {
 	fixture, e1 := start_child(
 		l,
 		[]string {
-			tc.binary(c, "shoji-harness-fixture"),
+			tc.binary(c, "harness-fixture"),
 			"desktop",
 			os.base(l.evidence),
 		},

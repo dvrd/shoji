@@ -1,6 +1,6 @@
 package tests
 
-import i "../../shoji-inspector/inspect"
+import i "../../inspector/inspect"
 import h "../harness"
 import tc "../../common"
 import s "../../../src/support"
@@ -100,7 +100,7 @@ native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
 		[]string {
 			tc.compiler(c),
 			"build",
-			s.join(c.root, "tools/shoji-harness/fixtures/cancellation"),
+			s.join(c.root, "tools/harness/fixtures/cancellation"),
 			s.cat("-out:", fixture),
 			"-warnings-as-errors",
 		},
@@ -403,7 +403,7 @@ native_live_helper_emits_valid_json_without_windowserver :: proc(
 		[]string {
 			tc.compiler(c),
 			"build",
-			s.join(c.root, "tools/shoji-harness/fixtures/desktop"),
+			s.join(c.root, "tools/harness/fixtures/desktop"),
 			s.cat("-out:", helper),
 			"-extra-linker-flags:-F/System/Library/PrivateFrameworks",
 		},
