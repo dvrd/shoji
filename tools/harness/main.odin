@@ -5,12 +5,16 @@ import tc "../common"
 import "core:fmt"
 import "core:mem"
 import "core:os"
-import d "inspect"
+import d "harness"
 
-HELP :: `Usage: shoji-inspector COMMAND [OPTIONS]
-  normalize-arm64e BINARY   Validate and normalize arm64e ABI metadata
-  check-bootstrap BINARY…  Inspect copied bootstrap relocation independence
-  check-archive ARCHIVE     Validate release members and SHA-256 checksums`
+HELP :: `Usage: harness COMMAND [OPTIONS]
+  check-asm                 Compiler diagnostic regression fixtures
+  validate [--preflight-only] [--live-animation] [--dock-restart]
+  live desktop              Owned-window validation; refuses an existing daemon
+  live spaces [--load-payload]
+  live animation [--reload-payload] [--dock-restart]
+
+Dock restart and live desktop mutations require explicit live options.`
 run :: proc() -> int {
 	s.configure_signals()
 	arena: mem.Dynamic_Arena; mem.dynamic_arena_init(&arena)
@@ -31,25 +35,17 @@ run :: proc() -> int {
 	}
 	err: string
 	switch args[0] {
-	case "normalize-arm64e":
-		if len(args) != 2 {
-			err = "normalize-arm64e expects one binary"
-		} else {
-			err = d.normalize_arm64e(args[1])
-		}
-	case "check-bootstrap":
-		err = d.check_bootstrap(c, args[1:])
-	case "check-archive":
-		if len(args) != 2 {
-			err = "check-archive expects one archive"
-		} else {
-			err = d.verify_archive(c, args[1])
-		}
+	case "check-asm":
+		err = d.check_asm(c, args[1:])
+	case "validate":
+		err = d.validation_cli(c, args[1:])
+	case "live":
+		err = d.live_cli(c, args[1:])
 	case:
 		err = s.cat("unknown command: ", args[0])
 	}
 	if err != "" {
-		fmt.eprintln("shoji-inspector:", err)
+		fmt.eprintln("harness:", err)
 		return s.interrupted() ? 130 : 1
 	}
 	return 0

@@ -51,7 +51,7 @@ tool_execute :: proc(user: rawptr, request: s.Request) -> s.Result {
 			false,
 		}
 	}
-	if strings.has_suffix(a[0], "shoji-harness-fixture") {
+	if strings.has_suffix(a[0], "harness-fixture") {
 		if a[1] == "spaces" {
 			return {
 				0,

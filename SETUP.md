@@ -29,7 +29,7 @@ fail; it does not silently fall back to ad-hoc signing.
 To select an existing valid certificate instead of creating a local one:
 
 ```sh
-./bin/shoji-dev signing setup --identity CERTIFICATE_SHA1 --keychain /path/to/keychain-db
+./bin/dev signing setup --identity CERTIFICATE_SHA1 --keychain /path/to/keychain-db
 ```
 
 Use `task signing:check` to check configuration without making changes. Keep the
@@ -40,7 +40,7 @@ Re-sign an externally built update with your configured identity before installi
 it, using a candidate in the destination directory:
 
 ```sh
-./bin/shoji-dev signing sign bin/shoji.new --install bin/shoji
+./bin/dev signing sign bin/shoji.new --install bin/shoji
 ```
 
 [Apple’s code-signing requirements note](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)
@@ -136,8 +136,8 @@ its own daemon restricted to disposable windows and stops only its own children:
 
 ```sh
 ./bin/shoji service stop
-./bin/shoji-harness live desktop
-./bin/shoji-harness live spaces --load-payload
+./bin/harness live desktop
+./bin/harness live spaces --load-payload
 ./bin/shoji service start
 ```
 

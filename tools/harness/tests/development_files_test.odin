@@ -1,9 +1,9 @@
 package tests
 
-import i "../../shoji-inspector/inspect"
+import i "../../inspector/inspect"
 import tc "../../common"
 import s "../../../src/support"
-import d "../../shoji-dev/dev"
+import d "../../dev/dev"
 import "core:mem"
 import "core:os"
 import "core:testing"
@@ -28,7 +28,7 @@ native_cleanup_recognizes_generated_directories_and_preserves_mixed_inputs :: pr
 	for name in ([]string {
 			"shoji",
 			"shoji-loader",
-			"shoji-dev",
+			"dev",
 		}) { _ = s.write(tc.binary(c, s.cat("universal/", name)), string(bytes[:])) }
 	evidence := tc.binary(c, "transaction-fix/notes.json")
 	_ = s.write(evidence, "retained evidence")
@@ -70,6 +70,8 @@ native_cleanup_preserves_runtime_unknown_inputs_and_symlink_targets :: proc(
 	macho := string(bytes[:])
 	for name in d.CLEAN_KEEP { _ = s.write(tc.binary(c, name), macho) }
 	_ = s.write(tc.binary(c, "shoji-tests"), macho)
+	_ = s.write(tc.binary(c, "harness-fixture"), macho)
+	_ = s.write(tc.binary(c, "harness-personal"), macho)
 	_ = s.mkdir(tc.binary(c, "shoji-tests.dSYM"))
 	_ = s.write(s.join(tc.binary(c, "shoji-tests.dSYM"), "debug"), "symbol")
 	for name in ([]string {
@@ -88,6 +90,8 @@ native_cleanup_preserves_runtime_unknown_inputs_and_symlink_targets :: proc(
 	testing.expect_value(t, d.clean(c, false), "")
 	for name in d.CLEAN_KEEP { testing.expect(t, s.regular(tc.binary(c, name))) }
 	testing.expect(t, !s.exists(tc.binary(c, "shoji-tests")))
+	testing.expect(t, !s.exists(tc.binary(c, "harness-fixture")))
+	testing.expect(t, s.regular(tc.binary(c, "harness-personal")))
 	for name in ([]string {
 			"restore.ipsw",
 			"notes.json",

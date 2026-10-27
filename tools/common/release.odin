@@ -13,9 +13,9 @@ RELEASE_BINARIES := []string {
 	"shoji",
 	"shoji-loader",
 	"shoji-sa.dylib",
-	"shoji-dev",
-	"shoji-inspector",
-	"shoji-harness",
+	"dev",
+	"inspector",
+	"harness",
 }
 RELEASE_DOCUMENTS := []string {
 	"README.md",

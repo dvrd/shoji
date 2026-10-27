@@ -7,7 +7,7 @@ import "core:mem"
 import "core:os"
 import d "dev"
 
-HELP :: `Usage: shoji-dev COMMAND [OPTIONS]
+HELP :: `Usage: dev COMMAND [OPTIONS]
   signing setup|check|sign   Persistent identity and verified installation
   toolchain                 Prepare or patch the pinned Odin toolchain
   build-arm64e SOURCE       Build the isolated arm64e compiler
@@ -54,7 +54,7 @@ run :: proc() -> int {
 		err = s.cat("unknown command: ", args[0])
 	}
 	if err != "" {
-		fmt.eprintln("shoji-dev:", err)
+		fmt.eprintln("dev:", err)
 		return s.interrupted() ? 130 : 1
 	}
 	return 0

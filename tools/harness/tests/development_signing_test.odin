@@ -2,7 +2,7 @@ package tests
 
 import tc "../../common"
 import s "../../../src/support"
-import d "../../shoji-dev/dev"
+import d "../../dev/dev"
 import "core:mem"
 import "core:os"
 import "core:strings"

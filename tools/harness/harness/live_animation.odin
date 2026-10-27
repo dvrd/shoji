@@ -104,7 +104,7 @@ start_animation_fixture :: proc(
 	string,
 ) {
 	cmd := make([dynamic]string)
-	append(&cmd, tc.binary(l.c, "shoji-harness-fixture")); append(&cmd, ..args)
+	append(&cmd, tc.binary(l.c, "harness-fixture")); append(&cmd, ..args)
 	child, err := start_child(l, cmd[:], name); if err != "" {
 		return {}, 0, err
 	}

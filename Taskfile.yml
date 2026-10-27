@@ -20,49 +20,49 @@ env:
 tasks:
   build:dev:
     desc: Build the native dev CLI
-    sources: [tools/shoji-dev/main.odin, 'tools/shoji-dev/dev/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
-    generates: [bin/shoji-dev]
+    sources: [tools/dev/main.odin, 'tools/dev/dev/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
+    generates: [bin/dev]
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-dev -out:bin/shoji-dev.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/shoji-dev.new'
-      - mv -f bin/shoji-dev.new bin/shoji-dev
+      - '{{.ODIN}} build tools/dev -out:bin/dev.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/dev.new'
+      - mv -f bin/dev.new bin/dev
   build:dev:amd64:
     desc: Cross-build the dev CLI for Intel releases
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-dev -target:darwin_amd64 -out:bin/shoji-dev-amd64 -o:speed -warnings-as-errors'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/shoji-dev-amd64'
+      - '{{.ODIN}} build tools/dev -target:darwin_amd64 -out:bin/dev-amd64 -o:speed -warnings-as-errors'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/dev-amd64'
   build:inspector:
     desc: Build the native inspector CLI
-    sources: [tools/shoji-inspector/main.odin, 'tools/shoji-inspector/inspect/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
-    generates: [bin/shoji-inspector]
+    sources: [tools/inspector/main.odin, 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
+    generates: [bin/inspector]
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-inspector -out:bin/shoji-inspector.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/shoji-inspector.new'
-      - mv -f bin/shoji-inspector.new bin/shoji-inspector
+      - '{{.ODIN}} build tools/inspector -out:bin/inspector.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/inspector.new'
+      - mv -f bin/inspector.new bin/inspector
   build:inspector:amd64:
     desc: Cross-build the inspector CLI for Intel releases
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-inspector -target:darwin_amd64 -out:bin/shoji-inspector-amd64 -o:speed -warnings-as-errors'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/shoji-inspector-amd64'
+      - '{{.ODIN}} build tools/inspector -target:darwin_amd64 -out:bin/inspector-amd64 -o:speed -warnings-as-errors'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/inspector-amd64'
   build:harness:
     desc: Build the native harness CLI
-    sources: [tools/shoji-harness/main.odin, 'tools/shoji-harness/harness/*.odin', 'tools/shoji-inspector/inspect/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
-    generates: [bin/shoji-harness]
+    sources: [tools/harness/main.odin, 'tools/harness/harness/*.odin', 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
+    generates: [bin/harness]
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-harness -out:bin/shoji-harness.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.harness bin/shoji-harness.new'
-      - mv -f bin/shoji-harness.new bin/shoji-harness
+      - '{{.ODIN}} build tools/harness -out:bin/harness.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.harness bin/harness.new'
+      - mv -f bin/harness.new bin/harness
   build:harness:amd64:
     desc: Cross-build the harness CLI for Intel releases
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-harness -target:darwin_amd64 -out:bin/shoji-harness-amd64 -o:speed -warnings-as-errors'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.harness bin/shoji-harness-amd64'
+      - '{{.ODIN}} build tools/harness -target:darwin_amd64 -out:bin/harness-amd64 -o:speed -warnings-as-errors'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.harness bin/harness-amd64'
   build:tools:
     deps: [build:dev, build:inspector, build:harness]
   build:tools:amd64:
@@ -71,65 +71,65 @@ tasks:
     desc: Build the isolated arm64e compiler using the pinned source checkout
     deps: [build:dev]
     cmds:
-      - ./bin/shoji-dev build-arm64e '{{.ODIN_LIBRARY_ROOT}}'
+      - ./bin/dev build-arm64e '{{.ODIN_LIBRARY_ROOT}}'
   signing:setup:
     deps: [build:dev]
     desc: Create a persistent local code-signing identity (one-time Keychain setup)
     cmds:
-      - ./bin/shoji-dev signing setup
+      - ./bin/dev signing setup
   signing:check:
     deps: [build:dev]
     desc: Check the persistent signing identity without changing the keychain
     cmds:
-      - ./bin/shoji-dev signing check
+      - ./bin/dev signing check
   toolchain:
     deps: [build:dev]
     desc: Isolate the pinned Odin libraries from the shared compiler checkout
     cmds:
-      - './bin/shoji-dev toolchain'
+      - './bin/dev toolchain'
   validate:
     deps: [build:tools]
     desc: Record target-machine build, test, and desktop prerequisite evidence
     cmds:
-      - './bin/shoji-harness validate'
+      - './bin/harness validate'
   default:
     cmds: [task build]
   build:
     deps: [addition, loader, dockscan, build:dev]
     desc: Build the native macOS executable
     cmds:
-      - ./bin/shoji-dev signing check
+      - ./bin/dev signing check
       - mkdir -p bin
       - '{{.ODIN}} build src -warnings-as-errors -out:{{.BINARY}}.new -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - './bin/shoji-dev signing sign {{.BINARY}}.new --install {{.BINARY}} --codesign {{.CODESIGN}}'
+      - './bin/dev signing sign {{.BINARY}}.new --install {{.BINARY}} --codesign {{.CODESIGN}}'
   debug:
     deps: [addition, build:dev]
     desc: Build with debug information and runtime checks
     cmds:
-      - ./bin/shoji-dev signing check
+      - ./bin/dev signing check
       - mkdir -p bin
       - '{{.ODIN}} build src -warnings-as-errors -out:bin/shoji-debug.new -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - './bin/shoji-dev signing sign bin/shoji-debug.new --install bin/shoji-debug --identifier tech.shoji.window-manager.debug --codesign {{.CODESIGN}}'
+      - './bin/dev signing sign bin/shoji-debug.new --install bin/shoji-debug --identifier tech.shoji.window-manager.debug --codesign {{.CODESIGN}}'
   build:scroll-preview:
     deps: [build:dev]
     desc: Build and sign a separate scrolling-layout candidate without replacing the running executable or Dock payload
     cmds:
-      - ./bin/shoji-dev signing check
+      - ./bin/dev signing check
       - mkdir -p bin
       - '{{.ODIN}} build src -out:bin/shoji-scroll-preview.new -o:speed -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - './bin/shoji-dev signing sign bin/shoji-scroll-preview.new --install bin/shoji-scroll-preview --codesign {{.CODESIGN}}'
+      - './bin/dev signing sign bin/shoji-scroll-preview.new --install bin/shoji-scroll-preview --codesign {{.CODESIGN}}'
   build:fixture:
     desc: Build the disposable desktop fixture and headless motion runner
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-harness/fixtures/desktop -out:bin/shoji-harness-fixture -debug -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - '{{.CODESIGN}} --force --sign - bin/shoji-harness-fixture'
+      - '{{.ODIN}} build tools/harness/fixtures/desktop -out:bin/harness-fixture -debug -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - bin/harness-fixture'
   test:motion:
     desc: Run repeatable motion scenarios without windows or a GUI session
     deps: [build:fixture]
     cmds:
       - mkdir -p artifacts/motion
-      - ./bin/shoji-harness-fixture motion-check artifacts/motion/motion-check.json 1 3
+      - ./bin/harness-fixture motion-check artifacts/motion/motion-check.json 1 3
   check:
     desc: Type-check all source and tests
     deps: [raven]
@@ -139,13 +139,13 @@ tasks:
       - '{{.ODIN}} check tests -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check src/dockscan -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check tools/shoji-dev -vet-unused-imports -vet-unused-variables -warnings-as-errors'
-      - '{{.ODIN}} check tools/shoji-inspector -vet-unused-imports -vet-unused-variables -warnings-as-errors'
-      - '{{.ODIN}} check tools/shoji-harness -vet-unused-imports -vet-unused-variables -warnings-as-errors'
-      - '{{.ODIN}} check tools/shoji-harness/tests -no-entry-point -vet-unused-imports -vet-unused-variables -warnings-as-errors'
-      - '{{.ODIN}} check tools/shoji-harness/fixtures/desktop -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/dev -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/inspector -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/harness -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/harness/tests -no-entry-point -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/harness/fixtures/desktop -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check src/loader -define:SHOJI_ODIN_LOADER=true -no-thread-local -vet-unused-imports -vet-unused-variables -warnings-as-errors'
-      - '{{.ODIN}} check tools/shoji-harness/fixtures/cancellation -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/harness/fixtures/cancellation -vet-unused-imports -vet-unused-variables -warnings-as-errors'
   dockscan:
     desc: Build the standalone Apple silicon Dock compatibility diagnostic
     deps: [raven]
@@ -193,20 +193,20 @@ tasks:
     deps: [build:dev]
     desc: Remove rebuildable outputs while preserving the installed runtime, compiler and research artifacts
     cmds:
-      - ./bin/shoji-dev clean
+      - ./bin/dev clean
   clean:preview:
     deps: [build:dev]
     desc: List rebuildable outputs that task clean would remove
     cmds:
-      - ./bin/shoji-dev clean --dry-run
+      - ./bin/dev clean --dry-run
   build:amd64:
     deps: [addition:amd64, build:dev]
     desc: Cross-build the Intel macOS executable
     cmds:
-      - ./bin/shoji-dev signing check
+      - ./bin/dev signing check
       - mkdir -p bin
       - '{{.ODIN}} build src -warnings-as-errors -target:darwin_amd64 -out:bin/shoji-amd64.new -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - './bin/shoji-dev signing sign bin/shoji-amd64.new --install bin/shoji-amd64 --codesign {{.CODESIGN}}'
+      - './bin/dev signing sign bin/shoji-amd64.new --install bin/shoji-amd64 --codesign {{.CODESIGN}}'
   addition:
     deps: [build:inspector]
     desc: Build the Dock payload (does not load it)
@@ -216,7 +216,7 @@ tasks:
     cmds:
       - mkdir -p bin
       - '{{.ODIN_ARM64E}} build src/addition/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/shoji-inspector normalize-arm64e bin/shoji-sa.dylib
+      - ./bin/inspector normalize-arm64e bin/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
@@ -233,7 +233,7 @@ tasks:
     cmds:
       - mkdir -p bin/macos27
       - '{{.ODIN_ARM64E}} build src/addition/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_MACOS27_CANDIDATE=true -build-mode:shared -out:bin/macos27/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/shoji-inspector normalize-arm64e bin/macos27/shoji-sa.dylib
+      - ./bin/inspector normalize-arm64e bin/macos27/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/macos27/shoji-sa.dylib'
   addition:transaction-fix:
     deps: [build:inspector]
@@ -244,7 +244,7 @@ tasks:
     cmds:
       - mkdir -p bin/transaction-fix
       - '{{.ODIN_ARM64E}} build src/addition/payload -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/transaction-fix/shoji-sa.dylib -o:speed -warnings-as-errors -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/shoji-inspector normalize-arm64e bin/transaction-fix/shoji-sa.dylib
+      - ./bin/inspector normalize-arm64e bin/transaction-fix/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/transaction-fix/shoji-sa.dylib'
   test:amd64:
     desc: Run Intel tests (requires Intel macOS or Rosetta)
@@ -255,12 +255,12 @@ tasks:
     deps: [build:harness]
     desc: Verify ARM64 call diagnostics and preserve genuine assembly warnings
     cmds:
-      - './bin/shoji-harness check-asm --compiler {{.ODIN}} --library-root {{.ODIN_LIBRARY_ROOT}}'
+      - './bin/harness check-asm --compiler {{.ODIN}} --library-root {{.ODIN_LIBRARY_ROOT}}'
   test:harness:
     deps: [build:tools]
     desc: Run tool, inspector and harness regressions without desktop mutations
     cmds:
-      - '{{.ODIN}} test tools/shoji-harness/tests -out:bin/shoji-harness-tests -debug -warnings-as-errors {{.CPU_FLAGS}}'
+      - '{{.ODIN}} test tools/harness/tests -out:bin/harness-tests -debug -warnings-as-errors {{.CPU_FLAGS}}'
   build:universal:
     deps: [build, build:amd64, build:tools, build:tools:amd64]
     desc: Assemble signed Intel and Apple Silicon release binaries on Apple Silicon
@@ -268,25 +268,25 @@ tasks:
       - sh: 'test "$(uname -m)" = arm64'
         msg: Universal assembly currently requires an Apple Silicon build host
     cmds:
-      - ./bin/shoji-dev signing check
+      - ./bin/dev signing check
       - mkdir -p bin/universal
       - lipo -create {{.BINARY}} bin/shoji-amd64 -output bin/universal/shoji.new
       - lipo -create bin/shoji-sa.dylib bin/shoji-sa-amd64.dylib -output bin/universal/shoji-sa.dylib
       - cp bin/shoji-loader bin/universal/shoji-loader
-      - lipo -create bin/shoji-dev bin/shoji-dev-amd64 -output bin/universal/shoji-dev
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.development bin/universal/shoji-dev'
-      - lipo -create bin/shoji-inspector bin/shoji-inspector-amd64 -output bin/universal/shoji-inspector
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/universal/shoji-inspector'
-      - lipo -create bin/shoji-harness bin/shoji-harness-amd64 -output bin/universal/shoji-harness
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.harness bin/universal/shoji-harness'
-      - './bin/shoji-dev signing sign bin/universal/shoji.new --install bin/universal/shoji --codesign {{.CODESIGN}}'
+      - lipo -create bin/dev bin/dev-amd64 -output bin/universal/dev
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.development bin/universal/dev'
+      - lipo -create bin/inspector bin/inspector-amd64 -output bin/universal/inspector
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/universal/inspector'
+      - lipo -create bin/harness bin/harness-amd64 -output bin/universal/harness
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.harness bin/universal/harness'
+      - './bin/dev signing sign bin/universal/shoji.new --install bin/universal/shoji --codesign {{.CODESIGN}}'
       - '{{.CODESIGN}} --force --sign - bin/universal/shoji-sa.dylib'
   package:
     deps: [build:universal, build:dev]
     desc: Create a relocatable release archive with SHA-256 checksums
     cmds:
-      - './bin/shoji-dev package --version {{.VERSION}}'
-      - './bin/shoji-inspector check-archive dist/shoji-{{.VERSION}}-macos.tar.gz'
+      - './bin/dev package --version {{.VERSION}}'
+      - './bin/inspector check-archive dist/shoji-{{.VERSION}}-macos.tar.gz'
   test:bootstrap:
     desc: Inspect the bootstraps that get copied into targets for external references
     deps: [build, build:amd64, build:inspector]
@@ -294,7 +294,7 @@ tasks:
       # The arm64 executable always spawns the loader and dead-strips its own
       # bootstrap section; the amd64 executable and the arm64e loader carry
       # the live in-process injectors.
-      - ./bin/shoji-inspector check-bootstrap bin/shoji-amd64 bin/shoji-loader
+      - ./bin/inspector check-bootstrap bin/shoji-amd64 bin/shoji-loader
   loader:
     deps: [build:inspector]
     desc: Build the Odin arm64e Dock loader used by task build on arm64
@@ -304,7 +304,7 @@ tasks:
     cmds:
       - mkdir -p bin
       - '{{.ODIN_ARM64E}} build src/loader -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_ODIN_LOADER=true -no-thread-local -out:bin/shoji-loader -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/shoji-inspector normalize-arm64e bin/shoji-loader
+      - ./bin/inspector normalize-arm64e bin/shoji-loader
       - '{{.CODESIGN}} --force --sign - bin/shoji-loader'
   test:loader:
     desc: Run the arm64e loader's in-process self-test

@@ -6,7 +6,7 @@ All six warnings and the maintenance-ownership finding from the audit of
 | Finding | Resolution |
 | --- | --- |
 | W1: descendant processes survive interruption/timeouts | Darwin `posix_spawn` creates an owned command process group atomically, resets child signal state and restricts inherited descriptors. Nested tools share the command group. Cleanup gracefully stops the group, escalates remaining processes and reaps the direct child. |
-| W2: duplicate standalone tools | Removed `tools/build_odin_arm64e/` and `tools/normalize_arm64e_abi/`; the native `shoji-dev` commands remain the maintained entry points. |
+| W2: duplicate standalone tools | Removed `tools/build_odin_arm64e/` and `tools/normalize_arm64e_abi/`; the native `dev` commands remain the maintained entry points. |
 | W3: unused foreign APIs | Removed the six unused declarations from macOS bindings, socket bindings and loader declarations. |
 | W4: missing evidence can still report success | Command/report/hash failures now propagate. Workflow cleanup finishes before final evidence is saved and the actual returned error is selected. Original check errors, cleanup errors and evidence errors remain distinguishable. Blocked desktop and target-mismatch classifications are retained. |
 | W5: known output directories accumulate | Cleanup recognizes universal, macOS 27 and transaction candidate directories only when all entries are expected Mach-O outputs. Backups, unknown files, nonbinary inputs, subdirectories and symlinks preserve the entire directory. |

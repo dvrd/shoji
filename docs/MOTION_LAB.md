@@ -7,11 +7,11 @@ Implemented 2026-10-27, following the independent [Niri testing study](NIRI_ANIM
 ```sh
 task build:fixture
 # No windows or GUI required; also run by CI.
-./bin/shoji-harness-fixture motion-check bin/motion-check.json 1 3
+./bin/harness-fixture motion-check bin/motion-check.json 1 3
 # Disposable owned AppKit windows; run in the logged-in macOS session.
-./bin/shoji-harness-fixture motion-lab bin/motion-normal.json 1 3
+./bin/harness-fixture motion-lab bin/motion-normal.json 1 3
 # Same model timeline, three times slower, one repetition.
-./bin/shoji-harness-fixture motion-lab bin/motion-slow.json 3 1
+./bin/harness-fixture motion-lab bin/motion-slow.json 3 1
 ```
 
 Arguments are output path, slowdown (0.1–10; default 1), repetition count (1–10; default 1). The runner covers focus reversal, repeated width changes, gesture reversal/release, insertion/closing, stacked-row resizing, and small column/row adjustments. [Small-resize policy and validation](RESIZE_MOTION_QUALITY.md) explain its guarded size completion and existing positional coalescing tolerance. It checks finite positive geometry, completion and no immediate frame jump when focus/width/height retarget an already sampled trajectory. Model-only playback uses deterministic 120Hz clock steps; this does not assert a 120Hz native display.
@@ -30,7 +30,7 @@ The installed daemon offers an opt-in memory capture:
 # focus quickly, and open/close a window.
 ./bin/shoji -m debug motion stop
 ./bin/shoji -m debug motion dump > bin/motion-real.json
-./bin/shoji-harness-fixture motion-report bin/motion-real.json
+./bin/harness-fixture motion-report bin/motion-real.json
 ./bin/shoji -m debug motion clear
 ```
 
