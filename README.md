@@ -70,8 +70,15 @@ task build:universal # Apple Silicon host: universal app and payload in bin/univ
 task package VERSION=0.1.0-local # archive plus internal SHA256SUMS in dist/
 task test:bootstrap # verify copied code has no external PC-relative references
 task fmt            # format source/tests; excludes native asm files unsupported by odinfmt
-task clean          # remove bin/
+task clean:preview  # list disposable build outputs
+task clean          # remove outputs; keep installed runtime and compiler
 ```
+
+`bin/` holds build outputs. `artifacts/` holds ignored local research inputs,
+compressed investigation records and rollback copies; `task clean` preserves
+these and the installed `shoji`, payload, loader and arm64e compiler. Unknown
+files and symlinks are preserved. See [local artifact storage](docs/LOCAL_ARTIFACTS.md)
+for the current layout and recovery instructions.
 
 `ODIN`, `ODINFMT`, and `BINARY` can be overridden as Task variables, for example:
 
