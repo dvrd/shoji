@@ -217,6 +217,7 @@ native_scroll_input_releases_to_shared_spring_and_discards_native_momentum :: pr
 		return
 	}
 	defer mac.CFRelease(event)
+	CGEventSetLocation(event, {10, 10})
 	CGEventSetFlags(event, m.mouse.modifier)
 	CGEventSetIntegerValueField(event, 88, 1)
 	CGEventSetIntegerValueField(event, 96, 0)

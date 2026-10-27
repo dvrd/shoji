@@ -109,6 +109,7 @@ paced_input_coalesces_native_events_without_early_frame_writes :: proc(
 		return
 	}
 	defer mac.CFRelease(event)
+	CGEventSetLocation(event, {10, 10})
 	CGEventSetFlags(event, m.mouse.modifier)
 	CGEventSetIntegerValueField(event, 88, 1)
 	CGEventSetIntegerValueField(event, 96, 0)

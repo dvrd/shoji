@@ -26,7 +26,8 @@ accepted if they exactly match the included patch. The source checkout is not
 modified; the compiler is built in a temporary directory.
 
 ```sh
-python3 tools/build_odin_arm64e.py "$(odin root)"
+task build:dev
+./bin/shoji-dev build-arm64e "$(odin root)"
 task build         # payload + loader + executable
 task test:loader   # in-process self-test of the arm64e loader
 ```
@@ -34,7 +35,7 @@ task test:loader   # in-process self-test of the arm64e loader
 Set `LLVM_CONFIG` for the compiler build if LLVM is not found automatically.
 `ODIN_ARM64E` and `ODIN_ARM64E_ROOT` Task variables can select another patched
 compiler and its library tree. The generated compiler lives in `bin/` and is
-removed by `task clean`.
+preserved by `task clean`.
 
 `task test` additionally runs the injector self-test from the plain-arm64 (or
 amd64) test process: remote thread creation, thread-state signing and
@@ -124,6 +125,6 @@ an exact existing application and fails on conflicting source changes. To check
 the patched arm64e compiler without injecting or restarting Dock:
 
 ```sh
-python3 tools/check_odin_asm.py --compiler bin/odin-arm64e \
+./bin/shoji-dev check-asm --compiler bin/odin-arm64e \
   --library-root .toolchain/Odin --target darwin_arm64e
 ```

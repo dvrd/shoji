@@ -7,6 +7,7 @@ import "core:testing"
 foreign import scroll_test_cg "system:CoreGraphics.framework"
 foreign scroll_test_cg {
 	CGEventCreateScrollWheelEvent :: proc "c" (source: mac.Ref, units: u32, count: u32, wheel: i32, #c_vararg rest: ..any) -> mac.Ref ---
+	CGEventSetLocation :: proc "c" (event: mac.Ref, point: mac.Point) ---
 }
 
 @(test)
@@ -104,6 +105,8 @@ native_scroll_callback_routes_and_coalesces_pixels_without_app_scroll_capture ::
 		return
 	}
 	defer mac.CFRelease(event)
+	// Synthetic events otherwise inherit the real cursor, outside our display fixture.
+	CGEventSetLocation(event, {10, 10})
 	state.manager.mouse_display = 10
 	CGEventSetIntegerValueField(event, 88, 1)
 	CGEventSetIntegerValueField(event, 97, -40)
