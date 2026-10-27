@@ -43,9 +43,9 @@ Pacing defaults to on in the native daemon. It can be compared or disabled witho
 The native scenario runner can compare both schedulers independently of user applications:
 
 ```sh
-task build:scroll-smoke
-./bin/shoji-scroll-smoke motion-lab bin/unpaced.json 1 3
-./bin/shoji-scroll-smoke motion-lab-paced bin/paced.json 1 3
+task build:fixture
+./bin/shoji-harness-fixture motion-lab bin/unpaced.json 1 3
+./bin/shoji-harness-fixture motion-lab-paced bin/paced.json 1 3
 ```
 
 Existing [bounded trace capture](MOTION_LAB.md) remains opt-in. `presentation-tick` carries the predicted target in Core Animation uptime seconds, nominal period in `duration_ms`, and fallback flag in `value`; `unpaced-tick` distinguishes the comparison path. `command` marks actual execution. Input source timestamps remain in their separate CGEvent clock domain.

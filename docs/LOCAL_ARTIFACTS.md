@@ -4,7 +4,7 @@ Source, tests, vendored decoder sources and concise validation evidence are save
 
 | Path | Purpose |
 | --- | --- |
-| `bin/` | Rebuildable executables, tests and libraries. Cleanup preserves the installed `shoji`, `shoji-loader`, `shoji-sa.dylib`, the native `shoji-dev` command and the local `odin-arm64e` compiler. |
+| `bin/` | Rebuildable executables, tests and libraries. Cleanup preserves the installed `shoji`, `shoji-loader`, `shoji-sa.dylib`, the native `shoji-dev`, `shoji-inspector` and `shoji-harness` commands and the local `odin-arm64e` compiler. |
 | `.toolchain/` | Pinned compiler and Odin libraries required for reproducible local builds. |
 | `artifacts/dock-evidence/` | Retained current/baseline/macOS 27 Dock binaries, acquisition manifests and comparison reports. |
 | `artifacts/macos27-vm/` | Restore acquisition and VM installation records; any retained IPSW belongs here. |
@@ -29,6 +29,6 @@ directories are also removable when every entry is an expected Mach-O output.
 Unknown files, backups, subdirectories, nonbinary inputs or symlinks preserve the
 entire directory. Preview the exact removal list with `task clean:preview`.
 
-The VirtualBuddy VM is outside this repository at `~/Library/Application Support/VirtualBuddy/Misty Pony.vbvm`; project cleanup does not touch it. The read-only restore compatibility probe now has maintained source/entitlements under `tools/vm-preflight/` and can be rebuilt with `task build:vm-preflight`.
+The VirtualBuddy VM is outside this repository at `~/Library/Application Support/VirtualBuddy/Misty Pony.vbvm`; project cleanup does not touch it. The read-only restore compatibility probe lives at `~/dev/tools/vm-preflight`; build it with `task build` from that directory. The optional resize validator likewise lives at `~/dev/tools/resize-fade`. Neither is part of Shoji’s build or CI.
 
 Ignored artifacts and rollback copies are local conveniences, not remote backups. Git checkpoints preserve the maintained code and versioned validation evidence; large Apple images and raw archives are not committed.

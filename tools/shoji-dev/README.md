@@ -1,55 +1,28 @@
-# Native development tools
+# Development CLI
 
-`task build:dev` builds `bin/shoji-dev` with Odin and ad-hoc signs this developer
-executable. It does not require a configured signing identity. `task signing:setup`
-then prepares persistent application signing; existing identities are reused.
-Run commands from the repository root, or keep the executable in its `bin/`
-directory so it can locate the project. Release packages include this executable.
+`task build:dev` builds `bin/shoji-dev`. `task build:tools` builds all three
+focused tools. Taskfile remains the normal interface for building Shoji.
 
 ```sh
-task build:dev
-./bin/shoji-dev --help
-./bin/shoji service status
+./bin/shoji-dev signing setup
+./bin/shoji-dev signing check
+./bin/shoji-dev signing sign bin/shoji.new --install bin/shoji
+./bin/shoji-dev toolchain --patch-only
+./bin/shoji-dev build-arm64e "$PWD/.toolchain/Odin"
+./bin/shoji-dev package --version local
+./bin/shoji-dev clean --dry-run
 ```
 
-| Command | Responsibility |
-| --- | --- |
-| `signing setup`, `check`, `sign` | Persistent Keychain identity, designated requirements and verified atomic installation. |
-| `service plist`, `install`, `start`, `stop`, `restart`, `status`, `uninstall` | Same launchd controller as `shoji service`; use the application command for everyday operation. |
-| `toolchain`, `build-arm64e` | Prepare the pinned Odin checkout, apply exact compiler patches and build the isolated compiler. |
-| `normalize-arm64e`, `check-asm`, `check-bootstrap` | Mach-O ABI normalization, compiler regressions and bootstrap relocation checks. |
-| `package`, `package --verify ARCHIVE` | Release archive assembly, member validation and SHA-256 verification. |
-| `clean --dry-run`, `clean` | Preview or remove known rebuildable outputs while preserving the installed runtime, compiler and research artifacts. |
-| `validate`, `validate --preflight-only` | Record build/test and target-machine prerequisite evidence. |
-| `live desktop`, `live spaces`, `live animation` | Explicit live checks with disposable fixtures and evidence reports. |
+This tool owns persistent signing, pinned compiler preparation, release archive
+creation and cleanup of known generated outputs. Signing verifies the candidate
+before atomic installation and reuses the existing certificate/identifier.
 
-The CLI passes literal argument arrays to Apple/system tools; no shell command
-construction or Python interpreter is involved. Compiler builds still use Odin's
-upstream shell build script and C++ toolchain. Apple signing, launchd, archive and
-inspection commands remain platform dependencies.
+Binary and archive inspection belongs to `shoji-inspector`; test execution and
+live fixtures belong to `shoji-harness`. Service control is `shoji service`.
+There are no forwarding commands for those other tools in this CLI.
 
-`live desktop` refuses an existing window-manager daemon. Space checks track the
-newly created Space and never accept a pre-existing Space as a cleanup target.
-Dock restart is available only through the explicit `live animation --dock-restart`
-option, with noninteractive sudo policy checks and recovery guards. Ctrl-C or
-SIGTERM cancels owned command process groups, including nested compiler/shell
-children, and permits deferred fixture/Space cleanup. A bounded graceful stop
-precedes forced termination; unrelated process groups are never selected.
-SIGKILL cannot run cleanup handlers.
+After creating a package, verify it with `shoji-inspector check-archive ARCHIVE`.
+`task package` performs both steps. Cleanup preserves the runtime, all three CLIs,
+the arm64e compiler, unknown files, symlinks and research artifacts.
 
-Binary hash errors, command-log/report write failures and fixture cleanup
-failures cause a nonzero exit status. Evidence finalization runs after workflow
-cleanup and retains the original check error alongside persistence/cleanup errors.
-These tools do not certify a passing check if its required evidence could not be
-saved. All maintained Odin build/test/check tasks treat warnings as errors;
-compiler diagnostic fixtures retain their explicit expected-warning behavior.
-
-`task test:tooling` runs native service, signing, packaging, cleanup, timeout,
-cancellation and live-safety regressions. Service/Dock mutations are mocked;
-temporary fixture processes and archives exercise real native process/file paths.
-`task test:compiler` runs real compiler diagnostics against the pinned compiler.
-
-The implementation shares `src/service` and `src/support` with the application.
-`tooling/` contains development workflows, `tests/` their regressions and
-`fixtures/` isolated executable test subjects. No development commands are loaded
-into the window-manager daemon.
+See [the shared workflow](../../docs/DEVELOPMENT_TOOLS.md).

@@ -9,20 +9,22 @@ and test modules have been removed. Their workflows live in Odin:
 | `tools/signing.py` | `bin/shoji-dev signing COMMAND` |
 | `tools/toolchain.py` | `bin/shoji-dev toolchain` |
 | `tools/build_odin_arm64e.py` | `bin/shoji-dev build-arm64e SOURCE` |
-| `tools/normalize_arm64e_abi.py` | `bin/shoji-dev normalize-arm64e BINARY` |
-| `tools/check_odin_asm.py` | `bin/shoji-dev check-asm` |
-| `tests/check_bootstrap.py` | `bin/shoji-dev check-bootstrap BINARY…` |
+| `tools/normalize_arm64e_abi.py` | `bin/shoji-inspector normalize-arm64e BINARY` |
+| `tools/check_odin_asm.py` | `bin/shoji-harness check-asm` |
+| `tests/check_bootstrap.py` | `bin/shoji-inspector check-bootstrap BINARY…` |
 | `tools/package_release.py` | `bin/shoji-dev package` |
 | `tools/clean.py` | `bin/shoji-dev clean` |
-| `tools/validate.py` | `bin/shoji-dev validate` |
-| `tools/live_desktop.py` | `bin/shoji-dev live desktop` |
-| `tools/live_spaces.py` | `bin/shoji-dev live spaces` |
-| `tools/live_animation.py` | `bin/shoji-dev live animation` |
-| Python tooling regression tests | `task test:tooling` |
+| `tools/validate.py` | `bin/shoji-harness validate` |
+| `tools/live_desktop.py` | `bin/shoji-harness live desktop` |
+| `tools/live_spaces.py` | `bin/shoji-harness live spaces` |
+| `tools/live_animation.py` | `bin/shoji-harness live animation` |
+| Python tooling regression tests | `task test:harness` |
 
 Taskfile and CI invoke these commands. Bootstrap the developer executable with
 `task build:dev`; persistent application signing is a separate step. Release
-archives contain `shoji`, `shoji-loader`, `shoji-sa.dylib` and `shoji-dev`.
+archives contain `shoji`, `shoji-loader`, `shoji-sa.dylib`, `shoji-dev`,
+`shoji-inspector` and `shoji-harness`. The current native tool boundaries are
+documented in [DEVELOPMENT_TOOLS.md](DEVELOPMENT_TOOLS.md).
 
 The launchd label remains `tech.shoji.window-manager`. The per-user plist,
 configuration, log paths and persistent application signing identifier remain the
@@ -43,7 +45,7 @@ original provenance and are not current setup instructions.
 
 ## Validation on 2026-10-27
 
-The native `shoji-dev validate` command completed on macOS 15.6 (24G84), arm64,
+The native `shoji-harness validate` command completed on macOS 15.6 (24G84), arm64,
 with status `automated-checks-passed-live-pending`. Local reports and command logs
 are retained under `artifacts/validation/native-migration/`.
 

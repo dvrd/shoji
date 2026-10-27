@@ -56,7 +56,7 @@ Keep logical layout coordinates separate from physical presentation coordinates.
 
 ## Highest-value experiment before committing to visual parity
 
-The first gate is implemented as the [isolated Odin clipping probe](../tools/compositor-probe/README.md), built with `task compositor:probe`. Its build and six deterministic tests pass. The agent session has no WindowServer connection, but the user completed a run from Terminal: owner clipping and sampled input routing pass; ordinary foreign clipping does not. See [results](COMPOSITOR_PROBE_RESULTS.md). Translation, full hiding and multi-display acceptance are not implemented by this first gate.
+The first gate was implemented as an isolated Odin clipping probe. That research tool now lives outside Shoji at `~/dev/tools/compositor-probe`; run `task build` or `task test` from that directory. Its build and six deterministic tests pass. The agent session has no WindowServer connection, but the user completed a run from Terminal: owner clipping and sampled input routing pass; ordinary foreign clipping does not. See [results](COMPOSITOR_PROBE_RESULTS.md). Translation, full hiding and multi-display acceptance are not implemented by this first gate.
 
 Implement a standalone Odin diagnostic with an owned positive-control window and a disposable window owned by a separate fixture process. Validate current private signatures before calling them. Do not use Dock's connection or an injected payload for the ordinary-process test.
 

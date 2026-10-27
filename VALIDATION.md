@@ -9,10 +9,10 @@ Run from the repository:
 
 ```sh
 task validate
-./bin/shoji-dev validate --preflight-only
-./bin/shoji-dev validate --live-animation
-./bin/shoji-dev live desktop
-./bin/shoji-dev live spaces --load-payload
+./bin/shoji-harness validate --preflight-only
+./bin/shoji-harness validate --live-animation
+./bin/shoji-harness live desktop
+./bin/shoji-harness live spaces --load-payload
 ```
 
 The first command runs compiler/vet checks, native and Rosetta tests, tooling
@@ -227,7 +227,7 @@ payload now reports the first failing transaction stage and native error code,
 advertised by the `Transaction_Diagnostics` handshake capability. This adds
 diagnostics; it does not establish the cause or fix the native operation failure.
 The rebuilt payload must be loaded into a fresh Dock to use these diagnostics:
-`./bin/shoji-dev live animation --reload-payload`. This explicitly restarts Dock
+`./bin/shoji-harness live animation --reload-payload`. This explicitly restarts Dock
 before test windows are created and checks the exact noninteractive sudo command
 before the restart. It does not exercise the mid-test Dock-restart case unless
 `--dock-restart` is also specified.

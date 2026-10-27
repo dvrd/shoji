@@ -27,7 +27,7 @@ jobs:
           sh build_odin.sh release
           echo "$PWD" >> "$GITHUB_PATH"
           cd ../..
-          task build:dev
+          task build:tools
           ./bin/shoji-dev toolchain --patch-only --build-compiler
       - name: Check and test
         run: |
@@ -35,22 +35,22 @@ jobs:
           task check
           task test
           task test:amd64
-          task test:tooling
+          task test:harness
           task test:dockscan
           task test:raven
-          task test:compositor-probe
           task test:motion
       - name: Build arm64e compiler
         run: |
           export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
           ./bin/shoji-dev build-arm64e "$PWD/.toolchain/Odin"
-          ./bin/shoji-dev check-asm --compiler bin/odin-arm64e --library-root .toolchain/Odin --target darwin_arm64e
+          ./bin/shoji-harness check-asm --compiler bin/odin-arm64e --library-root .toolchain/Odin --target darwin_arm64e
       - name: Verify loader and assemble release
         run: |
           task test:loader
           task test:bootstrap
           task build:universal
           ./bin/shoji-dev package --version ci
+          ./bin/shoji-inspector check-archive dist/shoji-ci-macos.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: shoji-macos

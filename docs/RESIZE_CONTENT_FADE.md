@@ -38,9 +38,10 @@ The standalone native fixture verifies both paths: the manual background fallbac
 Real Chrome and Ghostty resize sequences completed with zero native frame-call failures and restored layouts. Sampled fallback colors were **#161616** in Ghostty and **#0b1017** in Chrome's current content. [Color/timing summary](evidence/resize-fade-24G84/apps.json). These reflect this capture, not fixed app themes. Covers were inactive at final verification. Timing records are CPU/native observations, not displayed FPS or input-to-photon latency; capture still introduces preparation cost.
 
 ```sh
-task build:resize-fade
+cd ~/dev/tools/resize-fade
+task build
 # Run from the logged-in macOS session; creates one disposable owned window.
-./bin/shoji-resize-fade bin/fade-check.json
+./bin/shoji-resize-fade fade-check.json
 ```
 
 The signed application is installed and the LaunchAgent is healthy. The prior layouts, animation duration and gesture settings were preserved; Dock was not restarted. The executable preceding synchronized blending is retained at `bin/niri-resize-reference/shoji-before-synchronized-resize`, alongside the failing regression output and passing update results. The pre-effect executable and earlier traces remain under `bin/resize-fade-20261027/`; preserve evidence before cleaning ignored build artifacts.
