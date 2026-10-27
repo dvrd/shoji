@@ -6,16 +6,6 @@ import "core:sync"
 import objc "core:sys/darwin/Foundation"
 import "core:time"
 
-foreign import notification_objc "system:objc"
-@(default_calling_convention = "c")
-foreign notification_objc {
-	objc_getClass :: proc(name: cstring) -> rawptr ---
-	objc_allocateClassPair :: proc(superclass: rawptr, name: cstring, extra: uint) -> rawptr ---
-	objc_registerClassPair :: proc(class: rawptr) ---
-	class_addMethod :: proc(class, selector, implementation: rawptr, encoding: cstring) -> bool ---
-	sel_registerName :: proc(name: cstring) -> rawptr ---
-}
-
 Workspace_Event :: enum {
 	Wake,
 	Dock_Restart,
@@ -30,12 +20,12 @@ Workspace_State :: struct {
 	centers:                         [3]^objc.Object,
 	mutex:                           sync.Mutex,
 	pending:                         Workspace_Events,
-	dock_pid:                        i32,
+	dock_pid, last_dock_pid:         i32,
 	last_poll:                       time.Time,
 	dock_element, dock_observer:     Ref,
 	mission_active, desired_mission: bool,
 }
-workspace_listener_class: rawptr
+workspace_listener_class: objc.Class
 workspace_listener_states: map[rawptr]^State
 workspace_registry_mutex: sync.Mutex
 
@@ -79,19 +69,19 @@ workspace_start :: proc(state: ^State) -> bool {
 	sync.mutex_lock(&workspace_registry_mutex)
 	defer sync.mutex_unlock(&workspace_registry_mutex)
 	if workspace_listener_class == nil {
-		workspace_listener_class = objc_allocateClassPair(
-			objc_getClass("NSObject"),
+		workspace_listener_class = objc.objc_allocateClassPair(
+			objc.objc_lookUpClass("NSObject"),
 			"ShojiWorkspaceObserver",
 			0,
 		)
 		if workspace_listener_class == nil {return false}
-		if !class_addMethod(
+		if !objc.class_addMethod(
 			workspace_listener_class,
-			sel_registerName("notification:"),
-			rawptr(workspace_notification),
+			objc.sel_registerName("notification:"),
+			cast(objc.IMP)workspace_notification,
 			"v@:@",
 		) {return false}
-		objc_registerClassPair(workspace_listener_class)
+		objc.objc_registerClassPair(workspace_listener_class)
 	}
 	if workspace_listener_states == nil {workspace_listener_states = make(map[rawptr]^State)}
 	w := &state.workspace_events
@@ -104,12 +94,12 @@ workspace_start :: proc(state: ^State) -> bool {
 	w.centers[0] = intrinsics.objc_send(^objc.Object, workspace(), "notificationCenter")
 	w.centers[1] = intrinsics.objc_send(
 		^objc.Object,
-		(^objc.Object)(objc_getClass("NSNotificationCenter")),
+		(^objc.Object)(objc.objc_lookUpClass("NSNotificationCenter")),
 		"defaultCenter",
 	)
 	w.centers[2] = intrinsics.objc_send(
 		^objc.Object,
-		(^objc.Object)(objc_getClass("NSDistributedNotificationCenter")),
+		(^objc.Object)(objc.objc_lookUpClass("NSDistributedNotificationCenter")),
 		"defaultCenter",
 	)
 	names := [][]string {
@@ -131,7 +121,7 @@ workspace_start :: proc(state: ^State) -> bool {
 				w.centers[i],
 				"addObserver:selector:name:object:",
 				w.listener,
-				sel_registerName("notification:"),
+				objc.sel_registerName("notification:"),
 				(^objc.Object)(value),
 				(^objc.Object)(nil),
 			)
@@ -174,6 +164,21 @@ mission_callback :: proc "c" (observer, element, notification: Ref, user: rawptr
 	workspace_record((^State)(user), text(notification))
 }
 
+// Keep the last live PID across a poll that observes Dock absent.
+workspace_set_dock_pid :: proc(state: ^State, pid: i32) {
+	w := &state.workspace_events
+	if pid == w.dock_pid {return}
+	workspace_unobserve_dock(state)
+	if pid != 0 {
+		if w.last_dock_pid != 0 && pid != w.last_dock_pid {
+			workspace_record(state, "NSApplicationDockDidRestartNotification")
+		}
+		w.last_dock_pid = pid
+	}
+	w.dock_pid = pid
+	workspace_record(state, "AXExposeExit")
+}
+
 workspace_tick :: proc(state: ^State, detect_dock: bool = true) {
 	w := &state.workspace_events
 	now := time.now()
@@ -192,13 +197,7 @@ workspace_tick :: proc(state: ^State, detect_dock: bool = true) {
 			app := intrinsics.objc_send(^objc.Object, apps, "objectAtIndex:", uint(0))
 			pid = intrinsics.objc_send(i32, app, "processIdentifier")
 		}
-		if pid != w.dock_pid {
-			workspace_unobserve_dock(state)
-			if w.dock_pid != 0 &&
-			   pid != 0 {workspace_record(state, "NSApplicationDockDidRestartNotification")}
-			w.dock_pid = pid
-			workspace_record(state, "AXExposeExit")
-		}
+		workspace_set_dock_pid(state, pid)
 		if pid != 0 && w.dock_observer == nil {
 			w.dock_element = AXUIElementCreateApplication(pid)
 			if AXObserverCreate(pid, mission_callback, &w.dock_observer) == 0 {
@@ -236,6 +235,7 @@ workspace_tick :: proc(state: ^State, detect_dock: bool = true) {
 	}
 	for event in pending {
 		state.dirty = true
-		if event != .Refresh {emit(state, Event{name = names[event]})}
+		// Display IDs are only known after refresh reconciles the active Space.
+		if event != .Refresh && event != .Display {emit(state, Event{name = names[event]})}
 	}
 }

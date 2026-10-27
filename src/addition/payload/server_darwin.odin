@@ -3,11 +3,13 @@ package payload
 import m "../../macos"
 import b "../bridge"
 import wire "../protocol"
+import recovery "../recovery"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
 import posix "core:sys/posix"
+import "core:time"
 
 Request :: struct {
 	op:     wire.Opcode,
@@ -15,22 +17,25 @@ Request :: struct {
 	result: wire.Status,
 	tick:   bool,
 	ctx:    runtime.Context,
+	native_failure: wire.Native_Failure,
+	created_space: u64,
 }
 main_request :: proc "c" (user: rawptr) {
 	req := (^Request)(user);context = req.ctx
 	pool := m.pool_push();defer m.pool_pop(pool)
-	if req.tick {tick_fades();return}
+	if req.tick {tick_fades();tick_proxy_recovery();return}
 	if !wire.validate(req.op, req.bytes) {req.result = .Invalid_Message;return}
 	if req.op == .Handshake {req.result = .OK;return}
 	r := wire.reader(req.bytes)
-	if req.op >= .Space_Focus &&
-	   req.op <=
-		   .Space_Move {req.result = space_action(req.op, &r)} else {req.result = window_action(req.op, &r)}
+	if (req.op >= .Space_Focus && req.op <= .Space_Move) || req.op == .Space_Create_Tracked {
+		req.result = space_action(req.op, &r, &req.created_space)
+	} else {req.result = window_action(req.op, &r, &req.native_failure)}
 }
 initialize_payload :: proc "c" (unused: rawptr) {
 	context = runtime.default_context()
 	pool := m.pool_push();defer m.pool_pop(pool)
-	discover();fades = make(map[u32]Fade)
+	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys};if g.add != nil {g.caps += {.Tracked_Space_Create}}
+	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]recovery.Entry)
 }
 listen_fd: i32 = -1
 serve :: proc "c" (unused: rawptr) -> rawptr {
@@ -59,25 +64,38 @@ serve :: proc "c" (unused: rawptr) -> rawptr {
 }
 serve_one :: proc(fd: i32) {
 	defer m.close(fd);m.prepare_socket(fd)
+	deadline := time.time_add(time.now(), 2 * time.Second)
 	uid, gid: u32
 	if m.getpeereid(fd, &uid, &gid) != 0 || uid != m.getuid() {return}
 	header: [2]u8
-	if !m.read_exact(fd, header[:]) {return}
+	if !m.read_exact(fd, header[:], deadline) {return}
 	count := int(header[0]) | int(header[1]) << 8
 	if count < 1 ||
 	   count >
 		   wire.MAX_PACKET -
 			   2 {reply := [1]u8{u8(wire.Status.Invalid_Message)};m.write_all(fd, reply[:]);return}
 	buffer: [wire.MAX_PACKET]u8
-	if !m.read_exact(fd, buffer[:count]) {return}
+	if !m.read_exact(fd, buffer[:count], deadline) {return}
 	req := Request {
 		op    = wire.Opcode(buffer[0]),
 		bytes = buffer[1:count],
 		ctx   = context,
 	}
 	dispatch_sync_f(dispatch_get_main_queue(), &req, sign_c(main_request))
+	if req.result != .OK && req.native_failure.stage != .None {
+		reply := wire.Packet{valid = true}
+		wire.pack(&reply, wire.Status.Native_Error)
+		wire.pack(&reply, req.native_failure.stage)
+		wire.pack(&reply, req.native_failure.code)
+		m.write_all(fd, reply.data[:reply.count]);return
+	}
 	response := [1]u8{u8(req.result)}
-	if !m.write_all(fd, response[:]) || req.result != .OK || req.op != .Handshake {return}
+	if !m.write_all(fd, response[:]) || req.result != .OK {return}
+	if req.op == .Space_Create_Tracked {
+		reply := wire.Packet{valid = true};wire.pack(&reply, req.created_space)
+		m.write_all(fd, reply.data[:reply.count]);return
+	}
+	if req.op != .Handshake {return}
 	p := wire.Packet {
 		valid = true,
 	}

@@ -7,6 +7,8 @@ permissions:
 jobs:
   engine:
     runs-on: macos-15
+    env:
+      SHOJI_ADHOC_SIGNING: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -21,18 +23,26 @@ jobs:
       - name: Build pinned compiler
         run: |
           export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
+          python3 tools/toolchain.py --patch-only
           cd .toolchain/Odin
           sh build_odin.sh release
           echo "$PWD" >> "$GITHUB_PATH"
       - name: Check and test
         run: |
+          task test:compiler
           task check
           task test
+          task test:amd64
           task test:tooling
+          task test:dockscan
+          task test:raven
+          task test:compositor-probe
+          task test:motion
       - name: Build arm64e compiler
         run: |
           export LLVM_CONFIG="$(brew --prefix llvm@22)/bin/llvm-config"
           python3 tools/build_odin_arm64e.py "$PWD/.toolchain/Odin"
+          python3 tools/check_odin_asm.py --compiler bin/odin-arm64e --library-root .toolchain/Odin --target darwin_arm64e
       - name: Verify loader and assemble release
         run: |
           task test:loader

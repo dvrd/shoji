@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-27",
+  "scope": "owned AppKit immediate bounds and CPU sample intervals; not display frames or foreign AX",
+  "runs": [
+    {
+      "name": "native-baseline",
+      "slowdown": 1.0,
+      "failed": false,
+      "samples": 5372,
+      "invalid_readbacks": 0,
+      "sample_interval_ms": {
+        "p50": 0.191042,
+        "p95": 15.289458,
+        "p99": 17.211583,
+        "max": 19.621959
+      },
+      "worst_immediate_bounds_error": 642.0,
+      "last_sample_bounds_error": 0.9985170686014726
+    },
+    {
+      "name": "native-slow",
+      "slowdown": 3.0,
+      "failed": false,
+      "samples": 12393,
+      "invalid_readbacks": 0,
+      "sample_interval_ms": {
+        "p50": 0.11475,
+        "p95": 6.028166,
+        "p99": 16.656291,
+        "max": 21.351833
+      },
+      "worst_immediate_bounds_error": 642.0,
+      "last_sample_bounds_error": 0.9976787863259347
+    }
+  ]
+}

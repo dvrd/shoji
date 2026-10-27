@@ -180,7 +180,7 @@ randomized_tree_mutations :: proc(t: ^testing.T) {
 }
 
 @(test)
-mirror_preserves_split_ratio_like_yabai :: proc(t: ^testing.T) {
+mirror_preserves_split_ratio :: proc(t: ^testing.T) {
 	v: e.View
 	e.view_init(&v, {0, 0, 1000, 800})
 	defer e.view_destroy(&v)

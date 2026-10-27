@@ -1,10 +1,47 @@
 package engine
 
 import "core:math"
+import "core:fmt"
 import "core:strconv"
 import "core:strings"
 
 window_command :: proc(m: ^Manager, args: []string) -> Response {
+	start := 0
+	if len(args) > 0 && !strings.has_prefix(args[0], "--") {start = 1}
+	parts := make([dynamic][]string, context.temp_allocator)
+	for i := start + 1; i < len(args); i += 1 {
+		if strings.has_prefix(args[i], "--") {
+			append(&parts, args[start:i]);start = i
+		}
+	}
+	if len(parts) == 0 {return window_command_one(m, args)}
+	append(&parts, args[start:])
+	// Check the command framing before applying any operation. Backend failures
+	// stop the chain; earlier successful operations retain their normal effects.
+	for part in parts {
+		if len(part) < 1 || len(part) > 2 {return failure("expected window operation and optional operand")}
+		if len(part) == 1 {
+			switch part[0] {
+			case "--focus", "--close", "--minimize", "--deminimize", "--raise", "--lower", "--center", "--consume", "--expel":
+			case: return failure("window operation requires an operand")
+			}
+		}
+	}
+	selector := ""
+	if len(args) > 0 && !strings.has_prefix(args[0], "--") {selector = args[0]}
+	w := select_window(m, selector)
+	if w == nil {return failure("could not locate window")}
+	selector = fmt.tprintf("%d", w.id)
+	for part in parts {
+		command := [3]string{selector, part[0], ""}
+		count := 2
+		if len(part) == 2 {command[2] = part[1];count = 3}
+		if response := window_command_one(m, command[:count]); response.failed {return response}
+	}
+	return success()
+}
+
+window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 	args := args
 	selector := ""
 	if len(args) > 0 && !strings.has_prefix(args[0], "--") {
@@ -22,8 +59,12 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		   scratch != nil {return result(scratchpad_toggle(m, scratch))}
 	}
 	w := select_window(m, selector)
-	// `window --focus next` resolves its operand against the focused window.
-	if args[0] == "--focus" && len(args) == 2 {
+	// These operations accept a selector either before the command or as its operand.
+	if (args[0] == "--focus" ||
+		   args[0] == "--close" ||
+		   args[0] == "--minimize" ||
+		   args[0] == "--deminimize") &&
+	   len(args) == 2 {
 		w = select_window(m, args[1], w != nil ? w.id : 0)
 	}
 	if w == nil {
@@ -40,12 +81,48 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		n = find(s.view.root, w.id)
 	}
 	switch op {
+	case "--cycle-column-width", "--cycle-row-height", "--row-height", "--column-display", "--consume", "--expel", "--consume-or-expel", "--move-column", "--size-limits":
+		if s == nil || s.view.layout != .Scroll || n == nil {return failure("operation requires a scrolling column")}
+		switch op {
+		case "--cycle-row-height":
+			if operand != "next" && operand != "prev" {return failure("cycle-row-height expects next or prev")}
+			if err := scroll_cycle_height(m, &s.view, w, operand == "prev"); err != "" {return failure(err)}
+		case "--size-limits":
+			values: [4]f64
+			if !parse_numbers(operand, values[:]) {return failure("size-limits expects min-width:min-height:max-width:max-height (zero means unspecified)")}
+			for value in values {if value < 0 || value > 100000 {return failure("size limits must be between 0 and 100000")}}
+			if (values[2] > 0 && values[2] < values[0]) || (values[3] > 0 && values[3] < values[1]) {return failure("maximum size must not be smaller than minimum size")}
+			w.min_width, w.min_height, w.max_width, w.max_height = values[0], values[1], values[2], values[3]
+			s.view.scroll.reveal = true
+		case "--cycle-column-width":
+			if operand != "next" && operand != "prev" {return failure("cycle-column-width expects next or prev")}
+			scroll_cycle_width(&s.view, n, operand == "prev")
+		case "--row-height":
+			if err := scroll_set_row(m, &s.view, w, operand); err != "" {return failure(err)}
+		case "--column-display":
+			if operand != "normal" && operand != "tabbed" && operand != "toggle" {return failure("column-display expects normal, tabbed, or toggle")}
+			n.column_tabbed = operand == "toggle" ? !n.column_tabbed : operand == "tabbed"
+			n.column_raised = 0
+		case "--consume", "--expel":
+			if operand != "" {return failure("consume and expel take no operand")}
+			return result(scroll_transfer(m, s, w, op, "east"))
+		case "--consume-or-expel", "--move-column":
+			if operand != "west" && operand != "east" {return failure("expected west or east")}
+			if op == "--consume-or-expel" {return result(scroll_transfer(m, s, w, op, operand))}
+			scroll_move_column(&s.view, n, operand == "west")
+		}
+	case "--column-width":
+		if s == nil || s.view.layout != .Scroll {return failure("column-width requires scroll layout")}
+		if err := scroll_set_width(&s.view, w.id, operand); err != "" {return failure(err)}
+	case "--center":
+		if s == nil || s.view.layout != .Scroll || n == nil {return failure("center requires a scrolling column")}
+		if operand != "" {return failure("center takes no operand")}
+		view_update(&s.view)
+		scroll_reveal(&s.view, w.id, true)
+		s.view.scroll.focused = m.focused;s.view.scroll.reveal = false
 	case "--scratchpad":
 		return result(scratchpad_assign(m, w, operand))
 	case "--focus", "--close", "--minimize", "--deminimize":
-		if op != "--focus" && len(args) != 1 {
-			return failure("operation takes no operand")
-		}
 		kind: Action_Kind
 		switch op {
 		case "--focus":
@@ -62,6 +139,7 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		if kind == .Focus {
 			focus_window(m, w.id)
+			if s != nil && s.view.layout == .Scroll {s.view.scroll.reveal = true;if err := flush(m, s);err != "" {return failure(err)}}
 			if err := apply_window_opacity(m); err != "" {return failure(err)}
 		}
 		return success()
@@ -85,23 +163,33 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		)
 	case "--toggle":
 		switch operand {
+		case "column-full-width":
+			if s == nil || s.view.layout != .Scroll || n == nil {return failure("column-full-width requires a scrolling column")}
+			n.column_full = !n.column_full
+			n.column_revision += 1
+			n.column_preset = nil
+			s.view.scroll.reveal = true
 		case "float":
 			if s == nil {
 				return failure("window has no space")
 			}
 			w.floating = !w.floating
+			if !w.floating && w.opening.phase == .Excluded {w.opening.phase = .Admitted}
+			w.scroll_frame = {}
 			if w.floating {
 				remove(&s.view, w.id)
-			} else if managed(w) {
+			} else if layout_admitted(w) {
 				add(&s.view, w.id, m.focused)
 			}
 		case "zoom-parent", "zoom-fullscreen":
+			if s != nil && s.view.layout == .Scroll && operand == "zoom-parent" {return failure("parent split zoom is unavailable in scroll layout")}
 			if n == nil {
 				return failure("window is not managed")
 			}
 			target := operand == "zoom-parent" ? n.parent : s.view.root
 			n.zoom = n.zoom == target ? nil : target
 		case "split":
+			if s != nil && s.view.layout == .Scroll {return failure("split toggling is unavailable in scroll layout; use --stack for rows")}
 			if n == nil || n.parent == nil {
 				return failure("window has no split")
 			}
@@ -141,7 +229,8 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 			if err := perform(m, {kind = .Sticky, window = w.id, flag = !w.sticky});
 			   err != "" {return failure(err)}
 			w.sticky = !w.sticky
-			return success()
+			if err := sync_window_membership(m, w, w.space); err != "" {return failure(err)}
+			return result(flush(m, s))
 		case "shadow":
 			if err := perform(m, {kind = .Shadow, window = w.id, flag = !w.shadow});
 			   err != "" {return failure(err)}
@@ -165,6 +254,9 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		other := find(target_space.view.root, target.id)
 		if n == nil || other == nil {
 			return failure("both windows must be managed")
+		}
+		if op == "--warp" && other != n && !can_add(&target_space.view, target.id) {
+			return failure("target stack is full")
 		}
 		if target_space != s {
 			if op == "--stack" {
@@ -201,10 +293,18 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 			return success()
 		}
 		if op == "--swap" {
+			if s.view.layout == .Scroll && n == other {
+				a, b := -1, -1
+				for i in 0 ..< n.count {if n.windows[i] == w.id {a = i};if n.windows[i] == target.id {b = i}}
+				if a < 0 || b < 0 {return failure("could not locate scrolling rows")}
+				n.windows[a], n.windows[b] = n.windows[b], n.windows[a]
+				return result(flush(m, s))
+			}
 			if !swap(n, other) {
 				return failure("windows are already in the same stack")
 			}
 		}
+		if s.view.layout == .Scroll {s.view.scroll.reveal = true}
 		if op == "--stack" {
 			if other == n || n.count == MAX_STACK {
 				return failure("invalid or full stack")
@@ -214,10 +314,17 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 			stack_push(n, target.id)
 		}
 		if op == "--warp" {
+			width := n.column_width
+			size, preset, full := n.column_size, n.column_preset, n.column_full
 			remove(&s.view, w.id)
+			if s.view.layout == .Scroll {
+				if anchor := find(s.view.root, target.id);anchor != nil {anchor.insert_first = operand == "west" || operand == "prev"}
+			}
 			add(&s.view, w.id, target.id)
+			if s.view.layout == .Scroll {if placed := find(s.view.root, w.id);placed != nil {placed.column_width, placed.column_resolved = width, width; placed.column_size, placed.column_preset, placed.column_full = size, preset, full}}
 		}
 	case "--ratio":
+		if s != nil && s.view.layout == .Scroll {return failure("use --column-width to resize scrolling columns")}
 		if n == nil || n.parent == nil {
 			return failure("window has no split")
 		}
@@ -238,6 +345,7 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		n.parent.ratio = clamp(value, 0.1, 0.9)
 	case "--insert":
+		if s != nil && s.view.layout == .Scroll && (operand == "north" || operand == "south") {return failure("use --insert stack for scrolling rows, or east/west for columns")}
 		if n == nil {
 			return failure("window is not managed")
 		}
@@ -350,6 +458,9 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		if target == nil {
 			return failure("could not locate destination")
 		}
+		if target != s && layout_admitted(w) && target.view.layout != .Float && !can_add(&target.view) {
+			return failure("target stack is full")
+		}
 		if err := perform(m, Action{kind = .Space, window = w.id, space = target.id}); err != "" {
 			return failure(err)
 		}
@@ -358,7 +469,8 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		w.space = target.id
 		w.display = target.display
-		if managed(w) {
+		if w.opening.phase == .Excluded && managed(w) {w.opening.phase = .Admitted}
+		if layout_admitted(w) {
 			add(&target.view, w.id)
 		}
 		if err := flush(m, target); err != "" {
@@ -405,6 +517,12 @@ replace_window_id :: proc(n: ^Node, old, fresh: u32) {
 }
 
 resize_window :: proc(m: ^Manager, w: ^Window, handle: string, dx, dy: f64) -> string {
+	if s := space_by_id(m, w.space); s != nil && s.view.layout == .Scroll && find(s.view.root, w.id) != nil {
+		if (handle != "left" && handle != "right") || dy != 0 {return "scroll resize supports left/right width changes; use --column-width for an absolute width"}
+		delta := handle == "left" ? -dx : dx
+		if err := scroll_set_width(&s.view, w.id, fmt.tprintf("rel:%g", delta));err != "" {return err}
+		return flush(m, s)
+	}
 	if handle == "abs" {
 		s := space_by_id(m, w.space)
 		if s != nil &&

@@ -4,6 +4,12 @@ import subprocess
 import sys
 
 for binary in sys.argv[1:]:
+    metadata = subprocess.check_output(["otool", "-l", binary], text=True)
+    sections = [block for block in metadata.split("Section")
+                if re.search(r"sectname\s+__shoji_boot\b", block)]
+    assert len(sections) == 1, f"{binary}: expected one bootstrap section"
+    flags = re.search(r"flags\s+(0x[0-9a-fA-F]+)", sections[0])
+    assert flags and int(flags[1], 16) & 0x80000000, f"{binary}: bootstrap section must be pure instructions"
     output = subprocess.check_output(
         ["xcrun", "llvm-objdump", "--disassemble", "--section=__shoji_boot", binary],
         text=True,

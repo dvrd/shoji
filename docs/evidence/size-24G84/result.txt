@@ -1,0 +1,1 @@
+PASS: foreign AX minimum/maximum width and row-height adaptation, retained requests and coordinated resize with stationary focused neighbor

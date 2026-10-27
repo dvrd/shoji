@@ -6,8 +6,26 @@ import "core:strconv"
 import "core:strings"
 
 Window :: struct {
+	opening: Opening,
+	resize_transitioning: bool,
+	size_feedback_reflow: bool,
+	size_intent: Size_Intent,
+	size_feedback: Size_Feedback,
+	row_revision: u64,
+	scroll_frame: Scroll_Frame,
+	row_fixed, row_weight: f64,
+	row_preset: Maybe(int),
+	min_width, min_height, max_width, max_height: f64,
+	ordered_in:                                               Maybe(bool),
+	root_window:                                              Maybe(bool),
+	rules_pending, grabbed:                                   bool,
+	rule_error:                                               string,
 	windowed_frame:                                           Maybe(Rect),
-	can_move, can_resize:                                     bool,
+	// Relative to the usable tile area; retained only during a lone-tile drag.
+	solo_tile_frame:                                          Maybe(Rect),
+	can_move:                                                 bool,
+	can_resize:                                               Maybe(bool),
+	application_accessory:                                    bool,
 	manage_override:                                          Maybe(bool),
 	id:                                                       u32,
 	pid:                                                      i32,
@@ -61,6 +79,7 @@ Action_Kind :: enum {
 	Shadow,
 	Order,
 	Scale,
+	Display_Focus,
 	Space_Focus,
 	Space_Create,
 	Space_Destroy,
@@ -68,17 +87,27 @@ Action_Kind :: enum {
 }
 
 Action :: struct {
+	direct: bool,
 	kind:               Action_Kind,
 	window, relative:   u32,
+	display:            u32,
 	space, destination: u64,
 	frame:              Rect,
 	value:              f64,
 	duration:           f64,
 	flag:               bool,
+	live_resize:        bool,
 }
 
 Backend :: proc(user: rawptr, action: Action) -> string
 Manager :: struct {
+	resize_fade: bool,
+	motion_trace: Motion_Trace,
+	scroll_animate: bool,
+	scroll_frame_pacing: bool,
+	scroll_time: f64,
+	scroll_options: Scroll_Options,
+	native_resize_window:                      u32,
 	feedback_color:                            u32,
 	main_display:                              u32,
 	display_order:                             enum {
@@ -137,6 +166,7 @@ Manager :: struct {
 
 manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
 	m^ = Manager {
+		scroll_options = scroll_options_defaults(),
 		feedback_color   = 0xffd75f5f,
 		mouse            = mouse_defaults(),
 		windows          = make(map[u32]^Window),
@@ -152,6 +182,7 @@ manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
 }
 
 window_destroy :: proc(w: ^Window) {
+	delete(w.rule_error)
 	delete(w.app)
 	delete(w.title)
 	delete(w.role)
@@ -161,6 +192,7 @@ window_destroy :: proc(w: ^Window) {
 }
 
 manager_destroy :: proc(m: ^Manager) {
+	delete(m.motion_trace.events)
 	for _, w in m.windows {
 		window_destroy(w)
 	}
@@ -215,6 +247,7 @@ add_space :: proc(m: ^Manager, id: u64, display, index: u32, frame: Rect) -> ^Sp
 	s.index = index
 	view_init(&s.view, frame, m.default_layout)
 	s.view.padding = m.padding
+	s.view.scroll_options = m.scroll_options
 	s.view.gap = m.gap
 	s.view.ratio = m.ratio
 	s.view.split = m.split
@@ -228,7 +261,13 @@ add_space :: proc(m: ^Manager, id: u64, display, index: u32, frame: Rect) -> ^Sp
 }
 
 managed :: proc(w: ^Window) -> bool {
-	if w.floating || w.minimized || w.hidden || w.fullscreen {
+	if !(w.ordered_in.? or_else true) ||
+	   w.floating ||
+	   w.minimized ||
+	   w.hidden ||
+	   w.fullscreen ||
+	   w.sticky ||
+	   !(w.root_window.? or_else true) {
 		return false
 	}
 	if override, ok := w.manage_override.?; ok {
@@ -248,6 +287,9 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 	w.role = strings.clone(window.role)
 	w.subrole = strings.clone(window.subrole)
 	w.scratchpad = strings.clone(window.scratchpad)
+	// A confirmed fixed-size window must keep its native geometry. Unknown
+	// capabilities remain eligible; explicit management rules run afterward.
+	if resizable, known := w.can_resize.?; w.application_accessory || (known && !resizable) {w.floating = true}
 	m.windows[w.id] = w
 	if m.origin_display != .Default && managed(w) {
 		d :=
@@ -259,20 +301,24 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 			   err == "" {w.space, w.display = d.active_space, d.id}
 		}
 	}
-	apply_rules(m, w)
-	if s := space_by_id(m, w.space); s != nil && managed(w) {
-		insertion := m.focused
-		if m.insertion_point != .Focused {
-			n := m.insertion_point == .First ? first(s.view.root) : last(s.view.root)
-			if n != nil && n.count > 0 {insertion = n.order[0]}
-		}
-		add(&s.view, w.id, insertion)
+	apply_rules(m, w, initial = true)
+	if s := space_by_id(m, w.space); s != nil && layout_admitted(w) {
+		add(&s.view, w.id, window_insertion(m, &s.view))
 	}
 	return w
 }
 
+window_insertion :: proc(m: ^Manager, v: ^View) -> u32 {
+	if m.insertion_point != .Focused {
+		n := m.insertion_point == .First ? first(v.root) : last(v.root)
+		if n != nil && n.count > 0 {return n.order[0]}
+	}
+	return m.focused
+}
+
 remove_window :: proc(m: ^Manager, id: u32) {
 	if w, ok := m.windows[id]; ok {
+		for &rule in m.rules {if rule.pending_window == id {rule.pending_window = 0}}
 		if s := space_by_id(m, w.space); s != nil {
 			remove(&s.view, id)
 		}
@@ -287,10 +333,51 @@ remove_window :: proc(m: ^Manager, id: u32) {
 	}
 }
 
+sync_window_membership :: proc(m: ^Manager, w: ^Window, previous_space: u64) -> string {
+	if previous := space_by_id(m, previous_space);
+	   previous != nil && (previous_space != w.space || !managed(w)) {remove(&previous.view, w.id)}
+	if current := space_by_id(m, w.space);
+	   current != nil &&
+	   layout_admitted(w) &&
+	   current.view.layout != .Float &&
+	   find(current.view.root, w.id) == nil {
+		w.scroll_frame = {}
+		if !add(&current.view, w.id, m.focused) {return "destination tiling tree is full"}
+	}
+	return ""
+}
+
+// Remove stale membership before adding newly visible windows. A tab switch
+// in a full stack must release the outgoing slot before inserting its replacement.
+reconcile_window_memberships :: proc(m: ^Manager) -> string {
+	for space in m.spaces {
+		remove_ids := make([dynamic]u32, context.temp_allocator)
+		for node := first(space.view.root); node != nil; node = next(node) {
+			for i in 0 ..< node.count {
+				id := node.windows[i]
+				window := m.windows[id]
+				if window == nil ||
+				   !layout_admitted(window) ||
+				   window.space != space.id {append(&remove_ids, id)}
+			}
+		}
+		for id in remove_ids {remove(&space.view, id)}
+	}
+	ids := make([dynamic]u32, context.temp_allocator)
+	for id in m.windows {append(&ids, id)}
+	sort_ids(ids[:])
+	for id in ids {
+		window := m.windows[id]
+		if err := sync_window_membership(m, window, window.space); err != "" {return err}
+	}
+	return ""
+}
+
 focus_window :: proc(m: ^Manager, id: u32) {
 	if id == m.focused {
 		return
 	}
+	opening_note_focus(m, id)
 	if w, ok := m.windows[m.focused]; ok {
 		w.focused = false
 	}
@@ -309,35 +396,84 @@ perform :: proc(m: ^Manager, a: Action) -> string {
 		return "no macOS backend is attached"
 	}
 	a := a
-	if a.kind == .Frame {a.duration = m.animation_duration}
+	if a.kind == .Frame {a.duration = a.direct ? 0 : m.animation_duration}
 	return m.backend(m.backend_user, a)
 }
 
-flush :: proc(m: ^Manager, s: ^Space) -> string {
+flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 	if m.suspended || m.gesture_active || s == nil || s.view.layout == .Float {
 		return ""
 	}
+	live_resize := live_resize
+	if s.view.layout == .BSP && !bsp_constraints(m, &s.view) {return "BSP needs more room for native window constraints"}
+	for _, w in m.windows {if w.space == s.id && w.size_feedback_reflow {live_resize = true; break}}
+	s.view.scroll.geometry_enabled = m.scroll_animate && m.animation_duration > 0 && !live_resize && m.native_resize_window == 0
+	if s.view.layout == .Scroll {
+		scroll_constraints(m, &s.view)
+		for n := first(s.view.root); n != nil; n = next(n) {n.column_observed = 0}
+	}
 	view_update(&s.view)
+	if s.view.layout == .Scroll {
+		scroll_rows(m, &s.view)
+		scroll_feedback_prepare(m, s)
+		scroll_update(&s.view)
+		scroll_rows(m, &s.view, true)
+	}
+	if s.view.layout == .Scroll && (s.view.scroll.viewport.w <= 0 || s.view.scroll.viewport.h <= 0) {return "scroll layout requires positive usable display dimensions"}
+	if s.view.layout == .Scroll {
+		// Floating focus and the gap between close and the next AX focus event
+		// must not discard this Space's active scrolling column.
+		target := m.focused
+		if find(s.view.root, target) == nil {target = s.view.scroll.focused}
+		if !s.view.scroll.dragging && (s.view.scroll.reveal || s.view.scroll.focused != target) {
+			scroll_reveal(&s.view, target)
+			s.view.scroll.focused = target
+			s.view.scroll.reveal = false
+		}
+		if m.scroll_animate {
+			scroll_motion_prepare(&s.view, m.scroll_time, m.animation_duration > 0 && !live_resize && m.native_resize_window == 0)
+			scroll_geometry_prepare(m, s)
+		}
+	}
 	for n := first(s.view.root); n != nil; n = next(n) {
 		for i in 0 ..< n.count {
 			w := m.windows[n.windows[i]]
-			if w == nil {
+			if w == nil || !managed(w) {
 				continue
 			}
 			if w.windowed_frame != nil {continue}
 			r := frame_for(n)
+			if s.view.layout == .Scroll {
+				if m.scroll_animate {
+					r = w.scroll_frame.current
+					r.x -= s.view.scroll.motion.position
+					r.w, r.h = max(1, r.w), max(1, r.h)
+					r = n.zoom != nil ? size_feedback_frame(w, s.view.scroll.viewport) : scroll_park_frame(&s.view, r)
+				} else {r = scroll_park_frame(&s.view, size_feedback_frame(w, scroll_window_frame(&s.view, n, w.id, false)))}
+			}
+			if s.view.layout != .Scroll && n == s.view.root && n.count == 1 && n.zoom == nil {
+				if relative, chosen := w.solo_tile_frame.?; chosen {
+					r = {r.x + relative.x * r.w, r.y + relative.y * r.h, relative.w * r.w, relative.h * r.h}
+				}
+			}
 			if math.abs(w.frame.x - r.x) < 1.5 &&
 			   math.abs(w.frame.y - r.y) < 1.5 &&
 			   math.abs(w.frame.w - r.w) < 1.5 &&
 			   math.abs(w.frame.h - r.h) < 1.5 {
 				continue
 			}
-			if err := perform(m, Action{kind = .Frame, window = w.id, frame = r}); err != "" {
+			if w.id == m.native_resize_window {w.frame = r;continue}
+			if err := perform(m, Action{kind = .Frame, window = w.id, frame = r, live_resize = live_resize, direct = s.view.layout == .Scroll && m.scroll_animate}); err != "" {
 				return err
 			}
 			w.frame = r
 		}
+		if s.view.layout == .Scroll && n.column_tabbed && n.count > 0 && n.column_raised != n.order[0] {
+			if err := perform(m, {kind = .Order, window = n.order[0], value = 1}); err != "" {return err}
+			n.column_raised = n.order[0]
+		}
 	}
+	for _, w in m.windows {if w.space == s.id {w.size_feedback_reflow = false}}
 	return ""
 }
 
@@ -417,6 +553,9 @@ select_window :: proc(m: ^Manager, text: string, reference: u32 = 0) -> ^Window 
 		return nil
 	}
 	n := find(s.view.root, w.id)
+	if s.view.layout == .Scroll && (text == "north" || text == "south" || text == "east" || text == "west") {
+		return scroll_direction(m, s, w, text)
+	}
 	target: ^Node
 	switch text {
 	case "first":
@@ -488,13 +627,18 @@ set_layout :: proc(m: ^Manager, s: ^Space, layout: Layout) {
 	zooms := capture_zooms(&s.view)
 	defer restore_zooms(&s.view, zooms[:])
 	s.view.layout = layout
+	s.view.scroll = Scroll_State{reveal = true}
+	for _, w in m.windows {if w.space == s.id {w.scroll_frame = {}}}
 	node_destroy(s.view.root)
 	s.view.root = new(Node)
 	// Stable window-id order makes a layout rebuild deterministic.
 	ids: [dynamic]u32
 	defer delete(ids)
 	for id, w in m.windows {
-		if w.space == s.id && managed(w) {
+		// Choosing a tiled layout explicitly adopts existing eligible windows;
+		// a newcomer still preparing must continue through admission.
+		if w.space == s.id && layout != .Float && w.opening.phase == .Excluded && managed(w) {w.opening.phase = .Admitted}
+		if w.space == s.id && layout_admitted(w) {
 			append(&ids, id)
 		}
 	}
@@ -505,8 +649,9 @@ set_layout :: proc(m: ^Manager, s: ^Space, layout: Layout) {
 			j -= 1
 		}
 	}
-	for id in ids {
-		add(&s.view, id)
+	for id, i in ids {
+		insertion := layout == .Scroll && i > 0 ? ids[i-1] : u32(0)
+		add(&s.view, id, insertion)
 	}
 	view_update(&s.view)
 }

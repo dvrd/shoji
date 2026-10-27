@@ -3,6 +3,7 @@ package macos
 import e "../engine"
 import "core:fmt"
 import posix "core:sys/posix"
+import "core:time"
 foreign import libc "system:c"
 
 Unix_Address :: struct {
@@ -82,11 +83,30 @@ connect_socket :: proc(path: string) -> i32 {
 	return fd
 }
 
-read_exact :: proc(fd: i32, buffer: []u8) -> bool {
+wait_socket :: proc(fd: i32, events: i16, deadline: time.Time) -> bool {
+	for {
+		remaining := time.diff(time.now(), deadline)
+		if remaining <= 0 {return false}
+		ready := Poll_FD {
+			fd     = fd,
+			events = events,
+		}
+		if result := poll(&ready, 1, i32(max(1, remaining / time.Millisecond)));
+		   result > 0 {return true} else if result < 0 && __error()^ != 4 {return false}
+	}
+}
+
+read_exact :: proc(fd: i32, buffer: []u8, deadline: time.Time = {}) -> bool {
+	flags := posix.fcntl(posix.FD(fd), .GETFL)
+	if flags < 0 || posix.fcntl(posix.FD(fd), .SETFL, flags | posix.O_NONBLOCK) != 0 {return false}
+	defer posix.fcntl(posix.FD(fd), .SETFL, flags)
+	deadline := deadline
+	if (deadline == time.Time{}) {deadline = time.time_add(time.now(), 2 * time.Second)}
 	offset := 0
 	for offset < len(buffer) {
-		n := recv(fd, raw_data(buffer[offset:]), uint(len(buffer)) - uint(offset), 0)
-		if n < 0 && __error()^ == 4 {
+		if !wait_socket(fd, 1, deadline) {return false}
+		n := recv(fd, raw_data(buffer[offset:]), uint(len(buffer)) - uint(offset), 0x80)
+		if n < 0 && (__error()^ == 4 || __error()^ == 35) {
 			continue
 		}
 		if n <= 0 {
@@ -97,11 +117,17 @@ read_exact :: proc(fd: i32, buffer: []u8) -> bool {
 	return true
 }
 
-write_all :: proc(fd: i32, buffer: []u8) -> bool {
+write_all :: proc(fd: i32, buffer: []u8, deadline: time.Time = {}) -> bool {
+	flags := posix.fcntl(posix.FD(fd), .GETFL)
+	if flags < 0 || posix.fcntl(posix.FD(fd), .SETFL, flags | posix.O_NONBLOCK) != 0 {return false}
+	defer posix.fcntl(posix.FD(fd), .SETFL, flags)
+	deadline := deadline
+	if (deadline == time.Time{}) {deadline = time.time_add(time.now(), 2 * time.Second)}
 	offset := 0
 	for offset < len(buffer) {
-		n := send(fd, raw_data(buffer[offset:]), uint(len(buffer)) - uint(offset), 0)
-		if n < 0 && __error()^ == 4 {
+		if !wait_socket(fd, 4, deadline) {return false}
+		n := send(fd, raw_data(buffer[offset:]), uint(len(buffer)) - uint(offset), 0x80)
+		if n < 0 && (__error()^ == 4 || __error()^ == 35) {
 			continue
 		}
 		if n <= 0 {
@@ -162,38 +188,4 @@ client :: proc(args: []string) -> int {
 		return 1
 	}
 	return failed ? 1 : 0
-}
-
-serve_message :: proc(fd: i32, manager: ^e.Manager) {
-	defer close(fd)
-	prepare_socket(fd)
-	uid, gid: u32
-	if getpeereid(fd, &uid, &gid) != 0 || uid != getuid() {
-		return
-	}
-	header: [4]u8
-	if !read_exact(fd, header[:]) {
-		return
-	}
-	count := u32(header[0]) | u32(header[1]) << 8 | u32(header[2]) << 16 | u32(header[3]) << 24
-	response: e.Response
-	if count < 2 || count > e.MAX_MESSAGE {
-		response = e.failure("invalid message length")
-	} else {
-		data := make([]u8, int(count) + 4)
-		defer delete(data)
-		copy(data, header[:])
-		if !read_exact(fd, data[4:]) {
-			return
-		}
-		args, ok := e.decode_message(data)
-		defer delete(args)
-		if !ok {
-			response = e.failure("malformed message")
-		} else {
-			response = e.execute(manager, args[:])
-		}
-	}
-	output := fmt.tprintf("%s%s\n", response.failed ? "\a" : "", response.text)
-	write_all(fd, transmute([]u8)output)
 }

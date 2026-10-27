@@ -7,9 +7,11 @@ Feedback_Plan :: struct {
 }
 
 feedback_frame :: proc(v: ^View, n: ^Node, action: Mouse_Drop) -> Rect {
-	if action == .Stack || action == .Swap {return frame_for(n)}
+	frame := frame_for(n)
+	if v.layout == .Scroll && n.count > 0 {frame = scroll_window_frame(v, n, n.order[0])}
+	if action == .Stack || action == .Swap {return frame}
 	a, b := partition(
-		frame_for(n),
+		frame,
 		(action == .East || action == .West) ? .Vertical : .Horizontal,
 		v.ratio,
 		v.gap_enabled ? v.gap : 0,
@@ -53,6 +55,7 @@ drag_feedback :: proc(
 	a, b := find(s.view.root, w.id), find(t.view.root, target)
 	if a == nil || b == nil || a == b {return {}, false}
 	action := mouse_drop_region(destination.frame, point, m.mouse.drop_stack, a.count)
+	if t.view.layout == .Scroll && (action == .North || action == .South) {return {}, false}
 	if action == .None || (action == .Stack && b.count >= MAX_STACK) {return {}, false}
 	return {target, feedback_frame(&t.view, b, action), m.feedback_color}, true
 }

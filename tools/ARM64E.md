@@ -92,9 +92,13 @@ general arm64e TLS.
 The old Odin bootstrap called `pthread_join` from a raw Mach thread. The
 self-test reproduced a crash in `pthread_testcancel`, because that thread has
 no pthread TLS. The pthread now detaches itself, loads the library, and
-publishes completion. The injector also waits for the entry thread to finish
-its create call before terminating it. Data and entry-stack allocations are
-then reclaimed.
+publishes its load result. On failure, it waits for the injector to copy the
+thread-local `dlerror` text and acknowledge receipt. A separate completion flag
+is the worker's final shared-data access. The injector waits for that flag and
+for the entry thread to finish its create call before terminating the entry
+thread and reclaiming data and entry-stack allocations. An acknowledgment error
+or timeout retains the allocations. The loader self-test exercises both a
+successful system-library load and a rejected load against its own process.
 
 The small copied code allocation remains mapped until the target exits: the
 worker may still be executing its return epilogue when completion is observed.
@@ -113,3 +117,13 @@ from the plain arm64 executable was rejected by the kernel, confirming the
 companion is required. This covers one macOS release and one Dock build; other
 releases remain unverified, and `Animation_Patch` was not reported by this
 Dock build. No SIP, launchd, or system settings were changed.
+
+The build script also applies `tools/odin-asm-calls.patch`, which corrects ARM64
+call fallthrough and return-address liveness in the template checker. It accepts
+an exact existing application and fails on conflicting source changes. To check
+the patched arm64e compiler without injecting or restarting Dock:
+
+```sh
+python3 tools/check_odin_asm.py --compiler bin/odin-arm64e \
+  --library-root .toolchain/Odin --target darwin_arm64e
+```

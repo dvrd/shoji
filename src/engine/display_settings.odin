@@ -45,9 +45,11 @@ apply_window_layers :: proc(m: ^Manager) -> string {
 	for _, w in m.windows {
 		if w.layer_override {continue}
 		below := managed(w)
-		desired := below ? "below" : "normal"
+		// Accessory system panels must remain visible above document windows.
+		above := !below && w.application_accessory && w.role == "AXWindow"
+		desired := below ? "below" : (above ? "above" : "normal")
 		if w.layer == desired {continue}
-		if err := perform(m, {kind = .Layer, window = w.id, value = below ? -1 : 0});
+		if err := perform(m, {kind = .Layer, window = w.id, value = below ? -1 : (above ? 1 : 0)});
 		   err != "" {return err}
 		w.layer = desired
 	}

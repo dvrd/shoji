@@ -19,9 +19,31 @@ def load(name):
 
 service = load("service")
 release = load("package_release")
+validation = load("validate")
 
 
 class ToolingTests(unittest.TestCase):
+    def test_validation_never_treats_blocked_desktop_as_a_pass(self):
+        passed = {"test": {"status": "pass"}}
+        blocked = {"inspection": {"status": "fail"}}
+        self.assertEqual(validation.summarize(passed, blocked, False), "desktop-blocked")
+        self.assertEqual(validation.summarize(passed, blocked, True), "desktop-blocked")
+        self.assertEqual(validation.summarize(passed, passed, False), "automated-checks-passed-live-pending")
+        self.assertEqual(validation.summarize(passed, passed, True), "selected-live-checks-passed")
+        self.assertEqual(validation.summarize(blocked, passed, True), "failed")
+
+    def test_validation_records_failed_commands_and_timeouts(self):
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            result = validation.execute([sys.executable, "-c", "print('diagnostic'); raise SystemExit(7)"], evidence, "failure")
+            self.assertEqual(result["exit_code"], 7)
+            self.assertEqual(result["status"], "fail")
+            self.assertIn("diagnostic", Path(result["log"]).read_text())
+            result = validation.execute([sys.executable, "-c", "import time; time.sleep(10)"], evidence, "timeout", timeout=.05)
+            self.assertEqual(result["exit_code"], -1)
+            self.assertIn("timed out", Path(result["log"]).read_text())
+
     def test_launchd_lifecycle_and_literal_arguments(self):
         calls = []
         loaded = False
@@ -55,6 +77,21 @@ class ToolingTests(unittest.TestCase):
             self.assertFalse(loaded)
             self.assertFalse(manager.plist.exists())
 
+    def test_service_payload_option_is_absolute_and_literal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "shoji"
+            binary.write_bytes(b"binary")
+            binary.chmod(0o755)
+            payload = Path(directory) / "payload $(touch never).dylib"
+            payload.write_bytes(b"payload")
+            config = Path(directory) / "shojirc"
+            config.write_text("")
+            data = service.configuration(binary, directory, config, payload)
+            self.assertEqual(data["ProgramArguments"], [str(binary.resolve()),
+                             "-c", str(config.resolve()), "--sa", str(payload.resolve())])
+            with self.assertRaises(ValueError):
+                service.configuration(binary, directory, payload=directory)
+
     def test_service_refuses_foreign_plist(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = service.Service(directory, 501, lambda *a, **k: subprocess.CompletedProcess(a, 1))
@@ -87,6 +124,7 @@ class ToolingTests(unittest.TestCase):
                 (binaries / name).write_bytes(name.encode())
                 (binaries / name).chmod(0o755)
             archive = release.package(PROJECT, binaries, root / "out", "0.1.0-test")
+            validation.verify_archive(archive)
             with tarfile.open(archive) as stream:
                 manifest = stream.extractfile("shoji-0.1.0-test/SHA256SUMS").read().decode()
                 for line in manifest.splitlines():

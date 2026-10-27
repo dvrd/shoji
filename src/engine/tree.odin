@@ -16,6 +16,7 @@ Layout :: enum {
 	Float,
 	BSP,
 	Stack,
+	Scroll,
 }
 
 Direction :: enum {
@@ -33,9 +34,20 @@ MAX_STACK :: 32
 Node :: struct {
 	parent, left, right, zoom: ^Node,
 	frame:                     Rect,
+	minimum:                   Rect,
 	windows, order:            [MAX_STACK]u32,
 	count:                     int,
 	ratio:                     f64,
+	column_width:              f64,
+	column_observed: f64,
+	column_revision: u64,
+	column_size: Scroll_Size,
+	column_resolved: f64,
+	column_preset: Maybe(int),
+	column_full, column_tabbed: bool,
+	column_raised: u32,
+	column_min, column_max: f64,
+	row_heights: [MAX_STACK]f64,
 	split:                     Split,
 	insert_first:              Maybe(bool),
 	insert_stack:              bool,
@@ -52,6 +64,8 @@ View :: struct {
 	balance_axis:                                            Split,
 	zoom_persist:                                            bool,
 	insertion:                                               u32,
+	scroll:                                                  Scroll_State,
+	scroll_options: Scroll_Options,
 }
 
 view_init :: proc(v: ^View, frame: Rect, layout: Layout = .BSP) {
@@ -62,6 +76,7 @@ view_init :: proc(v: ^View, frame: Rect, layout: Layout = .BSP) {
 		ratio           = 0.5,
 		padding_enabled = true,
 		gap_enabled     = true,
+		scroll_options = scroll_options_defaults(),
 	}
 	v.root.frame = frame
 }
@@ -178,7 +193,14 @@ node_update :: proc(v: ^View, n: ^Node) {
 		n.ratio = v.ratio
 	}
 	gap := v.gap_enabled ? v.gap : 0
-	n.left.frame, n.right.frame = partition(n.frame, n.split, n.ratio, gap)
+	ratio := n.ratio
+	if v.layout == .BSP {
+		available := n.split == .Vertical ? n.frame.w - gap : n.frame.h - gap
+		a := n.split == .Vertical ? n.left.minimum.w : n.left.minimum.h
+		b := n.split == .Vertical ? n.right.minimum.w : n.right.minimum.h
+		if available > 0 && a + b <= available {ratio = clamp(ratio, a / available, 1 - b / available)}
+	}
+	n.left.frame, n.right.frame = partition(n.frame, n.split, ratio, gap)
 	node_update(v, n.left)
 	node_update(v, n.right)
 }
@@ -192,6 +214,10 @@ view_update :: proc(v: ^View) {
 		r.h = max(0, r.h - v.padding.top - v.padding.bottom)
 	}
 	v.root.frame = r
+	if v.layout == .Scroll {
+		if v.scroll.viewport != r {v.scroll.reveal = true}
+		v.scroll.viewport = r;scroll_update(v);return
+	}
 	node_update(v, v.root)
 }
 
@@ -257,8 +283,12 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 		n = find(v.root, v.insertion)
 	}
 	if n == nil {
+		if v.layout == .Scroll {n = find(v.root, v.scroll.focused)}
+	}
+	if n == nil {
 		n = minimum_depth(v.root)
 	}
+	if v.layout == .Scroll {scroll_before_add(v, id)}
 	if n.count == 0 || v.layout == .Stack || n.insert_stack {
 		ok := stack_push(n, id)
 		if ok {
@@ -274,6 +304,13 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 		windows = n.windows,
 		order   = n.order,
 		count   = n.count,
+		column_width = n.column_width,
+		column_revision = n.column_revision,
+		column_size = n.column_size,
+		column_resolved = n.column_resolved,
+		column_preset = n.column_preset,
+		column_full = n.column_full,
+		column_tabbed = n.column_tabbed,
 	}
 	fresh^ = Node {
 		parent = n,
@@ -282,7 +319,7 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	fresh.windows[0] = id
 	fresh.order[0] = id
 	n.left, n.right = old, fresh
-	if n.insert_first.? or_else v.first_child {
+	if n.insert_first.? or_else (v.layout != .Scroll && v.first_child) {
 		n.left, n.right = fresh, old
 	}
 	n.insert_first = nil
@@ -296,11 +333,20 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	return true
 }
 
+can_add :: proc(v: ^View, insertion: u32 = 0) -> bool {
+	if v.layout == .Float {return false}
+	n := find(v.root, insertion)
+	if n == nil {n = find(v.root, v.insertion)}
+	if n == nil {n = minimum_depth(v.root)}
+	return n != nil && (!(v.layout == .Stack || n.insert_stack) || n.count < MAX_STACK)
+}
+
 remove :: proc(v: ^View, id: u32) -> bool {
 	n := find(v.root, id)
 	if n == nil {
 		return false
 	}
+	if v.layout == .Scroll {scroll_before_remove(v, id)}
 	zooms := capture_zooms(v)
 	defer restore_zooms(v, zooms[:])
 	if v.insertion == id {

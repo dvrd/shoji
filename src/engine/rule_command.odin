@@ -105,14 +105,7 @@ rule_command :: proc(m: ^Manager, args: []string) -> Response {
 }
 
 apply_rule_to_window :: proc(m: ^Manager, w: ^Window, selected: int = -1) -> string {
-	if s := space_by_id(m, w.space); s != nil {
-		remove(&s.view, w.id)
-	}
-	err := apply_rules(m, w, existing = true, selected = selected)
-	if s := space_by_id(m, w.space); s != nil && managed(w) {
-		add(&s.view, w.id)
-	}
-	return err
+	return apply_rules(m, w, existing = true, selected = selected)
 }
 
 signal_command :: proc(m: ^Manager, args: []string) -> Response {

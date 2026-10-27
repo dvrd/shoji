@@ -70,7 +70,11 @@ server_returns_failure_marker_for_invalid_command :: proc(t: ^testing.T) {
 	manager: e.Manager
 	e.manager_init(&manager)
 	defer e.manager_destroy(&manager)
-	mac.serve_message(fds[1], &manager)
+	server: mac.Command_Server
+	defer mac.command_server_stop(&server)
+	if !testing.expect(t, mac.command_accept(&server, fds[1])) {return}
+	mac.command_server_tick(&server, &manager)
+	testing.expect_value(t, len(server.clients), 0)
 	response: [256]u8
 	size := mac.recv(fds[0], &response[0], len(response), 0)
 	testing.expect(t, size > 1)
@@ -91,7 +95,11 @@ server_returns_query_response_over_socket :: proc(t: ^testing.T) {
 	manager: e.Manager
 	e.manager_init(&manager)
 	defer e.manager_destroy(&manager)
-	mac.serve_message(fds[1], &manager)
+	server: mac.Command_Server
+	defer mac.command_server_stop(&server)
+	if !testing.expect(t, mac.command_accept(&server, fds[1])) {return}
+	mac.command_server_tick(&server, &manager)
+	testing.expect_value(t, len(server.clients), 0)
 	response: [256]u8
 	size := mac.recv(fds[0], &response[0], len(response), 0)
 	testing.expect(t, size > 0)

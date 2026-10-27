@@ -12,6 +12,26 @@ Recorder :: struct {
 }
 
 @(test)
+chained_float_and_grid_matches_the_hammerspoon_binding :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	response := e.execute(&m, []string{"window", "--toggle", "float", "--grid", "4:4:1:1:2:2"})
+	testing.expect(t, !response.failed)
+	testing.expect(t, m.windows[1].floating)
+	testing.expect_value(t, m.windows[1].frame, e.Rect{250, 200, 500, 400})
+	testing.expect(t, !m.windows[2].floating)
+}
+
+@(test)
+chained_window_operations_stop_after_backend_failure :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	r.fail = true
+	testing.expect(t, e.execute(&m, []string{"window", "1", "--focus", "--close"}).failed)
+	testing.expect_value(t, r.calls, 1)
+}
+
+@(test)
 cross_space_swap_rolls_back_failed_second_move :: proc(t: ^testing.T) {
 	m: e.Manager;r: Recorder;fixture(&m, &r)
 	defer e.manager_destroy(&m);defer delete(r.actions)
@@ -433,6 +453,8 @@ directional_display_selection_focuses_the_matching_active_space :: proc(t: ^test
 	)
 	e.add_space(&m, 300, 30, 3, {0, -800, 1000, 800})
 	testing.expect(t, !e.execute(&m, []string{"display", "--focus", "east"}).failed)
+	testing.expect_value(t, r.actions[len(r.actions) - 1].kind, e.Action_Kind.Display_Focus)
+	testing.expect_value(t, r.actions[len(r.actions) - 1].display, u32(20))
 	testing.expect_value(t, r.actions[len(r.actions) - 1].space, u64(200))
 	testing.expect(t, !e.execute(&m, []string{"display", "--focus", "north"}).failed)
 	testing.expect_value(t, r.actions[len(r.actions) - 1].space, u64(300))

@@ -35,9 +35,11 @@ foreign sls {
 	SLSGetWindowTransform :: proc(cid: i32, wid: u32, transform: ^Transform) -> i32 ---
 	SLSSetWindowTransform :: proc(cid: i32, wid: u32, transform: Transform) -> i32 ---
 	SLSTransactionCreate :: proc(cid: i32) -> m.Ref ---
-	SLSTransactionCommit :: proc(transaction: m.Ref, synchronous: i32) -> i32 ---
-	SLSTransactionOrderWindowGroup :: proc(transaction: m.Ref, wid: u32, order: i32, relative: u32) -> i32 ---
-	SLSTransactionSetWindowSystemAlpha :: proc(transaction: m.Ref, wid: u32, alpha: f32) -> i32 ---
+	// On 15.6 these enqueue/commit calls leave no defined CGError in w0.
+	// See docs/TRANSACTION_ABI.md; consuming their return register invents errors.
+	SLSTransactionCommit :: proc(transaction: m.Ref, synchronous: i32) ---
+	SLSTransactionOrderWindowGroup :: proc(transaction: m.Ref, wid: u32, order: i32, relative: u32) ---
+	SLSTransactionSetWindowSystemAlpha :: proc(transaction: m.Ref, wid: u32, alpha: f32) ---
 }
 @(default_calling_convention = "c")
 foreign sys {

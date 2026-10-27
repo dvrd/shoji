@@ -11,7 +11,7 @@ import objc "core:sys/darwin/Foundation"
 import "core:sys/posix"
 import "core:time"
 
-// Loading is deliberately explicit. No daemon startup path calls inject.
+// Loading runs in an explicit CLI invocation or a daemon recovery subprocess.
 // Dock is arm64e and the kernel refuses remote thread creation in an arm64e
 // task from a plain arm64 process (KERN_PROTECTION_FAILURE; verified live on
 // 2026-10-10), so arm64 loading delegates to the spawned Odin arm64e helper
@@ -71,7 +71,14 @@ inject :: proc(payload_path: string) -> string {
 // The self-test uses only its own task port and loads an existing system library.
 // It exercises the same copied bootstrap and thread conversion as Dock injection.
 self_test :: proc() -> string {
-	return inject_task(mach_task_self(), "/usr/lib/libSystem.B.dylib")
+	if err := inject_task(mach_task_self(), "/usr/lib/libSystem.B.dylib"); err != "" {return err}
+	// A rejected dlopen must release the worker's data only after the failure
+	// acknowledgment has been consumed. Exercise this in the arm64e helper too.
+	err := inject_task(mach_task_self(), "/nonexistent/shoji-loader-self-test.dylib")
+	if !strings.contains(err, "shoji-loader-self-test") {
+		return fmt.tprintf("loader failure self-test returned an unexpected result: %s", err)
+	}
+	return ""
 }
 
 inject_task :: proc(task: u32, path: string) -> string {
@@ -220,9 +227,26 @@ inject_task :: proc(task: u32, path: string) -> string {
 		if thread_terminate(thread) != 0 {safe_to_free = false}
 		mach_port_deallocate(self, thread)
 	}
+	failure_reason := ""
+	acknowledged := false
 	for _ in 0 ..< 500 {
 		time.sleep(10 * time.Millisecond)
 		actual: u64
+		// Read publication flags before the result. A single remote-memory copy
+		// could otherwise mix pre-publication fields with newly published flags.
+		flags: [4]u32
+		if code := mach_vm_read_overwrite(
+			task,
+			data_address + u64(offset_of(Bootstrap, done)),
+			size_of(flags),
+			uintptr(&flags),
+			&actual,
+		); code != 0 || actual != size_of(flags) {
+			return(
+				"failed to read bootstrap completion; remote buffers retained to avoid use-after-free" \
+			)
+		}
+		if flags[0] == 0 || flags[1] == 0 {continue}
 		if code := mach_vm_read_overwrite(
 			task,
 			data_address,
@@ -236,25 +260,35 @@ inject_task :: proc(task: u32, path: string) -> string {
 				bootstrap,
 			) {return "failed to read bootstrap completion; remote buffers retained to avoid use-after-free"}
 		if bootstrap.done == 0 || bootstrap.entry_ready == 0 {continue}
-		safe_to_free = true
-		keep_code = bootstrap.create_result == 0
-		if bootstrap.create_result !=
-		   0 {return fmt.tprintf("remote pthread creation failed (%d)", bootstrap.create_result)}
-		if bootstrap.detach_result != 0 {
-			return fmt.tprintf("remote pthread detach failed (%d)", bootstrap.detach_result)
+		if bootstrap.create_result != 0 {
+			safe_to_free = true
+			return fmt.tprintf("remote pthread creation failed (%d)", bootstrap.create_result)
 		}
-		if bootstrap.handle == nil {
-			text := remote_c_string(task, uintptr(rawptr(bootstrap.reason)))
+		keep_code = true
+		if bootstrap.handle == nil && !acknowledged {
+			failure_reason = remote_c_string(task, uintptr(rawptr(bootstrap.reason)))
+			if failure_reason == "" {failure_reason = "Dock rejected the payload library"}
 			seen: u32 = 1
-			mach_vm_write(
+			if code := mach_vm_write(
 				task,
 				data_address + u64(offset_of(Bootstrap, seen)),
 				uintptr(&seen),
 				size_of(seen),
-			)
-			if text == "" {return "Dock rejected the payload library"}
-			return text
+			); code != 0 {
+				return(
+					"cannot acknowledge loader failure; remote buffers retained to avoid use-after-free" \
+				)
+			}
+			acknowledged = true
 		}
+		// The worker must acknowledge receipt before its data can be unmapped.
+		// Its return epilogue may still use copied code, so keep that allocation.
+		if bootstrap.worker_finished == 0 {continue}
+		safe_to_free = true
+		if bootstrap.detach_result != 0 {
+			return fmt.tprintf("remote pthread detach failed (%d)", bootstrap.detach_result)
+		}
+		if bootstrap.handle == nil {return failure_reason}
 		return ""
 	}
 	return(

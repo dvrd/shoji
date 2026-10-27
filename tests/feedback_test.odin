@@ -8,11 +8,15 @@ feedback_create :: proc(
 	state: ^mac.State,
 	plan: e.Feedback_Plan,
 ) -> (
-	mac.Animation_Proxy,
+	mac.Owned_Surface,
 	string,
 ) {
 	r := (^Animation_Recorder)(state.event_user);r.created += 1
-	return {window = plan.window, id = 100 + plan.window, frame = plan.frame}, ""
+	return {id = 100 + plan.window, frame = plan.frame}, ""
+}
+
+feedback_destroy :: proc(state: ^mac.State, surface: mac.Owned_Surface) {
+	r := (^Animation_Recorder)(state.event_user);r.destroyed += 1
 }
 
 @(test)
@@ -52,7 +56,7 @@ insertion_and_drag_previews_match_split_geometry :: proc(t: ^testing.T) {
 feedback_reuses_unchanged_overlays_and_releases_changed_and_removed_plans :: proc(t: ^testing.T) {
 	state: mac.State;r: Animation_Recorder
 	state.event_user = &r
-	state.feedback_backend = {feedback_create, proxy_destroy}
+	state.feedback_backend = {feedback_create, feedback_destroy}
 	defer mac.feedback_stop(&state)
 	plans := make(map[u32]e.Feedback_Plan)
 	defer delete(plans)

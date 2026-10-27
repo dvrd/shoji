@@ -1,0 +1,48 @@
+--- a/src/check_asm.cpp
++++ b/src/check_asm.cpp
+@@ -1954,9 +1954,16 @@
+ 			// A conditional branch reads a flag and can fall through -> not terminal.
+ 			bool conditional = clobber.is_conditional(valid_form);
+ 
++			// ARM64 BL/BLR (including authenticated forms) produce a link that
++			// the callee consumes on return. The call then continues here; it
++			// neither terminates the template nor leaves an unused link write.
++			u16 link_reg = build_context.metrics.arch == TargetArch_arm64
++				? asm_ctx->clobber_bit_for_reg_name(str_lit("lr")) : 0;
++			bool call = control && (cast(u16)clobber.implicit_wr & link_reg) != 0;
++			facts->consumed_writes = call ? link_reg : 0;
+ 			facts->is_control = control;
+ 			facts->is_conditional = conditional;
+-			facts->is_terminal = halt || (control && !conditional);
++			facts->is_terminal = halt || (control && !conditional && !call);
+ 		}
+ 		asm_ctx->clobber_implicit_regs(&ate->clobber_registers_set, produced);
+ 
+--- a/src/check_asm_cfg.cpp
++++ b/src/check_asm_cfg.cpp
+@@ -57,6 +57,7 @@
+ 	u16 read_flags;
+ 	u16 gen_regs;
+ 	u16 read_regs;
++	u16 consumed_writes; // produced values used by the instruction itself (e.g. a call's link)
+ 
+ 	// Sub-register widths, indexed by reg bit-index.
+ 	AsmRegW read_reg_w;
+@@ -280,7 +281,7 @@
+ 				}
+ 				// For `t == blocks.count`, this implies a jump to the implicit end, and is handled as "leaves" below
+ 			}
+-			// e.g. jmp/ret/hlt (and, conservatively, call) do not fall through in this model.
++			// Terminal jumps, returns, and halts do not fall through.
+ 			if (lf->is_terminal) {
+ 				fallthrough = false;
+ 			}
+@@ -1034,7 +1035,7 @@
+ 			// A register this instruction writes but that is not live afterward,
+ 			// and that it does not itself read (self-use like `xor r,r` or `add r,x`) is a dead write.
+ 			u16 kill = asm_full_kill_mask(f);
+-			u16 dead = kill & ~live_after & ~f->read_regs;
++			u16 dead = kill & ~live_after & ~f->read_regs & ~f->consumed_writes;
+ 			for (u16 bit = 1; bit != 0; bit <<= 1) {
+ 				if ((dead & bit) == 0) {
+ 					continue;

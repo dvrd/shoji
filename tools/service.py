@@ -10,7 +10,7 @@ import tempfile
 LABEL = "tech.shoji.window-manager"
 
 
-def configuration(binary, log_directory, config=None):
+def configuration(binary, log_directory, config=None, payload=None):
     binary = Path(binary).resolve(strict=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError(f"not an executable: {binary}")
@@ -20,6 +20,11 @@ def configuration(binary, log_directory, config=None):
         if not config.is_file():
             raise ValueError(f"not a configuration file: {config}")
         arguments.extend(["-c", str(config)])
+    if payload is not None:
+        payload = Path(payload).resolve(strict=True)
+        if not payload.is_file():
+            raise ValueError(f"not a payload library: {payload}")
+        arguments.extend(["--sa", str(payload)])
     logs = Path(log_directory).resolve()
     return {
         "Label": LABEL,
@@ -49,8 +54,8 @@ class Service:
     def loaded(self):
         return self.launchctl("print", self.target, check=False).returncode == 0
 
-    def install(self, binary, config=None):
-        data = plistlib.dumps(configuration(binary, self.logs, config))
+    def install(self, binary, config=None, payload=None):
+        data = plistlib.dumps(configuration(binary, self.logs, config, payload))
         if self.loaded():
             raise ValueError("stop the loaded service before replacing its configuration")
         if self.plist.is_symlink():
@@ -103,15 +108,16 @@ def main():
     parser.add_argument("command", choices=["plist", "install", "start", "stop", "restart", "status", "uninstall"])
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parent.parent / "bin/shoji")
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--sa", type=Path, help="Dock payload to load at startup and after restart")
     args = parser.parse_args()
     if os.geteuid() == 0:
         parser.error("run as your desktop user, not root")
     service = Service(Path.home(), os.getuid())
     try:
         if args.command == "plist":
-            sys.stdout.buffer.write(plistlib.dumps(configuration(args.binary, service.logs, args.config)))
+            sys.stdout.buffer.write(plistlib.dumps(configuration(args.binary, service.logs, args.config, args.sa)))
         elif args.command == "install":
-            service.install(args.binary, args.config)
+            service.install(args.binary, args.config, args.sa)
             print(f"Installed {service.plist}; use start to launch it")
         elif args.command == "status":
             result = service.launchctl("print", service.target, check=False)

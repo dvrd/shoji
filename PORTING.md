@@ -5,6 +5,10 @@ inventory of what is implemented and what remains. A successful build or test
 run must not be interpreted as feature parity.
 
 Reference: asmvik/yabai `dd845723416f5fe92af49fad5ebab00369e07edd`.
+
+The active validation target is **macOS 15.6 (24G84), arm64**. Other releases are
+outside this validation milestone. See [VALIDATION.md](VALIDATION.md) for the
+acceptance checklist, evidence commands, and remaining blockers.
 Dock injection is all-Odin. On arm64, `shoji --load-sa` spawns `bin/shoji-loader`, an Odin arm64e companion built with the compiler patch in `tools/odin-arm64e.patch` (header normalized to arm64e ABI v0 before ad-hoc signing); the kernel refuses remote thread creation in the arm64e Dock from a plain arm64 process, so the companion is required — upstream yabai likewise uses a separate arm64e loader. Intel Shoji injects in-process. The former MIT-licensed Objective-C loader (`loader_arm64e.m`) was removed after the Odin loader passed live Dock injection on 2026-10-05 on macOS 15.6 / Apple M1 Max. See [the arm64e notes](tools/ARM64E.md).
 
 ## Implemented
@@ -14,16 +18,16 @@ Dock injection is all-Odin. On arm64, `shoji --load-sa` spawns `bin/shoji-loader
 | Project structure | Odin source, Taskfile, universal app/payload builds, checksum release archives, launchd management tool, CI workflow | Universal assembly requires Apple Silicon; CI has not been run remotely; no notarization or system-wide installer |
 | BSP and stack | Add/remove, stack limits/MRU, transforms, balance/equalize, padding/gaps, zoom persistence through add/remove and BSP/stack rebuilds | Zoom is not retained through float layouts; directional selection lacks WindowServer z-order tie-breaking; precision uses f64 rather than upstream f32 |
 | Configuration | Per-space override inheritance, layout/padding/gap/splits, axis auto-balance, placement/insertion, zoom, opacity/fades, animation/easing, external bars, display order/origin, shadows, feedback color and mouse settings | Menubar opacity, debug output and skip-window-focus-animation settings absent; upstream platform-specific defaults differ |
-| Window commands | Cross-space swap/warp with compensating rollback, stack, scratchpad assignment/toggle/recover, explicit-opacity reset, automatic/manual sub-layers, focus, frame/grid/resize, native/windowed fullscreen, Expose, float/zoom, raise/lower, PiP/shadow, expanded selectors | Some selector edge cases remain; associated child-window layer propagation absent; windowed-fullscreen state is daemon-local |
-| Space commands | Position-based move, same-display swap, cross-display window swap with compensation, switch/display, focus/create/destroy, layouts/transforms/labels | Multi-operation reorder failures can leave a partially reordered model; cross-display tree arrangements are rebuilt rather than exchanged; OS fullscreen workarounds remain |
-| Display commands | Discovery, ordering, numeric/relative/recent/mouse/directional selectors, labels, focus through active-Space transport | Directional scoring differs from upstream; focus requires the payload rather than upstream fallback paths |
-| Queries | Filtered/projected window/space/display JSON, escaped text, measured levels/sub-levels, shadow/sticky/opacity and AX capabilities | Full upstream metadata/schema compatibility is not certified |
-| Rules | Regex/exclusions, labels/one-shot/manage, selective and inline reapply, display/space/follow, grid, opacity, sticky, fullscreen, sub-layer, scratchpad and mouse-follow effects | Listing selectors remain strings rather than upstream numeric indices/flags; manage/dialog matching and deferred rule retry differ; privileged effects require the payload |
+| Window commands | Chained operations retaining their acting window, cross-space swap/warp with compensating rollback and capacity checks, sticky tiling transitions, stack, scratchpad assignment/toggle/recover, explicit-opacity reset, automatic/manual sub-layers, focus, frame/grid/resize, native/windowed fullscreen, Expose, float/zoom, raise/lower, PiP/shadow, expanded selectors | Some selector edge cases remain; associated child-window layer propagation absent; windowed-fullscreen state is daemon-local |
+| Space commands | Position-based move and same-display swap with compensating rollback, cross-display swaps retaining complete trees/settings/labels with compensating window moves, switch/display, focus/create/destroy, layouts/transforms/labels | Failed compensation is reported and the model retains successful backend moves; OS fullscreen workarounds remain |
+| Display commands | Discovery, ordering, numeric/relative/recent/mouse/directional selectors, labels/removal, same-display Space visibility switching, WindowServer-ranked window focus and explicit active-display activation, empty-display cursor fallback | Directional scoring differs from upstream; live multi-display focus remains unverified |
+| Queries | Filtered/projected window/space/display JSON, escaped text, measured levels/sub-levels, shadow/sticky/opacity, root-window/grabbed metadata and AX capabilities | Full upstream metadata/schema compatibility is not certified |
+| Rules | Regex/exclusions, labels/one-shot/manage, layout-preserving selective/inline reapply, combined effect precedence, deferred creation retries, one-shot reservations, display/space/follow, grid, opacity, sticky, fullscreen, sub-layer, scratchpad and mouse-follow effects | Listing selectors remain strings rather than upstream numeric indices/flags; manage/dialog matching and deferred rule retry differ; privileged effects require the payload |
 | Signals | All accepted event names have producers, including workspace visibility, Mission Control, Dock, menu-bar, wake and display changes | Reconciliation and notification coalescing can omit intermediate transitions; live notification delivery is unverified |
-| Applications/windows | NSWorkspace enumeration via `objc_send`; AX observer callbacks; reconciliation; references retained/released; AX focus/frame/minimize/close/fullscreen backend | Regular applications only, no enhanced-UI workaround, native-tab handling or upstream retry/suppression logic |
-| Spaces/displays | SkyLight space enumeration, display UUIDs, current space, screen usable frame, reconciliation | Fullscreen/Mission Control transitions and OS-specific workarounds not fully ported |
-| IPC | Unix-domain socket, exact reads/writes, framing validation, peer UID check, socket mode, timeout, process lock, client failure status | A slow client can hold the main loop for up to its socket timeout |
-| Startup | CLI/foreground daemon, config discovery, signal cleanup, child reaping, signed builds, separate launchd lifecycle tool | No native upstream service CLI flags or automatic privileged payload reload after Dock restart |
+| Applications/windows | NSWorkspace enumeration via `objc_send`; AX observer callbacks; reconciliation; references retained/released; AX focus/frame/minimize/close/fullscreen backend, enhanced-UI frame workaround with restoration/error reporting, ordered-window reconciliation, retained inactive tabs and AX reference rebinding | Regular applications only, full upstream retry/suppression logic remains; native tab-group commands are not modeled and live tab switching remains unverified |
+| Spaces/displays | SkyLight space enumeration, display UUIDs, current space, screen usable frame, reconciliation, failed/incomplete observation preservation, Space array ordering after native reorder | Fullscreen/Mission Control transitions and OS-specific workarounds not fully ported |
+| IPC | Unix-domain socket, nonblocking incremental command collection and response delivery, framing validation, peer UID check, 32-client bound, fixed deadlines, process lock, client failure status | Command handlers still execute serially; synchronous AX/payload operations can delay the loop |
+| Startup | CLI/foreground daemon, config discovery gated on verified payload when using --sa, signal cleanup, child reaping, signed builds, separate launchd lifecycle tool, opt-in asynchronous payload startup/reload with verification and backoff | No native upstream service CLI flags; unattended reload requires existing noninteractive sudo permission |
 
 Signal events currently emitted by reconciliation:
 
@@ -38,25 +42,35 @@ Signal events currently emitted by reconciliation:
   through notification/Dock observation.
 
 Event detection uses AX callbacks to trigger reconciliation plus a
-one-second fallback; intermediate transitions can be coalesced. This differs
+one-second fallback. Signals compare against an owned snapshot of the last
+completed observation, so command-side focus/frame updates do not erase
+transitions. Display-change signals are emitted after reconciliation with current
+and recent display IDs; duplicate notifications do not duplicate transitions.
+Intermediate transitions can still be coalesced. This differs
 from yabai's event queue and notification processing.
 
 ## Unported upstream modules and paths
 
-1. Scripting-addition packaging/installation and automatic reload after Dock restart.
-   The Odin implementation loads a dylib directly through `--load-sa`.
+1. Scripting-addition packaging/installation. The Odin implementation loads a dylib
+   directly through `--load-sa`; `--sa PATH` enables asynchronous startup loading
+   and recovery after Dock PID changes using noninteractive sudo. Mock recovery
+   and native subprocess tests pass; a live Dock restart recovery is not yet verified.
 2. Live validation of the private Dock ABI and arm64e interoperability. Signature
    coverage follows upstream tables, but no macOS release is certified yet.
 3. Live validation of the new capture/proxy animation and insertion/drag feedback
    renderer. The animation scheduler/easing/restore retries and overlay lifecycle
    are implemented with injected backends tested locally; private rendering remains
    experimental. Animations default off and require Screen Recording plus the payload.
-4. Upstream animation batching, captured-image alpha correction and crash recovery
-   if Dock becomes unreachable while a real window is hidden behind a proxy. Failed
-   restores are retried while the daemon runs and reported on shutdown; a forceful
-   termination cannot guarantee restoration. Feedback uses square, not rounded, outlines.
-5. Full upstream Mission Control/fullscreen transition handling and native-tab,
-   enhanced-UI, retry/suppression and associated-window workarounds.
+4. Upstream animation batching and captured-image alpha correction. Crash recovery
+   now uses a payload orphan-proxy watchdog plus a synced daemon journal, with
+   connection-owner checks, retained failed restores, and replay after startup or
+   Dock payload reload. If both processes stop, recovery waits for their return.
+   Live private-API crash recovery remains unverified; WindowServer failure and
+   power loss are outside this mechanism. Feedback uses square, not rounded, outlines.
+5. Full upstream Mission Control/fullscreen transition handling,
+   retry/suppression and associated-window workarounds. Native tab visibility
+   reconciliation and retained-window lifetimes now have deterministic tests;
+   live application tab switching is not yet verified.
 6. Remaining `message.c`, manager, query, rule, signal, service, and platform
    compatibility behavior described in the table above.
 
@@ -82,13 +96,17 @@ posting events to macOS.
 
 `src/addition/loader` implements Mach allocation/protection, remote thread creation,
 arm64 thread-state conversion, pointer signing, pthread bootstrap and completion
-tracking. The worker detaches itself and publishes completion; after the entry thread
-terminates, data and its stack are reclaimed. The copied code stays mapped because
+tracking. The worker detaches itself and publishes the load result, then a separate
+completion flag after its final shared-data access. Failed loads wait for the
+injector to copy `dlerror` and acknowledge it before publishing completion. Data
+and the entry stack are reclaimed only after worker completion and entry-thread
+termination; acknowledgment failures retain the allocations. The copied code stays mapped because
 the worker may still be returning through it. Uncertain timeout/failure paths
 retain all buffers to prevent use-after-free.
 `__shoji_boot` contains compiler-generated Odin code, not copied assembly blobs.
 
-`src/addition/payload` implements all 19 upstream operation families with a
+`src/addition/payload` implements all 19 upstream operation families plus a tracked
+Space-creation validation extension, with a
 Shoji-specific versioned protocol, bounded reads, statuses and main-thread Dock
 operations. Fades run on the main queue rather than using upstream's worker/barrier
 scheme. `patterns` preserves architecture/version tables; `bridge` uses native Odin
@@ -103,7 +121,7 @@ upstream command or animation parity.
 Tests cover tree invariants after 1,000 deterministic mutations, upstream split
 rounding, reversible transforms, mirror ratio semantics, stack MRU insertion,
 zoom-reference cleanup, configuration, layout transitions, backend failure
-propagation, JSON escaping, selectors, rule exclusions/one-shot behavior, POSIX
+propagation, deferred rule retries/one-shot reservation, unchanged-layout rule reapply, full-stack rejection, sticky membership/visibility, JSON escaping, selectors, rule exclusions/one-shot behavior, POSIX
 character classes, malformed messages, native Objective-C/CoreFoundation calls,
 fragmented socket writes, daemon error framing and successful query transport.
 Dock tests cover truncated/oversized protocol messages, handshake versions,
@@ -142,3 +160,8 @@ Accessibility permission was granted on the test machine after the initial
 validation: `bin/shoji --inspect`, daemon startup, and payload-backed Space and
 window operations were verified live on 2026-10-05. Launchd installation and
 live mouse event-tap behavior remain unverified.
+
+Regression checks also cover fragmented nonblocking commands, stalled clients alongside
+responsive clients, fixed transfer deadlines despite trickled bytes, connection limits,
+and response ownership across tick arenas and socket backpressure. These checks use
+local socket pairs and do not control desktop windows.

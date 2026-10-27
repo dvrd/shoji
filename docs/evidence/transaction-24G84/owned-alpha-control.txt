@@ -1,0 +1,4 @@
+Requested system alpha: 1
+Requested system alpha: 0
+Requested system alpha: 0.5
+Requested system alpha: 1

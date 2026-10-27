@@ -1,40 +1,135 @@
 version: '3'
 vars:
-  ODIN: odin
+  ODIN:
+    sh: 'if test -x .toolchain/Odin/odin; then printf "%s/.toolchain/Odin/odin" "$PWD"; else command -v odin; fi'
+  ODIN_LIBRARY_ROOT:
+    sh: 'if test -d .toolchain/Odin/core; then printf "%s/.toolchain/Odin" "$PWD"; else env -u ODIN_ROOT {{.ODIN}} root; fi'
   ODINFMT: odinfmt
   VERSION: 0.1.0-dev
   ODIN_ARM64E: bin/odin-arm64e
-  ODIN_ARM64E_ROOT:
-    sh: '{{.ODIN}} root'
+  ODIN_ARM64E_ROOT: '{{.ODIN_LIBRARY_ROOT}}'
   CODESIGN: codesign
   BINARY: bin/shoji
   CPU_FLAGS:
     sh: 'test "$(uname -m)" != arm64 || echo -target-features:pauth'
   LINK_FLAGS: -F/System/Library/PrivateFrameworks
 
+env:
+  ODIN_ROOT: '{{.ODIN_LIBRARY_ROOT}}'
+
 tasks:
+  signing:setup:
+    desc: Create a persistent local code-signing identity (one-time Keychain setup)
+    cmds:
+      - python3 tools/signing.py setup
+  signing:check:
+    desc: Check the persistent signing identity without changing the keychain
+    cmds:
+      - python3 tools/signing.py check
+  toolchain:
+    desc: Isolate the pinned Odin libraries from the shared compiler checkout
+    cmds:
+      - 'python3 tools/toolchain.py'
+  validate:
+    desc: Record target-machine build, test, and desktop prerequisite evidence
+    cmds:
+      - 'python3 tools/validate.py'
   default:
     cmds: [task build]
   build:
-    deps: [addition, loader]
+    deps: [addition, loader, dockscan]
     desc: Build the native macOS executable
     cmds:
+      - python3 tools/signing.py check
       - mkdir -p bin
-      - '{{.ODIN}} build src -out:{{.BINARY}} -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - '{{.CODESIGN}} --force --sign - {{.BINARY}}'
+      - '{{.ODIN}} build src -out:{{.BINARY}}.new -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - 'python3 tools/signing.py sign {{.BINARY}}.new --install {{.BINARY}} --codesign {{.CODESIGN}}'
   debug:
     deps: [addition]
     desc: Build with debug information and runtime checks
     cmds:
+      - python3 tools/signing.py check
       - mkdir -p bin
-      - '{{.ODIN}} build src -out:bin/shoji-debug -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - '{{.CODESIGN}} --force --sign - bin/shoji-debug'
+      - '{{.ODIN}} build src -out:bin/shoji-debug.new -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - 'python3 tools/signing.py sign bin/shoji-debug.new --install bin/shoji-debug --identifier tech.shoji.window-manager.debug --codesign {{.CODESIGN}}'
+  build:scroll-preview:
+    desc: Build and sign a separate scrolling-layout candidate without replacing the running executable or Dock payload
+    cmds:
+      - python3 tools/signing.py check
+      - mkdir -p bin
+      - '{{.ODIN}} build src -out:bin/shoji-scroll-preview.new -o:speed -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - 'python3 tools/signing.py sign bin/shoji-scroll-preview.new --install bin/shoji-scroll-preview --codesign {{.CODESIGN}}'
+  build:resize-fade:
+    desc: Build the standalone native content-fade validator
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build tools/resize-fade -out:bin/shoji-resize-fade -debug -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-resize-fade'
+  build:scroll-smoke:
+    desc: Build the native owned-window scrolling smoke test without running it
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build tools/live-animation -out:bin/shoji-scroll-smoke -debug -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-scroll-smoke'
+  test:motion:
+    desc: Run repeatable motion scenarios without windows or a GUI session
+    deps: [build:scroll-smoke]
+    cmds:
+      - ./bin/shoji-scroll-smoke motion-check bin/motion-check.json 1 3
   check:
     desc: Type-check all source and tests
+    deps: [raven]
     cmds:
       - '{{.ODIN}} check src -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check src/addition/payload -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tests -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check tools/shoji-dock -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/dockscan -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check tools/compositor-probe -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/resize-fade -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+  dockscan:
+    desc: Build the standalone Apple silicon Dock compatibility diagnostic
+    deps: [raven]
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build tools/shoji-dock -out:bin/shoji-dock.new -o:speed -warnings-as-errors'
+      - mv -f bin/shoji-dock.new bin/shoji-dock
+  compositor:probe:
+    desc: Build the isolated clipping diagnostic without running desktop operations
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build tools/compositor-probe -out:bin/shoji-compositor-probe.new -o:speed -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-compositor-probe.new'
+      - mv -f bin/shoji-compositor-probe.new bin/shoji-compositor-probe
+  test:compositor-probe:
+    desc: Test clipping readback and fixture ownership checks without desktop operations
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} test tools/compositor-probe -out:bin/shoji-compositor-probe-tests -debug -warnings-as-errors {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+  test:dockscan:
+    desc: Test offline Dock parsing, scanning, comparison, and patch proposals
+    deps: [raven]
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} test src/dockscan -out:bin/shoji-dock-tests -debug -warnings-as-errors'
+  raven:
+    desc: Build the pinned LZRAVEN decoder for the Dock diagnostic
+    sources:
+      - vendor/liblzraven/src/*
+      - vendor/liblzraven/include/*
+    generates: [bin/libshoji-raven.a]
+    cmds:
+      - mkdir -p bin/raven
+      - for source in model block stream bcj; do cc -std=c11 -O2 -Wall -Wextra -Werror -Ivendor/liblzraven/include -Ivendor/liblzraven/src -c vendor/liblzraven/src/$source.c -o bin/raven/$source.o || exit; done
+      - ar rcs bin/libshoji-raven.a bin/raven/model.o bin/raven/block.o bin/raven/stream.o bin/raven/bcj.o
+  test:raven:
+    desc: Run upstream LZRAVEN decoder vectors and rejection tests
+    deps: [raven]
+    cmds:
+      - cc -std=c11 -O2 -Wall -Wextra -Werror -Ivendor/liblzraven/include vendor/liblzraven/tests/c/test_decode.c bin/libshoji-raven.a -o bin/raven/test-decode
+      - cc -std=c11 -O2 -Wall -Wextra -Werror -Ivendor/liblzraven/include vendor/liblzraven/tests/c/test_reject.c bin/libshoji-raven.a -o bin/raven/test-reject
+      - cd vendor/liblzraven && ../../bin/raven/test-decode
+      - cd vendor/liblzraven && ../../bin/raven/test-reject
   test:
     desc: Run deterministic tests without controlling desktop windows
     cmds:
@@ -55,9 +150,10 @@ tasks:
     deps: [addition:amd64]
     desc: Cross-build the Intel macOS executable
     cmds:
+      - python3 tools/signing.py check
       - mkdir -p bin
-      - '{{.ODIN}} build src -target:darwin_amd64 -out:bin/shoji-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - '{{.CODESIGN}} --force --sign - bin/shoji-amd64'
+      - '{{.ODIN}} build src -target:darwin_amd64 -out:bin/shoji-amd64.new -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - 'python3 tools/signing.py sign bin/shoji-amd64.new --install bin/shoji-amd64 --codesign {{.CODESIGN}}'
   addition:
     desc: Build the Dock payload (does not load it)
     env:
@@ -74,11 +170,35 @@ tasks:
       - mkdir -p bin
       - '{{.ODIN}} build src/addition/payload -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa-amd64.dylib'
+  addition:macos27:
+    desc: Build an isolated macOS 27.0.1 candidate payload without loading or installing it
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin/macos27
+      - '{{.ODIN_ARM64E}} build src/addition/payload -target:darwin_arm64e -target-features:pauth -define:SHOJI_MACOS27_CANDIDATE=true -build-mode:shared -out:bin/macos27/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - python3 tools/normalize_arm64e_abi.py bin/macos27/shoji-sa.dylib
+      - '{{.CODESIGN}} --force --sign - bin/macos27/shoji-sa.dylib'
+  addition:transaction-fix:
+    desc: Build an isolated transaction ABI correction without loading it or replacing the installed payload
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin/transaction-fix
+      - '{{.ODIN_ARM64E}} build src/addition/payload -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/transaction-fix/shoji-sa.dylib -o:speed -warnings-as-errors -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - python3 tools/normalize_arm64e_abi.py bin/transaction-fix/shoji-sa.dylib
+      - '{{.CODESIGN}} --force --sign - bin/transaction-fix/shoji-sa.dylib'
   test:amd64:
     desc: Run Intel tests (requires Intel macOS or Rosetta)
     cmds:
       - mkdir -p bin
       - '{{.ODIN}} test tests -target:darwin_amd64 -out:bin/shoji-tests-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+  test:compiler:
+    desc: Verify ARM64 call diagnostics and preserve genuine assembly warnings
+    cmds:
+      - 'python3 tools/check_odin_asm.py --compiler {{.ODIN}} --library-root {{.ODIN_LIBRARY_ROOT}}'
   test:tooling:
     desc: Test service and release tooling without installing a service
     cmds:
@@ -90,11 +210,12 @@ tasks:
       - sh: 'test "$(uname -m)" = arm64'
         msg: Universal assembly currently requires an Apple Silicon build host
     cmds:
+      - python3 tools/signing.py check
       - mkdir -p bin/universal
-      - lipo -create bin/shoji bin/shoji-amd64 -output bin/universal/shoji
+      - lipo -create bin/shoji bin/shoji-amd64 -output bin/universal/shoji.new
       - lipo -create bin/shoji-sa.dylib bin/shoji-sa-amd64.dylib -output bin/universal/shoji-sa.dylib
       - cp bin/shoji-loader bin/universal/shoji-loader
-      - '{{.CODESIGN}} --force --sign - bin/universal/shoji'
+      - 'python3 tools/signing.py sign bin/universal/shoji.new --install bin/universal/shoji --codesign {{.CODESIGN}}'
       - '{{.CODESIGN}} --force --sign - bin/universal/shoji-sa.dylib'
   package:
     deps: [build:universal]
