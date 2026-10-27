@@ -28,7 +28,6 @@ foreign sys {
 	thread_resume :: proc(thread: u32) -> i32 ---
 	thread_terminate :: proc(thread: u32) -> i32 ---
 	_dyld_get_image_header :: proc(index: u32) -> ^Mach_Header ---
-	_dyld_get_image_vmaddr_slide :: proc(index: u32) -> int ---
 	getsectiondata :: proc(header: ^Mach_Header, segment, section: cstring, size: ^uint) -> [^]u8 ---
 	dlopen :: proc(path: cstring, mode: i32) -> rawptr ---
 	dlsym :: proc(handle: rawptr, name: cstring) -> rawptr ---

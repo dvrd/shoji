@@ -22,6 +22,25 @@ Validation_Report :: struct {
 	artifacts: map[string]string,
 	status, scope: string,
 }
+finish_validation :: proc(
+	report: ^Validation_Report,
+	path, err: string,
+	final: ^string,
+) {
+	if err != "" &&
+	   report.status != "desktop-blocked" &&
+	   report.status != "target-mismatch" {
+		report.status = "failed"
+	}
+	write_error := s.write_json(path, report^)
+	final^ = with_error(err, "report evidence", write_error)
+	if write_error != "" {
+		report.status = "failed"
+		fmt.eprintln("Validation evidence incomplete:", final^)
+	} else {
+		fmt.printf("%s; evidence: %s\n", report.status, path)
+	}
+}
 validation_summary :: proc(
 	checks, desktop: map[string]Validation_Check,
 	live: bool,
@@ -62,7 +81,25 @@ validation_execute :: proc(
 	}
 	return {s.clone_args(args), r.code, r.code == 0 ? "pass" : "fail", log, ""}
 }
-validation_cli :: proc(c: Context, args: []string) -> (err: string) {
+validation_cli :: proc(c: Context, args: []string) -> string {
+	report: Validation_Report
+	path: string
+	err := validation_run(c, args, &report, &path)
+	if path == "" {
+		return err
+	}
+	final: string
+	finish_validation(&report, path, err, &final)
+	return final
+}
+validation_run :: proc(
+	c: Context,
+	args: []string,
+	report_out: ^Validation_Report,
+	path_out: ^string,
+) -> (
+	err: string,
+) {
 	o, e := s.parse(
 		args,
 		nil,
@@ -86,6 +123,9 @@ validation_cli :: proc(c: Context, args: []string) -> (err: string) {
 		desktop   = make(map[string]Validation_Check),
 		artifacts = make(map[string]string),
 	}
+	defer report_out^ = report
+	path := s.join(directory, "report.json")
+	path_out^ = path
 	report.recorded_at = fmt.tprintf("%v", time.now())
 	version, ev := run(c, []string{"/usr/bin/sw_vers", "-productVersion"})
 	if ev != "" {
@@ -100,21 +140,20 @@ validation_cli :: proc(c: Context, args: []string) -> (err: string) {
 	}
 	report.actual = {s.trim(version), s.trim(build), s.trim(arch)}
 	report.matches_target = report.actual == report.target
-	report.head, _ = run(c, []string{"git", "rev-parse", "HEAD"}, c.root)
-	report.working_tree, _ = run(
+	if report.head, err = run(c, []string{"git", "rev-parse", "HEAD"}, c.root);
+	   err != "" {
+		return err
+	}
+	if report.working_tree, err = run(
 		c,
 		[]string{"git", "status", "--porcelain"},
 		c.root,
-	)
-	path := s.join(directory, "report.json")
-	defer {
-		if err != "" && report.status == "running" {
-			report.status = "failed"
-		}
-		_ = s.write_json(path, report)
-		fmt.printf("%s; evidence: %s\n", report.status, path)
+	); err != "" {
+		return err
 	}
-	_ = s.write_json(path, report)
+	if err = s.write_json(path, report); err != "" {
+		return err
+	}
 	if !o.flags["preflight-only"] {
 		tasks := []string {
 			"test:compiler",
@@ -133,7 +172,13 @@ validation_cli :: proc(c: Context, args: []string) -> (err: string) {
 				task,
 				1800 * time.Second,
 			)
-			_ = s.write_json(path, report)
+			if write_error := s.write_json(path, report); write_error != "" {
+				original :=
+					report.checks[task].status == "pass" \
+						? "" \
+						: s.cat("validation task failed: ", task)
+				return with_error(original, "report evidence", write_error)
+			}
 			if report.checks[task].status != "pass" {
 				return s.cat("validation task failed: ", task)
 			}
@@ -182,7 +227,10 @@ validation_cli :: proc(c: Context, args: []string) -> (err: string) {
 	}
 	for name in RELEASE_BINARIES {
 		if s.regular(binary(c, name)) {
-			report.artifacts[name], _ = digest(c, binary(c, name))
+			if report.artifacts[name], err = digest(c, binary(c, name));
+			   err != "" {
+				return s.cat("binary evidence: ", err)
+			}
 		}
 	}
 	report.desktop["inspection"] = validation_execute(

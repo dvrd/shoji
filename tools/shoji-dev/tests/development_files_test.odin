@@ -7,6 +7,51 @@ import "core:os"
 import "core:testing"
 
 @(test)
+native_cleanup_recognizes_generated_directories_and_preserves_mixed_inputs :: proc(
+	t: ^testing.T,
+) {
+	arena: mem.Dynamic_Arena; mem.dynamic_arena_init(&arena)
+	defer mem.dynamic_arena_destroy(&arena)
+	context.allocator = mem.dynamic_arena_allocator(&arena)
+	context.temp_allocator = context.allocator
+	root, _ := s.temp("shoji-output-policy-test"); defer os.remove_all(root)
+	c := d.Context {
+		root = root,
+	}
+	bytes := [4]u8{0xcf, 0xfa, 0xed, 0xfe}
+	for folder in ([]string{"universal", "macos27", "transaction-fix"}) {
+		path := d.binary(c, folder); _ = s.mkdir(path)
+		_ = s.write(s.join(path, "shoji-sa.dylib"), string(bytes[:]))
+	}
+	for name in ([]string {
+			"shoji",
+			"shoji-loader",
+			"shoji-dev",
+		}) { _ = s.write(d.binary(c, s.cat("universal/", name)), string(bytes[:])) }
+	evidence := d.binary(c, "transaction-fix/notes.json")
+	_ = s.write(evidence, "retained evidence")
+	testing.expect_value(t, d.clean(c, true), "")
+	testing.expect(t, s.exists(d.binary(c, "universal")))
+	testing.expect_value(t, d.clean(c, false), "")
+	testing.expect(t, !s.exists(d.binary(c, "universal")))
+	testing.expect(t, !s.exists(d.binary(c, "macos27")))
+	testing.expect(t, s.regular(evidence))
+	testing.expect(t, s.regular(d.binary(c, "transaction-fix/shoji-sa.dylib")))
+	_ = s.mkdir(d.binary(c, "universal"))
+	_, _ = s.checked(
+		{},
+		[]string{"/bin/ln", "-s", evidence, d.binary(c, "universal/shoji")},
+	)
+	testing.expect_value(t, d.clean(c, false), "")
+	testing.expect(t, s.kind(d.binary(c, "universal/shoji")) == .Symlink)
+	testing.expect(t, s.regular(evidence))
+	_ = os.remove(d.binary(c, "universal/shoji"))
+	_ = s.write(d.binary(c, "universal/shoji"), "unknown nonbinary input")
+	testing.expect_value(t, d.clean(c, false), "")
+	testing.expect(t, s.regular(d.binary(c, "universal/shoji")))
+}
+
+@(test)
 native_cleanup_preserves_runtime_unknown_inputs_and_symlink_targets :: proc(
 	t: ^testing.T,
 ) {

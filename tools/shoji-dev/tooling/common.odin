@@ -65,3 +65,10 @@ project_root :: proc() -> string {
 	return filepath.dir(filepath.dir(exe))
 }
 fail :: proc(err: string) -> int { fmt.eprintln("shoji-dev:", err); return 1 }
+with_error :: proc(primary, operation, failure: string) -> string {
+	if failure == "" {
+		return primary
+	}
+	extra := s.cat(operation, ": ", failure)
+	return primary == "" ? extra : s.cat(primary, "; ", extra)
+}

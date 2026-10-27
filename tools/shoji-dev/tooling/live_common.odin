@@ -7,6 +7,7 @@ import "core:math"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import posix "core:sys/posix"
 import "core:time"
 
 Recorded_Command :: struct {
@@ -26,11 +27,13 @@ Live :: struct {
 	evidence: string,
 	commands: [dynamic]Recorded_Command,
 	report: Live_Report,
+	cleanup_error: string,
 }
 Child :: struct {
 	process: os.Process,
 	stdout, stderr: string,
 	active: bool,
+	group: posix.pid_t,
 }
 live_command :: proc(l: ^Live, args: []string) -> (string, string) {
 	r := s.run(l.c.executor, args, timeout = 30 * time.Second)
@@ -56,11 +59,36 @@ live_helper :: proc(l: ^Live, args: ..string) -> (string, string) {
 	append(&cmd, binary(l.c, "shoji-live-animation")); append(&cmd, ..args)
 	return live_command(l, cmd[:])
 }
-save_live :: proc(l: ^Live, err: string) {
-	l.report.status = err == "" ? "passed" : "failed"; l.report.error = err
-	_ = s.write_json(s.join(l.evidence, "commands.json"), l.commands[:])
-	_ = s.write_json(s.join(l.evidence, "report.json"), l.report)
-	fmt.println("Evidence:", l.evidence)
+record_cleanup :: proc(l: ^Live, operation, err: string) {
+	l.cleanup_error = with_error(l.cleanup_error, operation, err)
+}
+// Odin captures return values before defers. Finalize only after the workflow
+// returns so evidence and cleanup failures can determine the actual exit status.
+finish_live :: proc(l: ^Live, err: string) -> string {
+	if l.evidence == "" {
+		return err
+	}
+	final: string
+	save_live(l, err, &final)
+	return final
+}
+save_live :: proc(l: ^Live, err: string, final: ^string) {
+	final^ = with_error(err, "cleanup", l.cleanup_error)
+	final^ = with_error(
+		final^,
+		"command evidence",
+		s.write_json(s.join(l.evidence, "commands.json"), l.commands[:]),
+	)
+	l.report.status = final^ == "" ? "passed" : "failed"
+	l.report.error = final^
+	report_error := s.write_json(s.join(l.evidence, "report.json"), l.report)
+	final^ = with_error(final^, "report evidence", report_error)
+	if report_error != "" {
+		l.report.status = "failed"; l.report.error = final^
+		fmt.eprintln("Live evidence incomplete:", final^)
+	} else {
+		fmt.println("Evidence:", l.evidence)
+	}
 }
 prepare_live :: proc(c: Context, prefix: string) -> (Live, string) {
 	stage, err := s.temp(prefix); if err != "" {
@@ -69,7 +97,13 @@ prepare_live :: proc(c: Context, prefix: string) -> (Live, string) {
 		c = c,
 		evidence = stage,
 		report = {status = "running"},
-	}; hash, _ := digest(c, binary(c, "shoji")); l.report.binary_sha256 = hash
+	}; hash, hash_error := digest(c, binary(c, "shoji"))
+	if hash_error != "" {
+		err := with_error("", "binary evidence", hash_error)
+		save_live(&l, err, &err)
+		return l, err
+	}
+	l.report.binary_sha256 = hash
 	return l, ""
 }
 build_live_helper :: proc(c: Context) -> string {
@@ -81,6 +115,7 @@ build_live_helper :: proc(c: Context) -> string {
 		&args,
 		compiler(c),
 		"build",
+		"-warnings-as-errors",
 		root_file(c, "tools/live-animation"),
 		s.cat("-out:", binary(c, "shoji-live-animation")),
 		"-extra-linker-flags:-F/System/Library/PrivateFrameworks",
@@ -97,7 +132,9 @@ start_child :: proc(
 	Child,
 	string,
 ) {
-	if s.cancelled() { return {}, "interrupted" }
+	if s.cancelled() {
+		return {}, "interrupted"
+	}
 	outpath, errpath :=
 		s.join(l.evidence, s.cat(name, ".stdout")),
 		s.join(l.evidence, s.cat(name, ".stderr"))
@@ -107,13 +144,13 @@ start_child :: proc(
 	stderr, b := os.create(errpath); if b != nil {
 		return {}, "cannot create child stderr"
 	}; defer os.close(stderr)
-	child, err := s.start(
+	child, group, err := s.start(
 		{command = args, stdout = out, stderr = stderr},
 	)
 	if err != nil {
 		return {}, fmt.tprintf("cannot start fixture: %v", err)
 	}
-	return {child, outpath, errpath, true}, ""
+	return {child, outpath, errpath, true, group}, ""
 }
 child_alive :: proc(child: ^Child) -> bool {
 	if !child.active {
@@ -125,26 +162,22 @@ child_alive :: proc(child: ^Child) -> bool {
 	}
 	child.active = false; return false
 }
-stop_child :: proc(child: ^Child, kill: bool = false) {
-	if !child_alive(child) {
-		return
-	}
-	if kill {
+stop_child :: proc(child: ^Child, kill: bool = false) -> string {
+	alive := child_alive(child)
+	if kill && alive {
 		_ = os.process_kill(child.process)
-	} else {
-		_ = os.process_terminate(child.process)
 	}
-	_, err := os.process_wait(child.process, 3 * time.Second)
-	if err != nil {
-		_ = os.process_kill(child.process)
-		_, _ = os.process_wait(child.process, 3 * time.Second)
-	}
+	err := s.stop_tree(child.process, child.group, !alive)
 	child.active = false
+	child.group = 0
+	return err
 }
 first_line :: proc(child: ^Child) -> (string, string) {
 	start := time.tick_now()
 	for time.tick_since(start) < 8 * time.Second {
-		if s.cancelled() { return "", "interrupted" }
+		if s.cancelled() {
+			return "", "interrupted"
+		}
 		text, _ := s.read(child.stdout)
 		if at := strings.index(text, "\n"); at >= 0 {
 			return s.trim(text[:at]), ""
