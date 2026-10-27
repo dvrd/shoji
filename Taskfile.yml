@@ -122,21 +122,21 @@ tasks:
   raven:
     desc: Build the pinned LZRAVEN decoder for the Dock diagnostic
     sources:
-      - vendor/liblzraven/src/*
-      - vendor/liblzraven/include/*
+      - tools/shoji-dock/vendor/liblzraven/src/*
+      - tools/shoji-dock/vendor/liblzraven/include/*
     generates: [bin/libshoji-raven.a]
     cmds:
       - mkdir -p bin/raven
-      - for source in model block stream bcj; do cc -std=c11 -O2 -Wall -Wextra -Werror -Ivendor/liblzraven/include -Ivendor/liblzraven/src -c vendor/liblzraven/src/$source.c -o bin/raven/$source.o || exit; done
+      - for source in model block stream bcj; do cc -std=c11 -O2 -Wall -Wextra -Werror -Itools/shoji-dock/vendor/liblzraven/include -Itools/shoji-dock/vendor/liblzraven/src -c tools/shoji-dock/vendor/liblzraven/src/$source.c -o bin/raven/$source.o || exit; done
       - ar rcs bin/libshoji-raven.a bin/raven/model.o bin/raven/block.o bin/raven/stream.o bin/raven/bcj.o
   test:raven:
     desc: Run upstream LZRAVEN decoder vectors and rejection tests
     deps: [raven]
     cmds:
-      - cc -std=c11 -O2 -Wall -Wextra -Werror -Ivendor/liblzraven/include vendor/liblzraven/tests/c/test_decode.c bin/libshoji-raven.a -o bin/raven/test-decode
-      - cc -std=c11 -O2 -Wall -Wextra -Werror -Ivendor/liblzraven/include vendor/liblzraven/tests/c/test_reject.c bin/libshoji-raven.a -o bin/raven/test-reject
-      - cd vendor/liblzraven && ../../bin/raven/test-decode
-      - cd vendor/liblzraven && ../../bin/raven/test-reject
+      - cc -std=c11 -O2 -Wall -Wextra -Werror -Itools/shoji-dock/vendor/liblzraven/include tools/shoji-dock/vendor/liblzraven/tests/c/test_decode.c bin/libshoji-raven.a -o bin/raven/test-decode
+      - cc -std=c11 -O2 -Wall -Wextra -Werror -Itools/shoji-dock/vendor/liblzraven/include tools/shoji-dock/vendor/liblzraven/tests/c/test_reject.c bin/libshoji-raven.a -o bin/raven/test-reject
+      - cd tools/shoji-dock/vendor/liblzraven && ../../../../bin/raven/test-decode
+      - cd tools/shoji-dock/vendor/liblzraven && ../../../../bin/raven/test-reject
   test:
     desc: Run deterministic tests without controlling desktop windows
     cmds:
