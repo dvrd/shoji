@@ -98,6 +98,12 @@ The feature binary is installed as `bin/shoji`. The existing LaunchAgent was res
 ./bin/shoji -m config scroll_center_focused_column never
 ./bin/shoji -m config scroll_center_single_column off
 ./bin/shoji -m config scroll_animation on
+./bin/shoji -m config scroll_default_column_display tabbed # or normal (default)
+./bin/shoji -m config tab_indicator_position top # or left (default)
+./bin/shoji -m config tab_indicator_width 4
+./bin/shoji -m config tab_indicator_gap 0
+./bin/shoji -m config tab_indicator_active_color default
+./bin/shoji -m config tab_indicator_inactive_color default
 ./bin/shoji -m config scroll_warp_pointer off
 ./bin/shoji -m config scroll_default_column_width ratio:0.5
 ./bin/shoji -m config scroll_width_presets ratio:0.3333333333333333,ratio:0.5,ratio:0.6666666666666666
@@ -106,7 +112,13 @@ The feature binary is installed as `bin/shoji`. The existing LaunchAgent was res
 
 Layout settings also accept `config --space SELECTOR NAME VALUE`; global changes preserve each Space's explicitly overridden settings. Preset lists accept 1–16 comma-separated `abs:pixels` or `ratio:fraction` values. Persist desired settings in your existing shojirc.
 
+`scroll_default_column_display` applies to new scrolling columns; existing columns keep their current display mode. It controls their appearance when they gain additional windows, and does not group new windows automatically.
+
+Tab indicator width is measured in logical pixels (1–32); the gap between tabs is 0–32 logical pixels. Colors accept `0xAARRGGBB`, or `default` to follow the focus ring for the active tab and use dark gray for inactive tabs. These settings are global and can be saved in shojirc.
+
 `scroll_animation` is a global renderer setting, enabled by default in the daemon. Its camera uses a unit-mass critical spring with stiffness 800 and a 0.0001 settling threshold (about 326ms), rather than independent per-window easing. `window_animation_duration 0` also disables camera animation; positive values keep the camera's spring timing. Other layouts retain their existing animation behavior. `scroll_warp_pointer on` restores the global mouse-follows-focus preference for scrolling columns; an explicit per-window override still takes precedence. `scroll_center_focused_column always` keeps the active column in a centered slot, while the default `never` pans only when needed.
+
+With `tab_indicator_position top`, east/west focus moves between tabs, then to an adjacent column at the end. With `left`, north/south focus moves between tabs and east/west moves between columns.
 
 ```sh
 # Navigation, widths and complete-column movement.

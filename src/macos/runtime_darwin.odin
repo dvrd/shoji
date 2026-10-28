@@ -1607,6 +1607,11 @@ opening_destroyed :: proc(state: ^State, element: Ref) {
 	   (w != nil && state.focus_ring.generation == w.generation) {
 		focus_ring_stop(state)
 	}
+	for i in 0 ..< state.tab_indicator.count {
+		if state.tab_indicator.tabs[i].window == id {
+			tab_indicator_stop(state); break
+		}
+	}
 	if w == nil {
 		return
 	}

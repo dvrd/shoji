@@ -301,6 +301,7 @@ State :: struct {
 	feedback: map[u32]Feedback_Window,
 	feedback_backend: Feedback_Backend,
 	focus_ring: Focus_Ring,
+	tab_indicator: Tab_Indicator_State,
 	focus_geometry_dirty: bool,
 	focus_frame_probe: proc(state: ^State, window: u32) -> (e.Rect, bool),
 	read_only: bool,
@@ -340,6 +341,7 @@ observer_callback :: proc "c" (
 	   name == "AXApplicationActivated" ||
 	   name == "AXApplicationShown" {
 		state.focus_ring.order_dirty = true
+		state.tab_indicator.order_dirty = true
 		focus_ring_prune_unordered(state)
 	}
 	if name == "AXWindowMiniaturized" || name == "AXApplicationHidden" {

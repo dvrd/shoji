@@ -1,5 +1,8 @@
 # WindowServer ordering: macOS 27.0.1 / 26A434
 
+Remaining implementation and validation work:
+[WindowServer presentation gate backlog](WINDOWSERVER_REMAINING_WORK.md).
+
 Static analysis of SkyLight extracted from the disposable VM's arm64e dyld
 shared cache. Extracted image SHA-256:
 `b7b3f079742fd1f2b34ea98c51affc59fc4360f12592ff36755a7f591f33c673`.
@@ -46,6 +49,34 @@ references do not establish runtime execution or exhaustive coverage.
   out assuming that the candidate covers every invocation of the lower-level
   ordering operation.
 
+## Candidate ABI ledger (static, not runtime validation)
+
+The exact extracted artifact's handler and candidate instructions support this
+working calling-convention map (`ev_c04d71d01ad8795082b17638f95bf0aa8c0420dda81d6ac03d041940103d3901`,
+`ev_380ec5f5f764495c5bffead01f7c1b81b3f551f42fb9b1844a6bc951563c8fce`,
+`ev_5a57e0bd3d46b9c8ce044b24abb13a6b4bd1d83e2edc7acbc375761d984fe1b6`,
+`ev_c61da97f45758e0abb1eae5dc281cf946a1ec323e8841b87025a81cffc94731d`):
+
+| Register | Observed role and limits |
+| --- | --- |
+| `x0` | `CGXConnection *`; the `_XOrderWindow` handler obtains it from the request's connection port. |
+| `x1` | Window-ID array; indexed as 32-bit elements. `_XOrderWindow` supplies one on-stack ID. |
+| `x2` | Order-operation array; also indexed as 32-bit elements. `_XOrderWindow` supplies one operation at the same stack address as its ID array. |
+| `x3` | Relative window-ID array; indexed as 32-bit elements. `_XOrderWindow` supplies one on-stack ID. |
+| `w4` | Element count. A zero count takes an error path; counts above 32 use a dynamically allocated array of 32-byte states. The ownership and success semantics of that allocation remain unresolved. |
+| `w5` | Space-switch boolean, stored from its low 32 bits and passed as `w2` to switch-eligibility calls. Exact normalization and accepted nonzero representations remain unknown. |
+| `w0` | Integer status consumed by `_XOrderWindow`. Its decompilation reports 1000 for missing-window/rights failures, 1001 on observed candidate validation errors, and -304 for malformed requests. These are observed paths, not a complete error table. |
+
+`_XOrderWindow` passes a count of one and a false space-switch flag and checks
+window rights before calling the candidate. This is one caller's stack lifetime,
+not proof that every caller keeps the three arrays alive only synchronously or
+that the count describes each array identically. The candidate calls
+`finish_order_windows` before its observed display-update and cleanup paths;
+this does not yet establish the last pre-composition or input-eligibility
+boundary. Hopper does not expose complete body ranges or reliable reference
+kinds here, so its broad caller inventory must not be treated as exhaustive or
+as proof that every named caller is genuine.
+
 ## Still unknown
 
 Function pointers, exact argument semantics and reentrant behavior must be
@@ -73,3 +104,21 @@ from executable to writable with copy-on-write and back to executable, without
 modifying any instruction. This is evidence only for a mapped page in that
 probe process; it is not proof that WindowServer's sandbox permits the same
 operations, nor that a concurrent patch is safe.
+
+The reusable Odin installer now applies the branch through a writable alias and
+checks the expected entry word before writing. The owned-process self-test uses
+that exact installer and passes, including rejecting a second installation.
+Alias ownership is now explicit in `Hook_State`. On the guest, the single-threaded
+test passed 100 install/restore/release cycles using the correctly typed raw Mach
+deallocator. It also passed a simulated conflicting-instruction test and an
+injected deallocation failure/retry test: unknown bytes were not overwritten,
+failed cleanup retained ownership, and reinstallation was blocked until release.
+The subsequent owned-process stress test starts four pthread callers and installs
+the entry branch while they are calling the anonymous target. Five consecutive
+guest runs passed four million calls each (20 million total), observing both
+original and hooked results, no unexpected results, and matching replacement
+counts. All callers joined before restoration/release; the restored target was
+then called again successfully. This is empirical evidence for that fixture,
+not proof for shared-cache mappings, arbitrary code writers, or WindowServer.
+Teardown requires externally established quiescence; no WindowServer live-thread
+barrier has been implemented or proven. No WindowServer code has been patched.

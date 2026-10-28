@@ -158,6 +158,7 @@ mouse_event_capture_coalesces_drag_and_releases_up :: proc(t: ^testing.T) {
 	e.set_layout(&state.manager, e.space_by_id(&state.manager, 100), .Float)
 	state.manager.windows[1].frame = {0, 0, 100, 100}
 	down := CGEventCreateMouseEvent(nil, 1, {10, 10}, 0);defer mac.CFRelease(down)
+	CGEventSetFlags(down, 0)
 	CGEventSetIntegerValueField(down, 91, 1)
 	testing.expect(t, mac.mouse_callback(nil, 1, down, &state) == down)
 	CGEventSetFlags(down, state.manager.mouse.modifier)
