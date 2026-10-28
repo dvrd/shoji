@@ -18,11 +18,11 @@ Relevant source:
 
 | Responsibility | Source |
 | --- | --- |
-| CLI entry and loader delegation | [main](../src/main.odin), [injector](../src/addition/loader/inject_darwin.odin) |
-| Code copied into the target | [bootstrap](../src/addition/loader/bootstrap.odin) |
+| CLI entry and loader delegation | [main](../src/main.odin), [injector](../src/addition/loader/loader_darwin.odin) |
+| Code copied into the target | [bootstrap](../src/addition/loader/loader_darwin.odin) |
 | arm64e thread-state handling | [state](../src/addition/loader/state_arm64.odin) |
-| Library initialization and requests | [server](../src/addition/payload/server_darwin.odin) |
-| Finding private Dock objects/functions | [discovery](../src/addition/payload/discovery_darwin.odin), [patterns](../src/addition/patterns/patterns_arm64.odin) |
+| Library initialization and requests | [server](../src/addition/payload/payload_darwin.odin) |
+| Finding private Dock objects/functions | [discovery](../src/addition/payload/payload_darwin.odin), [patterns](../src/addition/patterns/patterns_arm64.odin) |
 | Swift calling-convention bridge | [bridge](../src/addition/bridge/calls_arm64.odin) |
 
 This is runtime code injection, not an Apple-supported extension point. It does not replace WindowServer or edit Dock's executable on disk. Discovery can additionally patch an animation instruction **in Dock's memory** when its signature resolves and memory protection changes succeed; that is separate from loading the library.

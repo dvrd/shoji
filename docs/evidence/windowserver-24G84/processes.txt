@@ -1,0 +1,5 @@
+  384    88 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+93579   501 /System/Library/CoreServices/Dock.app/Contents/MacOS/Dock
+93580   501 /System/Library/CoreServices/Dock.app/Contents/XPCServices/com.apple.dock.extra.xpc/Contents/MacOS/com.apple.dock.extra
+93581   501 /System/Library/CoreServices/Dock.app/Contents/XPCServices/com.apple.dock.external.extra.arm64.xpc/Contents/MacOS/com.apple.dock.external.extra.arm64
+93582   501 /System/Library/CoreServices/Dock.app/Contents/XPCServices/com.apple.dock.external.extra.arm64.xpc/Contents/MacOS/com.apple.dock.external.extra.arm64

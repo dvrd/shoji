@@ -1,0 +1,128 @@
+system/com.apple.WindowServer = {
+	active count = 9
+	path = /System/Library/LaunchDaemons/com.apple.WindowServer.plist
+	type = LaunchDaemon
+	state = running
+
+	program = /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+	arguments = {
+		/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+		-daemon
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		MallocNanoZone => 1
+		MallocSpaceEfficient => 0
+		XPC_SERVICE_NAME => com.apple.WindowServer
+	}
+
+	domain = system
+	minimum runtime = 10
+	base minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	pid = 384
+	immediate reason = ipc (mach)
+	forks = 0
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	last exit code = (never exited)
+
+	endpoints = {
+		"com.apple.SpatialConnect.host" = {
+			port = 0xde37
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 1
+			watching = 0
+		}
+		"com.apple.VirtualDisplay" = {
+			port = 0x1450f
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 1
+			watching = 0
+		}
+		"com.apple.CoreDisplay.Notification" = {
+			port = 0x14403
+			active = 1
+			managed = 1
+			reset = 1
+			hide = 1
+			watching = 0
+		}
+		"com.apple.CARenderServer" = {
+			port = 0x10503
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 1
+			watching = 0
+		}
+		"com.apple.windowserver.watchdog" = {
+			port = 0x14303
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 1
+			watching = 0
+		}
+		"com.apple.CoreDisplay.master" = {
+			port = 0x10603
+			active = 0
+			managed = 1
+			reset = 0
+			hide = 1
+			watching = 0
+		}
+		"com.apple.windowserver" = {
+			port = 0x10703
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.iohideventsystem" = {
+			port = 0x1a92b
+			active = 1
+			managed = 1
+			reset = 1
+			hide = 0
+			watching = 0
+		}
+		"com.apple.windowserver.active" = {
+			port = 0x10803
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 1
+			watching = 0
+		}
+	}
+
+	spawn type = interactive (4)
+	jetsam priority = 170
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	exponential throttling grace limit = 10
+	job state = running
+	probabilistic guard malloc policy = {
+		activation rate = 1/1000
+		sample rate = 1/0
+	}
+
+	properties = inferred program | system service | exponential throttling | tle system
+}

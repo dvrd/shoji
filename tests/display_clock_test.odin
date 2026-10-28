@@ -168,3 +168,17 @@ queued_resize_uses_execution_time_after_a_slow_refresh :: proc(t: ^testing.T) {
 		m.windows[1].frame.w > before && m.windows[1].frame.w < 900,
 	)
 }
+
+@(test)
+failed_display_link_creation_retries_on_the_same_display_with_backoff :: proc(
+	t: ^testing.T,
+) {
+	clock := mac.Display_Clock {
+		display = 10,
+	}
+	testing.expect(t, mac.display_clock_should_create(&clock, 10, 1))
+	testing.expect(t, !mac.display_clock_should_create(&clock, 10, 1.01))
+	testing.expect(t, mac.display_clock_should_create(&clock, 10, 1.5))
+	testing.expect(t, !mac.display_clock_should_create(&clock, 10, 1.6))
+	testing.expect(t, mac.display_clock_should_create(&clock, 20, 1.6))
+}

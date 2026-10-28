@@ -159,6 +159,8 @@ request/response deadlines. Command handlers still execute serially.
 
 ## Layout
 
+See the [subsystem source map](docs/SOURCE_MAP.md) for where each behavior lives.
+
 - `src/engine/`: BSP/stack trees, configuration, selectors, queries, rules,
   signals, command dispatch, IPC encoding.
 - `src/macos/`: Odin framework declarations, Objective-C runtime calls,
@@ -338,6 +340,27 @@ The payload socket is `/tmp/shoji-sa_<uid>.socket`, mode `0600`, with peer UID c
 Dock restarts unload the payload; load it again afterward or use `--sa`. Repeated loading of
 an already loaded dylib does not update it: replacing a running payload requires
 a Dock restart. Shoji does not restart Dock; automatic loading requires `--sa`.
+
+## Experimental WindowServer load probe
+
+A separate, opt-in loading path now exists for the recoverable test VM:
+
+```sh
+task build addition:windowserver
+sudo env SHOJI_WINDOWSERVER_EXPERIMENT=1 \
+  ./bin/shoji --load-ws "$WINDOWSERVER_PID" "$PWD/bin/shoji-ws.dylib"
+./bin/shoji --check-ws
+```
+
+The loader verifies the exact system WindowServer path before requesting its
+task port and uses the arm64e helper on Apple Silicon. The independent payload
+uses protocol `shoji-ws-1`, checks its host process, and answers a cross-UID
+handshake with only the `Load_Probe` capability. It does **not** hook ordering,
+hold windows, or prove first-frame prevention, and no live WindowServer load has
+been validated. It is excluded from automatic startup and release archives.
+See [the VM runbook, failure boundaries, and recovery steps](docs/WINDOWSERVER_EXPERIMENT.md)
+before attempting a load. The project does not change the required security
+configuration.
 
 ## Verification limits
 

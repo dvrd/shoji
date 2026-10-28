@@ -130,12 +130,24 @@ tasks:
     cmds:
       - mkdir -p artifacts/motion
       - ./bin/harness-fixture motion-check artifacts/motion/motion-check.json 1 3
+  test:memory:
+    desc: Measure native allocation retention in the login session without creating windows
+    deps: [build:fixture]
+    cmds:
+      - mkdir -p artifacts/memory
+      - ./bin/harness-fixture memory-check artifacts/memory/native-polling.json 2000
+  test:focus:
+    desc: Check focus-ring surface reuse, transforms, input-transparent tags and cleanup in the login session
+    deps: [build:fixture]
+    cmds:
+      - ./bin/harness-fixture focus-ring-check
   check:
     desc: Type-check all source and tests
     deps: [raven]
     cmds:
       - '{{.ODIN}} check src -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check src/addition/payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/addition/windowserver/payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tests -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check src/dockscan -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
@@ -158,7 +170,7 @@ tasks:
     deps: [raven]
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} test src/dockscan -out:bin/shoji-dock-tests -debug -warnings-as-errors'
+      - '{{.ODIN}} test src/dockscan -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -out:bin/shoji-dock-tests -debug -warnings-as-errors'
   raven:
     desc: Build the pinned LZRAVEN decoder for the Dock diagnostic
     sources:
@@ -181,7 +193,7 @@ tasks:
     desc: Run deterministic tests without controlling desktop windows
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} test tests -warnings-as-errors -out:bin/shoji-tests -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} test tests -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -warnings-as-errors -out:bin/shoji-tests -debug -use-single-module {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
   fmt:
     desc: Format Odin source and tests
     cmds:
@@ -218,6 +230,28 @@ tasks:
       - '{{.ODIN_ARM64E}} build src/addition/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
+  addition:windowserver:
+    deps: [build:inspector]
+    desc: Build the isolated experimental WindowServer load probe (does not load it)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build src/addition/windowserver/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - ./bin/inspector normalize-arm64e bin/shoji-ws.dylib
+      - '{{.CODESIGN}} --force --sign - bin/shoji-ws.dylib'
+  build:windowserver-hook-selftest:
+    deps: [build:inspector]
+    desc: Build the isolated arm64e hook self-test (does not run or inject it)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build tools/window-interception/hook-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-hook-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - ./bin/inspector normalize-arm64e bin/shoji-ws-hook-selftest
+      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-hook-selftest'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:
@@ -250,7 +284,7 @@ tasks:
     desc: Run Intel tests (requires Intel macOS or Rosetta)
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} test tests -warnings-as-errors -target:darwin_amd64 -out:bin/shoji-tests-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} test tests -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -warnings-as-errors -target:darwin_amd64 -out:bin/shoji-tests-amd64 -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
   test:compiler:
     deps: [build:harness]
     desc: Verify ARM64 call diagnostics and preserve genuine assembly warnings
@@ -260,7 +294,7 @@ tasks:
     deps: [build:tools]
     desc: Run tool, inspector and harness regressions without desktop mutations
     cmds:
-      - '{{.ODIN}} test tools/harness/tests -out:bin/harness-tests -debug -warnings-as-errors {{.CPU_FLAGS}}'
+      - '{{.ODIN}} test tools/harness/tests -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -out:bin/harness-tests -debug -warnings-as-errors {{.CPU_FLAGS}}'
   build:universal:
     deps: [build, build:amd64, build:tools, build:tools:amd64]
     desc: Assemble signed Intel and Apple Silicon release binaries on Apple Silicon

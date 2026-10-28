@@ -13,6 +13,7 @@ task validate
 ./bin/harness validate --live-animation
 ./bin/harness live desktop
 ./bin/harness live spaces --load-payload
+task test:memory
 ```
 
 The first command runs compiler/vet checks, native and Rosetta tests, tooling
@@ -30,6 +31,192 @@ ready for the desktop interruption and with working sudo access.
 
 A failed prerequisite is recorded as blocked, never as a successful live test.
 Passing selected checks does not mark the entire milestone complete.
+
+The routine test tasks now fail on tracked Odin leaks and bad frees.
+`task test:memory` complements them with native allocation accounting in the
+login session, without creating or moving windows. Its bounded polling workload
+does not replace a long-running daemon soak or account for every graphics buffer.
+
+## Logic and allocation fixes — 2026-10-27
+
+Window observations preserve valid geometry when either Accessibility attribute
+cannot be read. Animation jobs carry process and window-generation identity, so
+completion, retargeting and interruption cannot apply an old target to a reused
+window ID. Content covers use the same generation guard. Display-link creation
+retries after transient failure with 500ms backoff and partial-listener cleanup.
+
+The daemon drains an autorelease pool each tick and around standalone native
+polling. Main-loop and nested callback scratch storage is reused, with oversized
+bursts released. Two owned observation snapshots retain their maps and unchanged
+strings across refreshes. Resize captures have a 128 MiB retained-image and
+estimated surface-backing budget; exhausted budgets fall back to the live window.
+WindowServer's additional internal buffers are outside that accounting.
+
+Validation passed 274 core tests on each of Apple Silicon and Rosetta, 16 harness
+tests, 17 scanner tests, compiler diagnostics and 1,479 motion samples. A native
+2,000-poll check measured zero live allocation growth. The 24-window observation
+workload fell from 53,002 allocations to 106 over 1,000 observations, including
+warm-up and scratch storage; steady unchanged observations allocate no new owned
+storage. Full teardown retained zero tracked bytes.
+
+An initial Intel loader self-test timed out during concurrent builds. Its isolated
+retry and the subsequent complete Intel suite passed. Live footprint measurements
+and the full historical review are recorded in [the allocation review](docs/LOGIC_MEMORY_REVIEW.md).
+The installed signed daemon remained at 19.4M → 19.3M physical footprint over a
+234-second soak, with default malloc-zone live blocks decreasing from 10,214 to
+8,428. All four Space layouts were preserved across the single restart. This
+short observation does not certify arbitrarily long interactive sessions.
+
+## Event-loop performance — 2026-10-27
+
+The signed runtime now registers listener and client readiness with the native
+run loop. Callbacks only wake the loop; bounded command execution remains serial,
+after desktop reconciliation and before presentation sampling. Fragmented reads,
+blocked replies, deadlines and descriptor ownership retain their existing rules.
+Opening notices skip foreground-app lookup when neither pending windows nor an
+existing notice need processing. The 16ms maintenance/fallback timeout remains.
+
+Strict checks, 279 core tests on each of Apple Silicon and Rosetta, and 1,479
+headless motion samples passed. New regressions cover listener/client wakeups,
+read/write rearming, backpressure, fresh Space selection and the idle notice gate.
+The tests need permission to bind a disposable local Unix socket; a sandbox
+denying that operation cannot run the listener regression.
+
+On this machine, three runs of 200 sequential read-only wire requests improved
+from 19.7–20.3ms median to 0.077–0.153ms. A separate 600-request run with 20ms
+between requests, spanning periodic discovery, measured 0.503–0.569ms median and
+33.2–36.3ms p99. These measurements exclude CLI startup and do not establish
+input-to-visible-frame latency or universal timing guarantees. Discovery remains
+the next performance target; adaptive idle deadlines are not implemented here.
+
+The installed daemon preserved its signing requirement and all four Space
+identities/layouts. Its physical footprint was 14.8M before the command workload,
+14.9M after 600 requests and 15.0M after another 600 paced requests; live malloc
+blocks decreased between the latter two readings. This is a short resource check,
+not a long-running leak certification. The five-second idle stack sample contained
+no opening-notice lookup. Local logs, probe source and before/after measurements
+are retained under `.cruft/event-loop-fixes/`; temporary executables were removed.
+
+## Focus and dragging milestone — 2026-10-27
+
+The installed signed runtime adds the configurable focus ring and scrolling
+insertion marker, plus edge panning during Shoji-owned window moves. Defaults,
+configuration and remaining interaction gaps are documented in
+[scrolling columns](docs/SCROLL_LAYOUT.md#focus-and-drag-feedback).
+
+All 285 core tests pass on Apple Silicon and Intel/Rosetta with tracked memory
+failures enabled. Strict project checks and 1,479 headless motion samples pass.
+The native owned-surface fixture verifies four reusable surfaces, their
+input-transparent tags, 400 transform readbacks and destruction. Repeated marker
+movement reuses its backing; injected ring/marker failures clean up and bound
+retry behavior. Real-application visual acceptance and physical click routing
+remain pending; native readbacks do not establish displayed-frame coherence.
+
+The Shoji service restart preserved its signing requirement, all four Space
+identities/layouts and the runtime animation duration/gesture setting. Default
+ring and edge scrolling settings were verified through IPC. This milestone does
+not implement complete tabs, dynamic workspaces or overview. Local evidence is
+under `.cruft/niri-workflow/`; the previous signed runtime is retained there for
+rollback, and disposable candidate/test executables were removed.
+
+### Rounded corners and lone-window suppression
+
+The ring is now suppressed when only one eligible window remains on the focused
+window's Space. Hidden, minimized, unordered and pending opening windows do not
+count. Four antialiased quarter-annulus pieces join the reusable straight strips;
+their interiors and outside corners stay transparent. Default radius is 10 logical
+pixels, configurable with `focus_ring_radius` for application-specific styling.
+This is a configurable approximation of native decoration, not an automatic
+per-application corner-radius query.
+
+All 287 core tests pass on Apple Silicon and Intel/Rosetta, including corner pixel
+checks and single-window removal/restoration. Strict checks, 1,479 motion samples,
+and the updated native fixture's 800 transform readbacks and automatic cleanup
+pass. One concurrent fixture compilation crashed and the Intel self-loader timed
+out during that run; an isolated fixture rebuild and complete Intel retry passed.
+The signed runtime is installed with all four Space layouts, animation duration
+and gesture setting preserved. Evidence and the previous signed runtime are in
+`.cruft/focus-rounding/`; disposable executables were removed.
+
+### Focus ring after opening completion
+
+The disappearing-ring regression was reproduced with native owned surfaces:
+restoring the owner's sublevel left an unchanged ring at its previous sublevel,
+even after a same-window focus notification. Geometry caching had also cached
+ordering implicitly. Successful focus/order/layer actions and relevant native
+focus/activation notifications now invalidate ordering separately. The next tick
+mirrors the owner's level/sublevel and orders the existing surfaces above it.
+Notifications coalesce; stable idle ticks perform no ordering work.
+
+The native reproduction now passes without another focus interaction. All 289
+core tests pass on Apple Silicon and Intel/Rosetta, including opening completion,
+same-owner focus, idle suppression and bounded cleanup on ordering failure.
+Strict checks, the 800-readback owned fixture and 1,479 motion samples pass.
+Local evidence is in `.cruft/focus-ordering/`.
+
+### Browser hover helpers and the single-window rule
+
+A live Chrome hover reproduction exposed a temporary `AXHelpTag` / `AXUnknown`
+link-status bubble: root=true, floating=true, non-resizable, frame height 22.
+The old ring count treated it as a second window. Focused and peer eligibility
+now require independent `AXWindow` surfaces, preserving real floating document
+windows and dialogs while excluding help tags and non-root helper surfaces.
+This uses role/ownership metadata, with no Chrome-specific application or title
+matching and no added native queries.
+
+The captured-state regression failed before the fix and passes afterward. All
+290 core tests pass on Apple Silicon and Intel/Rosetta; strict checks and 1,479
+motion samples pass. The video contact sheet, live metadata and before/after
+test logs are retained in `.cruft/hover-highlight/`.
+The signed fix is installed and running. The four pre-existing Space identities
+and layouts, animation duration and gesture setting were preserved. An additional
+native fullscreen Space appeared during validation and was left untouched.
+
+### Floating-window close teardown
+
+The close regression showed all eight ring surfaces remaining alive when
+post-destruction layout work began. Destruction handling now tears down the
+owner's ring before AX unsubscription, recovery and reflow. Generation identity
+covers a proxy-relative ring even when logical focus has already changed.
+
+Focus/hide/minimize callbacks also check the real owner's ordered state. A known
+ordered-out result removes the ring and updates the retained model before any
+desktop refresh; inconclusive native reads preserve state. This covers native
+dialogs that hide on close without destroying their AX object. No visibility
+polling was added to idle or per-frame work.
+
+All 293 tests pass on Apple Silicon and Intel/Rosetta. Regressions cover teardown
+before layout writes, proxy/focus races, retained owners, inconclusive reads and
+unrelated window destruction. Strict checks, 1,479 motion samples and 800 native
+surface readbacks pass. The native fixture now verifies that ordering its retained
+owner out removes the ring within the notification callback, without a rendering
+tick. Evidence and the previous signed runtime are in `.cruft/focus-close/`.
+
+### Clicking an already-focused dialog
+
+The longer About This Mac capture showed the dialog still focused, visible and
+independent after the click; this was decoration occlusion rather than model focus
+loss. The ring shared its owner's native sublevel, allowing a same-window raise
+without a focus notification to cover it. The ring now uses the next sublevel
+above its owner, retaining the same native window level. Initial placement is
+applied once at creation; subsequent idle ticks still do no ordering work.
+
+The native regression failed before the change and passes afterward. It now
+raises the same owner 100 times without focus notifications and checks all eight
+ring pieces remain on the higher sublevel while preserving the 800 transform
+readbacks and immediate close cleanup. Integer-limit handling is covered. All
+297 core tests pass on Apple Silicon and Intel/Rosetta, alongside strict checks
+and 1,479 motion samples. Evidence is in `.cruft/dialog-focus/`.
+
+### Floating-window ring movement
+
+Native move/resize notifications and a held pointer now update the focused
+floating window's ring from its current WindowServer bounds. Unchanged idle
+ticks make no bounds query, failed reads retain the prior frame, and full desktop
+discovery waits until the pointer is released unless a structural change requires
+immediate reconciliation. The native owned-AppKit probe verified 30 window moves;
+299 core tests pass on both architectures and strict checks pass. Local evidence
+is under `.cruft/floating-ring/`.
 
 ## Current implementation fixes
 

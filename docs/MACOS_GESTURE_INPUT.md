@@ -6,7 +6,7 @@ Investigated 2026-10-26. This is read-only research and an implementation recomm
 
 Apple distinguishes three-finger swipes from two-finger scrolling. Application gesture delivery follows the view/responder path; system gestures can take precedence. Public application touch handling therefore does not establish a global raw-three-finger input feed. [Apple trackpad event guide](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/HandlingTouchEvents/HandlingTouchEvents.html).
 
-In Shoji's inspected code, modified scrolling is handled as CG event type 22, while the existing type-30 system-swipe handler only suspends layout work. The latter currently reads kind 23 from field 110, horizontal motion 1 from field 123 and phase from field 132. Consequently, enabling the modified-scroll path does not also implement unmodified system-swipe panning. See `src/macos/scroll_darwin.odin`, `src/macos/mouse_darwin.odin` and `src/engine/scroll_gesture.odin`; these references describe the inspected state and may change during implementation.
+In Shoji's inspected code, modified scrolling is handled as CG event type 22, while the existing type-30 system-swipe handler only suspends layout work. The latter currently reads kind 23 from field 110, horizontal motion 1 from field 123 and phase from field 132. Consequently, enabling the modified-scroll path does not also implement unmodified system-swipe panning. See `src/macos/input_darwin.odin` and `src/engine/input.odin`; these references describe the inspected state and may change during implementation.
 
 ## Fn and two-finger scroll: verified public API
 

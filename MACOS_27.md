@@ -46,9 +46,9 @@ These findings come from this working tree, not external compatibility claims:
 
 | Layer | Current source | Consequence on 27 |
 |---|---|---|
-| Injection transport | `src/addition/loader/inject_darwin.odin` uses a separate arm64e helper and a 14.4-or-later bootstrap path. | Its broad version branch is not proof of compatibility. Shoji's own remote bootstrap, pointer handling, signing, and helper still need validation. |
+| Injection transport | `src/addition/loader/loader_darwin.odin` uses a separate arm64e helper and a 14.4-or-later bootstrap path. | Its broad version branch is not proof of compatibility. Shoji's own remote bootstrap, pointer handling, signing, and helper still need validation. |
 | OS acceptance | `src/addition/patterns/scan.odin:supported` accepts arm64 major versions 12–15 and 26. | 27 is rejected. |
-| Function discovery | `src/addition/payload/discovery_darwin.odin:discover` returns after that rejection. | No Dock globals/functions are discovered and advertised through that path. |
+| Function discovery | `src/addition/payload/payload_darwin.odin:discover` returns after that rejection. | No Dock globals/functions are discovered and advertised through that path. |
 | Scan data | `src/addition/patterns/patterns_arm64.odin` selects exact known majors. | A standalone change to the supported-version gate leaves 27 without valid scan data. |
 | Operations | Payload handlers and backend route native Space operations through the addition. | Successful injection or a responding socket alone does not prove create/remove/reorder/focus/window movement works. Other window effects need their own tests. |
 
