@@ -40,7 +40,8 @@ foreign sls {
 	SLSHideSpaces :: proc(cid: i32, spaces: m.Ref) ---
 	SLSSetWindowAlpha :: proc(cid: i32, wid: u32, alpha: f32) -> i32 ---
 	SLSMoveWindowWithGroup :: proc(cid: i32, wid: u32, point: ^m.Point) -> i32 ---
-	SLSReassociateWindowsSpacesByGeometry :: proc(cid: i32, windows: m.Ref) -> i32 ---
+	// This symbol is a bare return on 15.6 and 27.0.1; w0 is not a status.
+	SLSReassociateWindowsSpacesByGeometry :: proc(cid: i32, windows: m.Ref) ---
 	SLSSetWindowSubLevel :: proc(cid: i32, wid: u32, level: i32) -> i32 ---
 	SLSSetWindowTags :: proc(cid: i32, wid: u32, tags: ^u64, size: uint) -> i32 ---
 	SLSClearWindowTags :: proc(cid: i32, wid: u32, tags: ^u64, size: uint) -> i32 ---
@@ -175,7 +176,7 @@ discover :: proc() {
 	if g.dock != nil {send(Object, g.dock, "retain");g.caps += {.Dock_Spaces}}
 	if g.pictures != nil {send(Object, g.pictures, "retain");g.caps += {.Desktop_Pictures}}
 	if g.add != nil {g.caps += {.Add_Space}};if g.remove != nil {g.caps += {.Remove_Space}}
-	if g.move != nil {g.caps += {.Move_Space}};if g.focus != nil {g.caps += {.Focus_Window}}
+	if g.move != nil {g.caps += {.Move_Space}};if g.focus != nil && !p.focus_target_blocked(g.version) {g.caps += {.Focus_Window}}
 	patch := locate(
 		bytes,
 		p.get_fix_animation_offset(g.version),
@@ -426,7 +427,7 @@ window_action :: proc(op: wire.Opcode, r: ^wire.Reader, diagnostic: ^wire.Native
 		x := wire.unpack(r, i32);y := wire.unpack(r, i32);point := m.Point{f64(x), f64(y)}
 		code := SLSMoveWindowWithGroup(g.cid, id, &point)
 		array := array_u64([]u64{u64(id)});defer m.CFRelease(array)
-		code |= SLSReassociateWindowsSpacesByGeometry(g.cid, array)
+		SLSReassociateWindowsSpacesByGeometry(g.cid, array)
 		return status(code)
 	case .Window_Opacity, .Window_Opacity_Fade:
 		alpha := wire.unpack(r, f32);duration: f32
@@ -455,7 +456,7 @@ window_action :: proc(op: wire.Opcode, r: ^wire.Reader, diagnostic: ^wire.Native
 		if set {return status(SLSSetWindowTags(g.cid, id, &tags, 64))}
 		return status(SLSClearWindowTags(g.cid, id, &tags, 64))
 	case .Window_Focus:
-		if g.focus == nil {return .Unsupported}
+		if g.focus == nil || p.focus_target_blocked(g.version) {return .Unsupported}
 		owner: i32;psn: PSN
 		if SLSGetWindowOwner(g.cid, id, &owner) != 0 ||
 		   SLSGetConnectionPSN(owner, &psn) != 0 {return .Operation_Failed}

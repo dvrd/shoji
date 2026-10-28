@@ -1421,6 +1421,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if s == nil || s.view.layout != .Scroll || n == nil {
 				return failure("column-full-width requires a scrolling column")
 			}
+			s.view.scroll.fill_after_removal = false
 			n.column_full = !n.column_full
 			n.column_revision += 1
 			n.column_preset = nil
@@ -1628,6 +1629,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if !swap(n, other) {
 				return failure("windows are already in the same stack")
 			}
+			if s.view.layout == .Scroll { s.view.scroll.fill_after_removal = true }
 		}
 		if s.view.layout == .Scroll {
 			s.view.scroll.reveal = true

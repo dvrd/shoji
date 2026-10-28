@@ -47,6 +47,21 @@ motion_cover_bounds :: proc(state: ^mac.State, _: u32) -> (e.Rect, bool) {
 }
 
 @(test)
+three_finger_drag_uses_the_display_presentation_batch :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; updates: Frame_Update_Recorder
+	fixture(&state.manager, &actions)
+	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer delete(updates.enabled)
+	e.execute(&state.manager, {"space", "--layout", "scroll"})
+	state.manager.spaces[0].view.scroll.dragging = true
+	state.frame_updates.user, state.frame_updates.set_enabled = &updates, frame_update_set
+	testing.expect(t, mac.motion_active(&state))
+	mac.motion_frame_tick(&state, true, time.now(), 0)
+	testing.expect_value(t, len(updates.enabled), 2)
+	testing.expect_value(t, state.frame_updates.depth, 0)
+}
+
+@(test)
 display_pulse_coordinates_bsp_geometry_and_contents_in_one_batch :: proc(
 	t: ^testing.T,
 ) {

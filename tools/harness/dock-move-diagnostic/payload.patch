@@ -1,0 +1,42 @@
+--- a/src/addition/payload/payload_darwin.odin
++++ b/src/addition/payload/payload_darwin.odin
+@@ -6,6 +6,7 @@
+ import p "../patterns"
+ import wire "../protocol"
+ import "core:fmt"
++import "core:os"
+ import b "../bridge"
+ import recovery "../recovery"
+ import e "../../engine"
+@@ -424,10 +425,17 @@
+ 	#partial switch op {
+ 	case .Window_Move:
+ 		x := wire.unpack(r, i32);y := wire.unpack(r, i32);point := m.Point{f64(x), f64(y)}
+-		code := SLSMoveWindowWithGroup(g.cid, id, &point)
++		before, after_move, after_reassociation: e.Rect
++		before_status := m.SLSGetWindowBounds(g.cid, id, &before)
++		move_code := SLSMoveWindowWithGroup(g.cid, id, &point)
++		move_bounds_status := m.SLSGetWindowBounds(g.cid, id, &after_move)
+ 		array := array_u64([]u64{u64(id)});defer m.CFRelease(array)
+-		code |= SLSReassociateWindowsSpacesByGeometry(g.cid, array)
+-		return status(code)
++		reassociation_code := SLSReassociateWindowsSpacesByGeometry(g.cid, array)
++		reassociate_bounds_status := m.SLSGetWindowBounds(g.cid, id, &after_reassociation)
++		log := fmt.aprintf("window=%d requested=(%d,%d) before_status=%d before=%v move_code=%d move_bounds_status=%d after_move=%v reassociation_code=%d reassociate_bounds_status=%d after_reassociation=%v\n", id, x, y, before_status, before, move_code, move_bounds_status, after_move, reassociation_code, reassociate_bounds_status, after_reassociation)
++		defer delete(log)
++		_ = os.write_entire_file(fmt.tprintf("/tmp/shoji-dock-move-diagnostic_%d.txt", m.getuid()), transmute([]u8)log)
++		return status(move_code | reassociation_code)
+ 	case .Window_Opacity, .Window_Opacity_Fade:
+ 		alpha := wire.unpack(r, f32);duration: f32
+ 		if op == .Window_Opacity_Fade {duration = wire.unpack(r, f32)}
+@@ -541,7 +549,9 @@
+ initialize_payload :: proc "c" (unused: rawptr) {
+ 	context = runtime.default_context()
+ 	pool := m.pool_push();defer m.pool_pop(pool)
+-	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys};if g.add != nil {g.caps += {.Tracked_Space_Create}}
++	// Isolated move diagnostic: do not scan or patch Dock internals.
++	g.cid = m.SLSMainConnectionID()
++	g.caps += {.Transaction_Diagnostics}
+ 	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]recovery.Entry)
+ }
+ listen_fd: i32 = -1

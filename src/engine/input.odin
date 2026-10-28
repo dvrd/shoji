@@ -18,6 +18,8 @@ Focus_Follows_Mouse :: enum {
 }
 Mouse_Config :: struct {
 	scroll: bool,
+	stack_swipe: bool,
+	three_finger_horizontal: bool,
 	edge: Drag_Edge_Config,
 	modifier: u64,
 	action1, action2: Mouse_Action,
@@ -46,6 +48,16 @@ mouse_config :: proc(
 	}
 	c := &m.mouse
 	switch name {
+	case "three_finger_horizontal":
+		if !setting { return success(c.three_finger_horizontal ? "on" : "off") }
+		if value != "on" && value != "off" { return failure("three_finger_horizontal expects on or off") }
+		c.three_finger_horizontal = value == "on"
+		return success()
+	case "stack_swipe":
+		if !setting { return success(c.stack_swipe ? "on" : "off") }
+		if value != "on" && value != "off" { return failure("stack_swipe expects on or off") }
+		c.stack_swipe = value == "on"
+		return success()
 	case "scroll_drag_edge_scroll":
 		if !setting {
 			return success(c.edge.enabled ? "on" : "off")

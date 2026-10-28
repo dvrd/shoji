@@ -5,6 +5,19 @@ import "core:encoding/json"
 import "core:testing"
 
 @(test)
+scroll_close_fills_the_vacated_viewport_and_restores_widths_on_open :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	e.execute(&m, {"space", "--layout", "scroll"})
+	e.remove_window(&m, 2); e.flush(&m, m.spaces[0])
+	testing.expect_value(t, m.windows[1].frame, e.Rect{0, 0, 1000, 800})
+	e.add_window(&m, e.Window{id = 3, pid = 44, role = "AXWindow", subrole = "AXStandardWindow", space = 100, display = 10})
+	e.flush(&m, m.spaces[0])
+	testing.expect_value(t, m.windows[1].frame.w, f64(500))
+	testing.expect_value(t, m.windows[3].frame.w, f64(500))
+}
+
+@(test)
 scroll_layout_preserves_widths_and_reveals_focused_columns :: proc(
 	t: ^testing.T,
 ) {
@@ -59,8 +72,8 @@ scroll_rows_and_return_to_bsp_keep_all_window_memberships :: proc(
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
 	testing.expect(t, !e.execute(&m, {"window", "1", "--stack", "2"}).failed)
-	testing.expect_value(t, m.windows[1].frame, e.Rect{0, 0, 500, 400})
-	testing.expect_value(t, m.windows[2].frame, e.Rect{0, 400, 500, 400})
+	testing.expect_value(t, m.windows[1].frame, e.Rect{0, 0, 1000, 400})
+	testing.expect_value(t, m.windows[2].frame, e.Rect{0, 400, 1000, 400})
 	testing.expect(t, !e.execute(&m, {"window", "--focus", "south"}).failed)
 	testing.expect_value(t, m.focused, u32(2))
 	testing.expect(t, !e.execute(&m, {"window", "--swap", "north"}).failed)

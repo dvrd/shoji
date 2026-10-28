@@ -7,6 +7,16 @@ import wire "../src/addition/protocol"
 import "core:testing"
 
 @(test)
+dock_focus_is_blocked_on_the_crashing_host_version :: proc(t: ^testing.T) {
+	when ODIN_ARCH == .arm64 {
+		testing.expect(t, p.focus_target_blocked({15, 6, 0}))
+		testing.expect(t, !p.focus_target_blocked({15, 5, 0}))
+	} else {
+		testing.expect(t, !p.focus_target_blocked({15, 6, 0}))
+	}
+}
+
+@(test)
 proxy_diagnostics_preserve_the_first_native_failure :: proc(t: ^testing.T) {
 	failure: wire.Native_Failure
 	wire.note_native_failure(&failure, .Proxy_Order, 0)

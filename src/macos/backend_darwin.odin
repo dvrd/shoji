@@ -304,6 +304,8 @@ State :: struct {
 	tab_indicator: Tab_Indicator_State,
 	focus_geometry_dirty: bool,
 	focus_frame_probe: proc(state: ^State, window: u32) -> (e.Rect, bool),
+	focus_scroll_pending: u32,
+	focus_scroll_deadline: f64,
 	read_only: bool,
 	animations: map[u32]Animation_Job,
 	animation_backend: Animation_Backend,
@@ -311,6 +313,7 @@ State :: struct {
 	event_user: rawptr,
 	workspace_events: Workspace_State,
 	mouse: Mouse_State,
+	stack_touch: Stack_Touch_State,
 	manager: e.Manager,
 	windows: map[u32]Ref,
 	applications: map[i32]Application,
@@ -400,6 +403,28 @@ state_destroy :: proc(state: ^State) {
 	e.manager_destroy(&state.manager)
 }
 
+Focus_Verifier :: proc(user: rawptr, pid: i32, window: u32) -> bool
+
+native_focus_verified :: proc(user: rawptr, pid: i32, window: u32) -> bool {
+	state := (^State)(user)
+	app, exists := state.applications[pid]
+	if !exists || app.element == nil {return false}
+	front := intrinsics.objc_send(^objc.Object, workspace(), "frontmostApplication")
+	if front == nil || intrinsics.objc_send(i32, front, "processIdentifier") != pid {
+		return false
+	}
+	focused := attribute(app.element, "AXFocusedWindow")
+	if focused == nil {return false}
+	defer CFRelease(focused)
+	id: u32
+	return _AXUIElementGetWindow(focused, &id) == 0 && id == window
+}
+
+focus_raise_result :: proc(code: i32, pid: i32, window: u32, user: rawptr, verify: Focus_Verifier) -> string {
+	if code == 0 || (verify != nil && verify(user, pid, window)) {return ""}
+	return fmt.tprintf("Accessibility raise failed (%d)", code)
+}
+
 perform :: proc(user: rawptr, action: e.Action) -> string {
 	state := (^State)(user)
 	if state.read_only {
@@ -477,9 +502,8 @@ perform :: proc(user: rawptr, action: e.Action) -> string {
 		set_attribute(element, "AXMain", kCFBooleanTrue)
 		raise := cf_string("AXRaise")
 		defer CFRelease(raise)
-		if code := AXUIElementPerformAction(element, raise); code != 0 {
-			return fmt.tprintf("Accessibility raise failed (%d)", code)
-		}
+		code := AXUIElementPerformAction(element, raise)
+		if err := focus_raise_result(code, w.pid, w.id, state, native_focus_verified); err != "" {return err}
 	case .Close:
 		button := attribute(element, "AXCloseButton")
 		if button == nil {
@@ -939,7 +963,7 @@ frame_size_feedback_tick :: proc(state: ^State, now: time.Time) {
 
 // A separate controller process using Shoji's existing signed executable. It
 // creates no daemon/socket and rejects every window outside the named fixture.
-validate_window_sizes :: proc(pid: i32) -> int {
+validate_window_sizes :: proc(pid: i32, swipe: bool = false) -> int {
 	if !AXIsProcessTrusted() {
 		fmt.eprintln(
 			"size validation requires Shoji's existing Accessibility access",
@@ -1036,6 +1060,7 @@ validate_window_sizes :: proc(pid: i32) -> int {
 	if a == 0 || b == 0 {
 		return 3
 	}
+	if swipe { return validate_fixture_swipe(&state, s, a, b) }
 	e.set_layout(&state.manager, s, .Scroll)
 	e.focus_window(&state.manager, b)
 	state.manager.scroll_time = size_validation_seconds()
@@ -1156,6 +1181,33 @@ validate_window_sizes :: proc(pid: i32) -> int {
 		"PASS: foreign AX minimum/maximum width and row-height adaptation, retained requests and coordinated resize with stationary focused neighbor",
 	)
 	return 0
+}
+validate_fixture_swipe :: proc(state: ^State, s: ^e.Space, a, b: u32) -> int {
+	m := &state.manager
+	m.resize_fade = false
+	e.set_layout(m, s, .Scroll)
+	e.focus_window(m, a)
+	m.animation_duration, m.scroll_animate = 0, true
+	if e.flush(m, s) != "" || !size_validation_settle(state, .5) { return 1 }
+	if e.execute(m, {"window", fmt.tprintf("%d", a), "--column-width", "abs:1000"}).failed || !size_validation_settle(state, .5) { return 1 }
+	frame_a, frame_b: e.Rect
+	if SLSGetWindowBounds(state.connection, a, &frame_a) != 0 || SLSGetWindowBounds(state.connection, b, &frame_b) != 0 { return 1 }
+	base_gap := frame_b.x - frame_a.x - frame_a.w
+	start_x := frame_a.x
+	maximum_error: f64
+	e.scroll_begin_pan(m, s)
+	for i in 0 ..< 30 {
+		m.scroll_time = size_validation_seconds()
+		if err := e.scroll_gesture_pan(m, s.id, i < 5 ? 60 : 0); err != "" { fmt.eprintln(err); return 1 }
+		if SLSGetWindowBounds(state.connection, a, &frame_a) != 0 || SLSGetWindowBounds(state.connection, b, &frame_b) != 0 { return 1 }
+		gap := frame_b.x - frame_a.x - frame_a.w
+		maximum_error = max(maximum_error, math.abs(gap - base_gap))
+		fmt.printf("sample=%d a_x=%.1f gap=%.1f baseline=%.1f\n", i, frame_a.x, gap, base_gap)
+		CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.016, false)
+	}
+	s.view.scroll.dragging = false
+	fmt.printf("maximum transient native-bounds gap error: %.1f points\n", maximum_error)
+	return maximum_error <= 16 && math.abs(frame_a.x - start_x) >= 100 ? 0 : 1
 }
 size_validation_seconds :: proc() -> f64 {
 	return time.duration_seconds(time.diff(time.Time{}, time.now()))

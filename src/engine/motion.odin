@@ -287,7 +287,7 @@ scroll_snap_target :: proc(v: ^View, position, velocity: f64) -> Scroll_Snap {
 	}
 	return best
 }
-scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64) -> string {
+scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64, prevent_overshoot: bool = false, step: i32 = 0) -> string {
 	velocity := velocity
 	v := &s.view
 	if math.is_nan(velocity) || math.is_inf(velocity) {
@@ -296,6 +296,17 @@ scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64) -> string {
 	velocity = clamp(velocity, -100000, 100000)
 	v.scroll.dragging = false
 	snap := scroll_snap_target(v, v.scroll.offset, velocity)
+	if step != 0 {
+		current := find(v.root, m.focused)
+		neighbor := step > 0 ? next(current) : previous(current)
+		if neighbor != nil && neighbor.count > 0 {
+			// Reveal only the adjacent column, independently of fling speed.
+			before := v.scroll.offset
+			scroll_reveal(v, neighbor.order[0])
+			snap = {offset = v.scroll.offset, window = neighbor.order[0]}
+			v.scroll.offset = before; scroll_update(v)
+		}
+	}
 	if snap.window == 0 {
 		return ""
 	}
@@ -311,6 +322,12 @@ scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64) -> string {
 	scroll_update(v)
 	scroll_anchor(v, snap.window)
 	v.scroll.focused, v.scroll.reveal = snap.window, false
+	if prevent_overshoot {
+		distance := snap.offset - v.scroll.motion.position
+		velocity = distance >= 0 \
+			? clamp(velocity, 0, SCROLL_SPRING_OMEGA * distance) \
+			: clamp(velocity, SCROLL_SPRING_OMEGA * distance, 0)
+	}
 	v.scroll.motion.velocity = velocity
 	return flush(m, s)
 }

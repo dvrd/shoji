@@ -1,0 +1,6 @@
+Guest: macOS 27.0.1 26A434, Dock PID 418, SIP disabled
+Dock sha256: b704affba65f732ffd6676c3bb22c94abc737ee73af8bdf29a5ef02650cde33e
+Diagnostic payload sha256: 390b449a43f8330769ec378ecc28e9e6f53a972d0cd353bf9a45cacee96a4343
+Fixture-only test: window=87 requested_x=230 before=(250,708,280,252) after=(230,708,280,252) readback_status=0 response=Operation_Failed
+Stage result: move_code=0 after_move=(230,708,280,252) reassociation_code=77399 after_reassociation=(230,708,280,252)
+Read-only disassembly: SLSReassociateWindowsSpacesByGeometry first instruction 0xd65f03c0 (ret) on guest 26A434 and host 15.6 24G84. A bare return does not modify the argument register x0, so the value is not a defined status for these implementations. The reported number does not prove Space reassociation or a failure.

@@ -9,6 +9,7 @@ import "base:intrinsics"
 import posix "core:sys/posix"
 import loader "../../../src/addition/loader"
 import hook "../../../src/addition/windowserver/hook"
+import target "../../../src/addition/windowserver/target"
 
 Header :: struct {
 	magic: u32,
@@ -185,7 +186,7 @@ main :: proc() {
 	privatize_first := false
 	expand_alias_max := false
 	if len(os.args) > 2 {
-		fmt.eprintln("usage: mapped-protection-probe [--observe | --protect | --witness | --patch | --patch-alias]"); os.exit(2)
+		fmt.eprintln("usage: mapped-protection-probe [--observe | --protect | --witness | --patch | --patch-alias | --patch-alias-max]"); os.exit(2)
 	}
 	if len(os.args) == 2 {
 		switch os.args[1] {
@@ -195,7 +196,7 @@ main :: proc() {
 		case "--patch": patch_mode = true; privatize_first = true
 		case "--patch-alias": patch_mode = true
 		case "--patch-alias-max": patch_mode = true; expand_alias_max = true
-		case: fmt.eprintln("usage: mapped-protection-probe [--observe | --protect | --witness | --patch | --patch-alias]"); os.exit(2)
+		case: fmt.eprintln("usage: mapped-protection-probe [--observe | --protect | --witness | --patch | --patch-alias | --patch-alias-max]"); os.exit(2)
 		}
 	}
 	handle := posix.dlopen(
@@ -342,17 +343,19 @@ main :: proc() {
 	for i in 0 ..< 16 {fmt.printf("%02x", bytes[i])}
 	fmt.println()
 	if patch_mode || witness_mode {
-		expected_uuid := [16]u8{0x8a, 0x3b, 0x34, 0x8e, 0x46, 0x37, 0x36, 0x85, 0x92, 0xd0, 0x6c, 0xbc, 0x2f, 0x36, 0xa2, 0x34}
-		expected_entry := [16]u8{0x7f, 0x23, 0x03, 0xd5, 0xfc, 0x6f, 0xba, 0xa9, 0xfa, 0x67, 0x01, 0xa9, 0xf8, 0x5f, 0x02, 0xa9}
-		if !has_uuid || uuid != expected_uuid || candidate - slide != 0x1873f6260 {
-			fmt.eprintln("unsupported image identity"); os.exit(1)
+		location := target.Ordering_Location {
+			uuid = uuid,
+			slide = u64(slide),
+			text_start = u64(text_start),
+			text_size = text.vm_size,
+			candidate = u64(candidate),
 		}
-		for i in 0 ..< 16 {
-			if bytes[i] != expected_entry[i] {fmt.eprintln("entry signature mismatch"); os.exit(1)}
+		if !has_uuid || !target.matches_ordering_entry(location, bytes[:16]) {
+			fmt.eprintln("unsupported image identity, range or entry signature"); os.exit(1)
 		}
 	}
 	if patch_mode {
-		if !controlled_patch(page, vm_page_size, u64(candidate), region, privatize_first) {os.exit(1)}
+		if !controlled_patch(page, vm_page_size, u64(candidate), region, privatize_first, expand_alias_max) {os.exit(1)}
 		fmt.println("PASS: controlled patch restored")
 		return
 	}
