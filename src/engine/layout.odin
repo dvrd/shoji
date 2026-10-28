@@ -69,6 +69,8 @@ View :: struct {
 	padding_enabled, gap_enabled, first_child, auto_balance: bool,
 	balance_axis:                                            Split,
 	zoom_persist:                                            bool,
+	tab_indicator_top:                                       bool,
+	tab_indicator_width:                                     f64,
 	insertion:                                               u32,
 	scroll:                                                  Scroll_State,
 	scroll_options: Scroll_Options,
@@ -80,6 +82,7 @@ view_init :: proc(v: ^View, frame: Rect, layout: Layout = .BSP) {
 		frame           = frame,
 		layout          = layout,
 		ratio           = 0.5,
+		tab_indicator_width = 4,
 		padding_enabled = true,
 		gap_enabled     = true,
 		scroll_options = scroll_options_defaults(),
@@ -296,6 +299,9 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	}
 	if v.layout == .Scroll {scroll_before_add(v, id)}
 	if n.count == 0 || v.layout == .Stack || n.insert_stack {
+		if n.count == 0 && v.layout == .Scroll {
+			n.column_tabbed = v.scroll_options.default_tabbed
+		}
 		ok := stack_push(n, id)
 		if ok {
 			n.insert_stack = false
@@ -321,6 +327,7 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	fresh^ = Node {
 		parent = n,
 		count  = 1,
+		column_tabbed = v.layout == .Scroll && v.scroll_options.default_tabbed,
 	}
 	fresh.windows[0] = id
 	fresh.order[0] = id
@@ -590,6 +597,10 @@ Scroll_State :: struct {
 
 scroll_gap :: proc(v: ^View) -> f64 { return v.gap_enabled ? v.gap : 0 }
 
+tab_indicator_gutter :: proc(v: ^View, n: ^Node) -> f64 {
+	return n != nil && n.column_tabbed && n.count > 1 && n.zoom == nil ? v.tab_indicator_width + 5 : 0
+}
+
 scroll_update :: proc(v: ^View) {
 	r := v.scroll.viewport
 	gap := scroll_gap(v)
@@ -783,6 +794,15 @@ scroll_window_frame :: proc(
 	if park {
 		r = scroll_park_frame(v, r)
 	}
+	if gutter := tab_indicator_gutter(v, n); gutter > 0 {
+		if v.tab_indicator_top {
+			gutter = min(gutter, max(0, r.h - 1))
+			r.y += gutter; r.h -= gutter
+		} else {
+			gutter = min(gutter, max(0, r.w - 1))
+			r.x += gutter; r.w -= gutter
+		}
+	}
 	if n.count > 1 && !n.column_tabbed {
 		gap := min(scroll_gap(v), max(0, r.h / f64(n.count)))
 		for i in 0 ..< n.count {
@@ -812,6 +832,19 @@ scroll_direction :: proc(
 	n := find(s.view.root, w.id)
 	if n == nil {
 		return nil
+	}
+	if n.column_tabbed && s.view.tab_indicator_top {
+		if direction == "east" || direction == "west" {
+			for i in 0 ..< n.count {
+				if n.windows[i] == w.id {
+					j := direction == "east" ? i + 1 : i - 1
+					if j >= 0 && j < n.count { return m.windows[n.windows[j]] }
+					break
+				}
+			}
+		} else {
+			return nil
+		}
 	}
 	if direction == "east" || direction == "west" {
 		target := direction == "east" ? next(n) : previous(n)
@@ -889,6 +922,7 @@ Scroll_Options :: struct {
 		On_Overflow,
 	},
 	center_single: bool,
+	default_tabbed: bool,
 	warp_pointer: bool,
 	default_width: Scroll_Size,
 	presets: [16]Scroll_Size,
@@ -950,6 +984,12 @@ scroll_config :: proc(
 ) -> Response {
 	o := s != nil ? s.view.scroll_options : m.scroll_options
 	switch name {
+	case "scroll_default_column_display":
+		if !setting { return success(o.default_tabbed ? "tabbed" : "normal") }
+		if value != "normal" && value != "tabbed" {
+			return failure("scroll_default_column_display expects normal or tabbed")
+		}
+		o.default_tabbed = value == "tabbed"
 	case "scroll_center_focused_column":
 		names := [3]string{"never", "always", "on-overflow"}
 		if !setting {
@@ -1036,6 +1076,8 @@ scroll_config :: proc(
 		}
 		// Copy only the changed option so unrelated per-Space settings survive.
 		switch name {
+		case "scroll_default_column_display":
+			space.view.scroll_options.default_tabbed = o.default_tabbed
 		case "scroll_center_focused_column":
 			space.view.scroll_options.center = o.center
 		case "scroll_center_single_column":
@@ -1108,6 +1150,9 @@ scroll_constraints :: proc(m: ^Manager, v: ^View) {
 				}
 			}
 		}
+		gutter := v.tab_indicator_top ? f64(0) : tab_indicator_gutter(v, n)
+		n.column_min += gutter
+		if n.column_max < 100000 { n.column_max += gutter }
 		n.column_max = max(n.column_min, n.column_max)
 	}
 }

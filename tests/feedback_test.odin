@@ -16,6 +16,47 @@ feedback_create :: proc(
 	return {id = 100 + plan.window, frame = plan.frame}, ""
 }
 
+@(test)
+tab_indicator_surfaces_follow_geometry_and_focus_clicks :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	niri_fixture(&state.manager, &actions)
+	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update}
+	defer mac.feedback_stop(&state)
+	niri_open(&state.manager, 2)
+	e.execute(&state.manager, {"window", "1", "--stack", "2"})
+	e.execute(&state.manager, {"window", "1", "--column-display", "tabbed"})
+	e.execute(&state.manager, {"window", "1", "--focus"})
+	frame := e.Rect{100, 50, 400, 600}
+	mac.tab_indicator_tick(&state, frame, 1)
+	mac.tab_indicator_tick(&state, frame, 1)
+	testing.expect_value(t, r.created, 2)
+	testing.expect_value(t, r.updates, 0)
+	testing.expect_value(t, state.tab_indicator.bars[0].plan.color, state.manager.focus_ring.color)
+	testing.expect(t, e.config(&state.manager, {"tab_indicator_active_color", "bad"}).failed)
+	testing.expect(t, !e.config(&state.manager, {"tab_indicator_active_color", "0xff112233"}).failed)
+	testing.expect(t, !e.config(&state.manager, {"tab_indicator_inactive_color", "0xffaabbcc"}).failed)
+	mac.tab_indicator_tick(&state, frame, 1)
+	testing.expect_value(t, state.tab_indicator.bars[0].plan.color, u32(0xff112233))
+	testing.expect_value(t, state.tab_indicator.bars[1].plan.color, u32(0xffaabbcc))
+	testing.expect(t, !e.config(&state.manager, {"tab_indicator_active_color", "default"}).failed)
+	mac.tab_indicator_tick(&state, frame, 1)
+	testing.expect_value(t, state.tab_indicator.bars[0].plan.color, state.manager.focus_ring.color)
+	testing.expect_value(t, mac.tab_indicator_hit(&state, {92, 400}).window, u32(2))
+	testing.expect_value(t, mac.tab_indicator_hit(&state, {110, 400}).window, u32(0))
+	tab := state.tab_indicator.tabs[1]
+	state.mouse.tab_pending, state.mouse.tab_pending_generation = tab.window, tab.generation
+	mac.mouse_tick(&state, false)
+	testing.expect_value(t, state.manager.focused, u32(2))
+	mac.tab_indicator_tick(&state, {120, 50, 400, 600}, 2)
+	testing.expect_value(t, mac.tab_indicator_hit(&state, {112, 400}).window, u32(2))
+	e.execute(&state.manager, {"window", "2", "--column-display", "normal"})
+	mac.tab_indicator_tick(&state, frame, 2)
+	testing.expect_value(t, state.tab_indicator.count, 0)
+	testing.expect_value(t, mac.tab_indicator_hit(&state, {101, 400}).window, u32(0))
+}
+
 feedback_destroy :: proc(state: ^mac.State, surface: mac.Owned_Surface) {
 	r := (^Animation_Recorder)(state.event_user); r.destroyed += 1
 }

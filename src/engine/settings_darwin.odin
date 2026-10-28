@@ -33,6 +33,48 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		return failure("opacity settings are global")
 	}
 	switch name {
+	case "tab_indicator_gap":
+		if s != nil { return failure("tab_indicator_gap is global") }
+		if !setting { return success(fmt.tprintf("%g", m.tab_indicator_gap)) }
+		gap, ok := strconv.parse_f64(value)
+		if !ok || math.is_nan(gap) || math.is_inf(gap) || gap < 0 || gap > 32 {
+			return failure("tab_indicator_gap expects 0 through 32 logical pixels")
+		}
+		m.tab_indicator_gap = gap
+	case "tab_indicator_width":
+		if s != nil { return failure("tab_indicator_width is global") }
+		if !setting { return success(fmt.tprintf("%g", m.tab_indicator_width)) }
+		width, ok := strconv.parse_f64(value)
+		if !ok || math.is_nan(width) || math.is_inf(width) || width < 1 || width > 32 {
+			return failure("tab_indicator_width expects 1 through 32 logical pixels")
+		}
+		m.tab_indicator_width = width
+		for space in m.spaces { space.view.tab_indicator_width = width }
+	case "tab_indicator_active_color", "tab_indicator_inactive_color":
+		if s != nil { return failure(fmt.tprintf("%s is global", name)) }
+		target := name == "tab_indicator_active_color" ? &m.tab_indicator_active_color : &m.tab_indicator_inactive_color
+		if !setting {
+			if color, present := target^.?; present { return success(fmt.tprintf("0x%08x", color)) }
+			return success("default")
+		}
+		if value == "default" {
+			target^ = nil
+		} else {
+			if len(value) != 10 || !strings.has_prefix(value, "0x") {
+				return failure(fmt.tprintf("%s expects default or 0xAARRGGBB", name))
+			}
+			color, ok := strconv.parse_u64(value[2:], 16)
+			if !ok { return failure("invalid tab indicator color") }
+			target^ = u32(color)
+		}
+	case "tab_indicator_position":
+		if s != nil { return failure("tab_indicator_position is global") }
+		if !setting { return success(m.tab_indicator_top ? "top" : "left") }
+		if value != "top" && value != "left" {
+			return failure("tab_indicator_position expects left or top")
+		}
+		m.tab_indicator_top = value == "top"
+		for space in m.spaces { space.view.tab_indicator_top = m.tab_indicator_top }
 	case "window_resize_animation":
 		if s != nil {
 			return failure("window_resize_animation is global")
@@ -73,6 +115,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 	     "scroll_drag_edge_speed":
 		return mouse_config(m, s, name, value, setting)
 	case "scroll_center_focused_column",
+	     "scroll_default_column_display",
 	     "scroll_center_single_column",
 	     "scroll_default_column_width",
 	     "scroll_width_presets",
@@ -529,6 +572,7 @@ mark_space_override :: proc(s: ^Space, name: string) {
 	for key in ([]string {
 			"layout",
 			"scroll_center_focused_column",
+			"scroll_default_column_display",
 			"scroll_center_single_column",
 			"scroll_warp_pointer",
 			"scroll_default_column_width",

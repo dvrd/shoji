@@ -72,6 +72,19 @@ Mouse_State :: struct {
 	button: u32,
 	pending, failed, hover_pending: bool,
 	hover_point: e.Mouse_Point,
+	tab_pressed, tab_pending: u32,
+	tab_generation, tab_pending_generation: u64,
+}
+
+tab_indicator_hit :: proc(state: ^State, point: e.Mouse_Point) -> e.Tab_Indicator {
+	indicator := &state.tab_indicator
+	for i in 0 ..< indicator.count {
+		tab := indicator.tabs[i]; r := tab.frame
+		if indicator.bars[i].surface.id != 0 && point.x >= r.x && point.x < r.x + r.w && point.y >= r.y && point.y < r.y + r.h {
+			return tab
+		}
+	}
+	return {}
 }
 mouse_drag_moved :: proc(mouse: ^Mouse_State) -> bool {
 	return mouse.phase == .Dragging || mouse.phase == .Released_Drag
@@ -230,8 +243,19 @@ mouse_callback :: proc "c" (
 			CGEventTapPostEvent(proxy, mouse.down)
 		}
 		mouse_drag_reset(state)
-		mouse.buttons = 0
+		mouse.buttons = 0; mouse.tab_pressed = 0
 		CGEventTapEnable(mouse.tap, true); return event
+	}
+	if mouse.tab_pressed != 0 && (type == 2 || type == 6) {
+		if type == 2 {
+			location := CGEventGetLocation(event)
+			tab := tab_indicator_hit(state, {location.x, location.y})
+			if tab.window == mouse.tab_pressed && tab.generation == mouse.tab_generation {
+				mouse.tab_pending, mouse.tab_pending_generation = tab.window, tab.generation
+			}
+			mouse.tab_pressed = 0
+		}
+		return nil
 	}
 	if (state.manager.suspended || state.manager.gesture_active) &&
 	   mouse.drag.window == 0 &&
@@ -240,6 +264,12 @@ mouse_callback :: proc "c" (
 	}
 	location := CGEventGetLocation(event)
 	point := e.Mouse_Point{location.x, location.y}
+	if type == 1 && mouse.drag.window == 0 && mouse.buttons == 0 && CGEventGetFlags(event) & e.MOUSE_MODIFIERS == 0 {
+		if tab := tab_indicator_hit(state, point); tab.window != 0 {
+			mouse.tab_pressed, mouse.tab_generation = tab.window, tab.generation
+			return nil
+		}
+	}
 	target := u32(CGEventGetIntegerValueField(event, 91))
 	// Session event taps can receive zero in the private window-ID fields.
 	// Resolve the real hit at click time instead of forwarding a tiled resize
@@ -388,6 +418,31 @@ mouse_tick :: proc(
 	scroll_now: time.Time = {},
 ) {
 	mouse := &state.mouse; m := &state.manager
+	if mouse.tab_pending != 0 {
+		id, generation := mouse.tab_pending, mouse.tab_pending_generation
+		mouse.tab_pending = 0
+		current := false
+		for i in 0 ..< state.tab_indicator.count {
+			tab := state.tab_indicator.tabs[i]
+			if tab.window == id && tab.generation == generation && state.tab_indicator.bars[i].surface.id != 0 {
+				current = true; break
+			}
+		}
+		focused := m.windows[m.focused]
+		if focused == nil {
+			current = false
+		} else if s := e.space_by_id(m, focused.space); s == nil || !s.visible || s.view.layout != .Scroll {
+			current = false
+		} else {
+			n := e.find(s.view.root, focused.id)
+			current = current && n != nil && n.column_tabbed && e.find(s.view.root, id) == n
+		}
+		if w := m.windows[id]; current && w != nil && w.generation == generation && !m.suspended && !m.gesture_active {
+			if response := e.execute(m, {"window", fmt.tprintf("%d", id), "--focus"}); response.failed {
+				fmt.eprintln("shoji: tab focus:", response.text)
+			}
+		}
+	}
 	mouse_gesture_tick(state, time.now())
 	if !m.mouse.scroll {
 		mouse.scroll_delta = 0; mouse.scroll.owned = false

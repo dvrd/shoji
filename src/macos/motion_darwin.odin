@@ -2025,6 +2025,68 @@ Focus_Ring :: struct {
 	bars: [8]Feedback_Window,
 }
 
+Tab_Indicator_State :: struct {
+	bars: [e.MAX_STACK]Feedback_Window,
+	tabs: [e.MAX_STACK]e.Tab_Indicator,
+	count: int,
+	order_dirty: bool,
+}
+
+tab_indicator_stop :: proc(state: ^State) {
+	backend := feedback_backend(state)
+	for bar in state.tab_indicator.bars {
+		if bar.surface.id != 0 { backend.destroy(state, bar.surface) }
+	}
+	state.tab_indicator = {}
+}
+
+tab_indicator_tick :: proc(state: ^State, frame: e.Rect, relative: u32) {
+	tabs, count := e.tab_indicators(&state.manager, frame)
+	backend := feedback_backend(state)
+	indicator := &state.tab_indicator
+	for i in 0 ..< e.MAX_STACK {
+		bar := &indicator.bars[i]
+		if i >= count {
+			if bar.surface.id != 0 { backend.destroy(state, bar.surface) }
+			bar^ = {}; indicator.tabs[i] = {}; continue
+		}
+		color := tabs[i].active \
+			? (state.manager.tab_indicator_active_color.? or_else state.manager.focus_ring.color) \
+			: (state.manager.tab_indicator_inactive_color.? or_else u32(0xff505050))
+		plan := e.Feedback_Plan{window = relative, frame = tabs[i].frame, color = color, solid = true}
+		if plan != bar.plan {
+			indicator.order_dirty = true
+			if bar.surface.id != 0 && bar.plan.window == plan.window && bar.plan.color == plan.color && backend.update != nil {
+				if err := backend.update(state, bar.surface, plan.frame); err != "" {
+					backend.destroy(state, bar.surface); bar.surface = {}
+					fmt.eprintln("shoji: tab indicator:", err)
+				}
+			} else {
+				if bar.surface.id != 0 { backend.destroy(state, bar.surface) }
+				err: string
+				bar.surface, err = backend.create(state, plan)
+				if err != "" { fmt.eprintln("shoji: tab indicator:", err) }
+			}
+			bar.plan = plan
+		}
+		indicator.tabs[i] = tabs[i]
+	}
+	indicator.count = count
+	if count > 0 && indicator.order_dirty && backend.reorder != nil {
+		indicator.order_dirty = false
+		surfaces: [e.MAX_STACK]Owned_Surface; surface_count := 0
+		for i in 0 ..< count {
+			if indicator.bars[i].surface.id != 0 {
+				surfaces[surface_count] = indicator.bars[i].surface
+				surface_count += 1
+			}
+		}
+		if err := backend.reorder(state, relative, surfaces[:surface_count]); err != "" {
+			fmt.eprintln("shoji: tab indicator:", err)
+		}
+	}
+}
+
 focus_ring_stop :: proc(state: ^State) {
 	backend := feedback_backend(state)
 	for bar in state.focus_ring.bars {
@@ -2040,12 +2102,19 @@ focus_ring_prune_unordered :: proc(
 	probe: proc(state: ^State, window: u32) -> Maybe(bool) = nil,
 ) {
 	ring := &state.focus_ring
-	if ring.owner == 0 {
+	owner, generation := ring.owner, ring.generation
+	if owner == 0 {
+		for i in 0 ..< state.tab_indicator.count {
+			tab := state.tab_indicator.tabs[i]
+			if tab.active { owner, generation = tab.window, tab.generation; break }
+		}
+	}
+	if owner == 0 {
 		return
 	}
-	w := state.manager.windows[ring.owner]
-	if w == nil || w.generation != ring.generation {
-		focus_ring_stop(state); return
+	w := state.manager.windows[owner]
+	if w == nil || w.generation != generation {
+		focus_ring_stop(state); tab_indicator_stop(state); return
 	}
 	probe := probe
 	if probe == nil {
@@ -2058,7 +2127,7 @@ focus_ring_prune_unordered :: proc(
 	// notification. Trust a known native result; failed reads preserve state.
 	if ordered, known := probe(state, w.id).?; known && !ordered {
 		w.ordered_in = false
-		focus_ring_stop(state)
+		focus_ring_stop(state); tab_indicator_stop(state)
 	}
 }
 
@@ -2069,6 +2138,7 @@ focus_ring_note_action :: proc(state: ^State, action: e.Action) {
 	#partial switch action.kind {
 	case .Order, .Layer, .Focus, .Focus_Without_Raise:
 		state.focus_ring.order_dirty = true
+		state.tab_indicator.order_dirty = true
 	}
 }
 
@@ -2088,7 +2158,7 @@ focus_ring_tick :: proc(state: ^State) {
 	if state.read_only ||
 	   w == nil ||
 	   (state.connection == 0 && state.feedback_backend.create == nil) {
-		focus_ring_stop(state); return
+		focus_ring_stop(state); tab_indicator_stop(state); return
 	}
 	if w.floating &&
 	   (state.focus_geometry_dirty || state.mouse.buttons != 0) &&
@@ -2121,6 +2191,7 @@ focus_ring_tick :: proc(state: ^State) {
 			relative = presentation.id
 		}
 	}
+	tab_indicator_tick(state, frame, relative)
 	plans, valid := e.focus_ring_plans(&state.manager, frame)
 	if !valid {
 		focus_ring_stop(state); return
@@ -2427,6 +2498,7 @@ feedback_tick :: proc(state: ^State) {
 
 feedback_stop :: proc(state: ^State) {
 	focus_ring_stop(state)
+	tab_indicator_stop(state)
 	backend := feedback_backend(state)
 	for _, window in state.feedback { backend.destroy(state, window.surface) }
 	delete(state.feedback); state.feedback = nil

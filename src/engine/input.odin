@@ -931,6 +931,50 @@ Feedback_Plan :: struct {
 	stroke_width: f64,
 }
 
+// The indicator uses the stable column order, not the focus-history order.
+// Place it beside the window when possible, falling inside at the viewport edge.
+Tab_Indicator :: struct {
+	window: u32,
+	generation: u64,
+	frame: Rect,
+	active: bool,
+}
+
+tab_indicators :: proc(m: ^Manager, frame: Rect) -> ([MAX_STACK]Tab_Indicator, int) {
+	result: [MAX_STACK]Tab_Indicator
+	w := m.windows[m.focused]
+	if w == nil || w.floating || w.hidden || w.minimized || !(w.ordered_in.? or_else true) || frame.w < 8 || frame.h < 16 {
+		return result, 0
+	}
+	s := space_by_id(m, w.space)
+	if s == nil || !s.visible || s.view.layout != .Scroll {
+		return result, 0
+	}
+	n := find(s.view.root, w.id)
+	if n == nil || !n.column_tabbed || n.count < 2 || n.order[0] != w.id {
+		return result, 0
+	}
+	slot := (s.view.tab_indicator_top ? frame.w : frame.h) * 0.5 / f64(n.count)
+	gap := min(m.tab_indicator_gap, slot * 0.8)
+	width := s.view.tab_indicator_width
+	x := frame.x - width - 5
+	if !s.view.tab_indicator_top && x < s.view.scroll.viewport.x {
+		x = frame.x + max(m.focus_ring.width, 0) + 6
+	}
+	for i in 0 ..< n.count {
+		tab := m.windows[n.windows[i]]
+		if tab == nil { return {}, 0 }
+		start := f64(i) * slot + (i > 0 ? gap / 2 : 0)
+		end := f64(i + 1) * slot - (i + 1 < n.count ? gap / 2 : 0)
+		r := Rect{x, frame.y + frame.h * 0.25 + start, width, end - start}
+		if s.view.tab_indicator_top {
+			r = {frame.x + frame.w * 0.25 + start, frame.y - width - 5, end - start, width}
+		}
+		result[i] = {tab.id, tab.generation, r, tab.id == w.id}
+	}
+	return result, n.count
+}
+
 Feedback_Corner :: enum {
 	None,
 	Top_Left,

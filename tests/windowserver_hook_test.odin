@@ -3,6 +3,58 @@ package tests
 import hook "../src/addition/windowserver/hook"
 import "core:testing"
 
+windowserver_hook_reject_release :: proc "c" (task: u32, address, size: u64) -> i32 {
+	return 5
+}
+
+windowserver_hook_accept_release :: proc "c" (task: u32, address, size: u64) -> i32 {
+	return 0
+}
+
+@(test)
+windowserver_hook_pending_release_preserves_ownership_until_retry :: proc(t: ^testing.T) {
+	// No mappings or instructions are accessed: installed is false and the
+	// injected callback models an alias whose release has not completed.
+	state := hook.Hook_State {
+		alias_page = 0x4000,
+		page_size = 0x4000,
+		deallocate = windowserver_hook_reject_release,
+	}
+	testing.expect(t, !hook.teardown_quiescent(&state))
+	testing.expect_value(t, state.alias_page, u64(0x4000))
+	testing.expect_value(t, state.page_size, u64(0x4000))
+	testing.expect(t, !hook.install_entry_via_alias(&state, 0, 4, hook.PACIBSP, windowserver_hook_accept_release))
+	state.deallocate = windowserver_hook_accept_release
+	testing.expect(t, hook.teardown_quiescent(&state))
+	testing.expect_value(t, state.alias_page, u64(0))
+	testing.expect(t, state.deallocate == nil)
+	testing.expect(t, hook.teardown_quiescent(&state))
+}
+
+@(test)
+windowserver_hook_teardown_recognizes_completed_restore :: proc(t: ^testing.T) {
+	// A failed read-back check may already have published the original word.
+	// Its next teardown must accept that completed restore without overwriting
+	// an unrelated partial or conflicting state.
+	branch := u32(0x14000001)
+	testing.expect_value(t, hook.restore_decision(hook.PACIBSP, hook.PACIBSP, hook.PACIBSP, branch), hook.Restore_Decision.Restored)
+	testing.expect_value(t, hook.restore_decision(branch, branch, hook.PACIBSP, branch), hook.Restore_Decision.Write)
+	testing.expect_value(t, hook.restore_decision(branch, hook.PACIBSP, hook.PACIBSP, branch), hook.Restore_Decision.Conflict)
+	testing.expect_value(t, hook.restore_decision(hook.PACIBSP, branch, hook.PACIBSP, branch), hook.Restore_Decision.Conflict)
+	testing.expect_value(t, hook.restore_decision(0, 0, hook.PACIBSP, branch), hook.Restore_Decision.Conflict)
+}
+
+@(test)
+windowserver_hook_empty_ownership_and_invalid_install :: proc(t: ^testing.T) {
+	state: hook.Hook_State
+	testing.expect(t, hook.teardown_quiescent(&state))
+	testing.expect(t, !hook.teardown_quiescent(nil))
+	testing.expect(t, !hook.install_entry_via_alias(&state, 0, 4, hook.PACIBSP, nil))
+	state.installed = true
+	testing.expect(t, !hook.teardown_quiescent(&state))
+	testing.expect(t, !hook.install_entry_via_alias(&state, 0, 4, hook.PACIBSP, nil))
+}
+
 @(test)
 windowserver_hook_branch_checks_alignment_and_signed_range :: proc(t: ^testing.T) {
 	cases := []struct {source, target: u64, instruction: u32, ok: bool} {

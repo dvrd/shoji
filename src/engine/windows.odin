@@ -116,6 +116,10 @@ Manager :: struct {
 	native_resize_window: u32,
 	feedback_color: u32,
 	focus_ring: Focus_Ring_Config,
+	tab_indicator_top: bool,
+	tab_indicator_width: f64,
+	tab_indicator_gap: f64,
+	tab_indicator_active_color, tab_indicator_inactive_color: Maybe(u32),
 	main_display: u32,
 	display_order: enum {
 		Default,
@@ -174,6 +178,7 @@ Manager :: struct {
 manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
 	m^ = Manager {
 		scroll_options = scroll_options_defaults(),
+		tab_indicator_width = 4,
 		feedback_color = 0xffd75f5f,
 		focus_ring = {
 			enabled = true,
@@ -264,6 +269,8 @@ add_space :: proc(
 	s.display = display
 	s.index = index
 	view_init(&s.view, frame, m.default_layout)
+	s.view.tab_indicator_top = m.tab_indicator_top
+	s.view.tab_indicator_width = m.tab_indicator_width
 	s.view.padding = m.padding
 	s.view.scroll_options = m.scroll_options
 	s.view.gap = m.gap
@@ -2234,6 +2241,11 @@ scroll_feedback_prepare :: proc(m: ^Manager, s: ^Space) {
 			width, height := n.column_width, n.row_heights[i]
 			if n.column_tabbed {
 				height = n.frame.h
+				if v.tab_indicator_top {
+					height = max(1, height - tab_indicator_gutter(v, n))
+				} else {
+					width = max(1, width - tab_indicator_gutter(v, n))
+				}
 			}
 			if n.zoom != nil {
 				width, height = v.scroll.viewport.w, v.scroll.viewport.h
@@ -2252,7 +2264,8 @@ scroll_feedback_prepare :: proc(m: ^Manager, s: ^Space) {
 			}
 			size_feedback_invalidate(w)
 			if w.size_feedback.width_valid && n.zoom == nil {
-				footprint = max(footprint, w.size_feedback.accepted.w)
+				gutter := v.tab_indicator_top ? f64(0) : tab_indicator_gutter(v, n)
+				footprint = max(footprint, w.size_feedback.accepted.w + gutter)
 				any_observed = true
 			} else {
 				footprint = max(footprint, n.column_width)
