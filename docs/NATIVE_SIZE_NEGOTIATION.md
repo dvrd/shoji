@@ -28,11 +28,11 @@ AX geometry belongs to the accessible element. Applied to the top-level native w
 
 The inspected implementation has these useful boundaries:
 
-- `src/macos/frame_darwin.odin`: `apply_frame_now` samples previous WindowServer bounds, performs AX writes and marks the desktop dirty. `write_accessibility_frame` avoids redundant size writes for pure moves/resizes; combined changes use size → position → size because some apps clamp at their old location. It reports AX errors, not accepted geometry.
+- `src/macos/backend_darwin.odin`: `apply_frame_now` samples previous WindowServer bounds, performs AX writes and marks the desktop dirty. `write_accessibility_frame` avoids redundant size writes for pure moves/resizes; combined changes use size → position → size because some apps clamp at their old location. It reports AX errors, not accepted geometry.
 - `src/macos/backend_darwin.odin`: `window_frame` currently reads AXPosition and AXSize independently into a zero-initialized Rect. A failed attribute read can therefore look like zero geometry. New observation code must retain validity explicitly rather than interpreting default zeros as native size constraints.
-- `src/macos/window_observation_darwin.odin`: collection reads native geometry; reconciliation currently updates the model frame from the observation. Requested logical sizing, pending native requests and observed actual geometry need distinct roles if asynchronous acceptance is added.
-- `src/macos/window_visibility_darwin.odin`: the current per-window notification list includes generic `AXResized` and `AXMoved`; window-specific end notifications may be added when supported, with polling fallback.
-- `src/macos/frame_updates_darwin.odin`: nested `SLSDisableUpdate`/`SLSReenableUpdate` bookkeeping is a presentation mechanism, not a documented cross-application resize transaction or a client acknowledgment protocol.
+- `src/macos/runtime_darwin.odin`: collection reads native geometry; reconciliation currently updates the model frame from the observation. Requested logical sizing, pending native requests and observed actual geometry need distinct roles if asynchronous acceptance is added.
+- `src/macos/runtime_darwin.odin`: the current per-window notification list includes generic `AXResized` and `AXMoved`; window-specific end notifications may be added when supported, with polling fallback.
+- `src/macos/motion_darwin.odin`: nested `SLSDisableUpdate`/`SLSReenableUpdate` bookkeeping is a presentation mechanism, not a documented cross-application resize transaction or a client acknowledgment protocol.
 
 These are source observations, not instructions to change unrelated policies or infer constraints from the first readback.
 
@@ -59,6 +59,6 @@ Required test traces include delayed success, valid clamping, partial AX read fa
 
 ## Implementation evidence — 2026-10-26
 
-The research above records the starting point. Shoji now implements per-request, generation-checked accepted-size observations in `src/engine/size_feedback.odin` and `src/macos/size_feedback_darwin.odin`. Two stable native observations, at least 60ms apart and after a 150ms quiet interval, allow provisional adaptation. Observation waits during gestures and coordinated resizing. It verifies native window ownership and ignores failed or invalid geometry. It does not claim universal constraint discovery or an AX presentation barrier.
+The research above records the starting point. Shoji now implements per-request, generation-checked accepted-size observations in `src/engine/windows.odin` and `src/macos/backend_darwin.odin`. Two stable native observations, at least 60ms apart and after a 150ms quiet interval, allow provisional adaptation. Observation waits during gestures and coordinated resizing. It verifies native window ownership and ignores failed or invalid geometry. It does not claim universal constraint discovery or an AX presentation barrier.
 
 Column/row requests survive adaptation, and explicit retries or changed sizing context invalidate both axis adjustments. The resize coordinator shares one timeline with camera and neighbor motion. See [native sizing validation](SCROLL_SIZING_VALIDATION.md) for measured evidence and remaining gaps.

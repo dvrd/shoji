@@ -2,6 +2,7 @@ package tests
 
 import e "../src/engine"
 import mac "../src/macos"
+import "core:mem"
 import "core:strings"
 import "core:testing"
 
@@ -12,6 +13,7 @@ window_reconciliation_retains_unknown_capabilities_and_space :: proc(
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
 	defer e.manager_destroy(&state.manager); defer delete(r.actions)
 	w := state.manager.windows[1]
+	w.frame = {10, 10, 600, 400}
 	w.can_resize = true; w.ordered_in = true; w.can_move = true
 	w.opacity = 0.7; w.level = 12; w.sticky = true
 	old_space, old_display := w.space, w.display
@@ -124,6 +126,8 @@ internal_frame_writer_does_not_interrupt_proxy_recovery :: proc(
 	state.animations = make(map[u32]mac.Animation_Job)
 	defer delete(state.animations)
 	state.animations[1] = {
+		generation = state.manager.windows[1].generation,
+		pid = state.manager.windows[1].pid,
 		presentation = mac.Animation_Proxy{window = 1},
 	}
 	state.windows = make(map[u32]mac.Ref)
@@ -171,4 +175,109 @@ drag_reset_releases_grab_and_keeps_input_observers :: proc(t: ^testing.T) {
 	testing.expect(t, state.mouse.hit_test == resize_hit_test)
 	testing.expect_value(t, state.mouse.hover, u32(2))
 	testing.expect_value(t, state.mouse.scroll_delta, f64(17))
+}
+
+@(test)
+failed_native_geometry_does_not_replace_a_known_frame :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	m.windows[1].frame = {10, 20, 800, 600}
+	before := m.windows[1].frame
+	mac.reconcile_window_model(
+		&m,
+		e.Window {
+			id = 1,
+			pid = m.windows[1].pid,
+			frame = {},
+			title = "temporary failure",
+		},
+	)
+	testing.expect_value(t, m.windows[1].frame, before)
+}
+
+frame_read_probe :: proc(
+	element: mac.Ref,
+	name: string,
+	kind: u32,
+	output: rawptr,
+) -> bool {
+	if uintptr(element) == uintptr(kind) {
+		return false
+	}
+	if kind == 1 {
+		(^mac.Point)(output)^ = {10, 20}
+	} else {
+		(^mac.Size)(output)^ = {800, 600}
+	}
+	return true
+}
+@(test)
+partial_native_frame_reads_are_explicitly_invalid :: proc(t: ^testing.T) {
+	testing.expect_value(
+		t,
+		mac.window_frame(nil, frame_read_probe).? or_else e.Rect{},
+		e.Rect{10, 20, 800, 600},
+	)
+	for kind in 1 ..= 2 { testing.expect(t, mac.window_frame(rawptr(uintptr(kind)), frame_read_probe) == nil) }
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	m.windows[1].frame = {10, 20, 800, 600}
+	mac.reconcile_window_model(
+		&m,
+		e.Window {
+			id = 1,
+			pid = m.windows[1].pid,
+			frame_valid = false,
+			frame = {500, 500, 400, 300},
+		},
+	)
+	testing.expect_value(t, m.windows[1].frame, e.Rect{10, 20, 800, 600})
+}
+
+@(test)
+callback_scratch_reuses_storage_without_invalidating_nested_callbacks :: proc(
+	t: ^testing.T,
+) {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+	context.allocator = mem.tracking_allocator(&track)
+	scratch: mac.Callback_Scratch
+	allocations: i64
+	for i in 0 ..< 1000 {
+		outer := mac.callback_scratch_begin(&scratch)
+		bytes := make([]u8, 32, mem.dynamic_arena_allocator(outer))
+		bytes[0] = 123
+		inner := mac.callback_scratch_begin(&scratch)
+		inside := make([]u8, 32, mem.dynamic_arena_allocator(inner))
+		inside[0] = 42
+		mac.callback_scratch_end(&scratch)
+		testing.expect_value(t, bytes[0], u8(123))
+		mac.callback_scratch_end(&scratch)
+		if i == 1 {
+			allocations = track.total_allocation_count
+		}
+	}
+	testing.expect_value(t, track.total_allocation_count, allocations)
+	mac.callback_scratch_destroy(&scratch)
+	testing.expect_value(t, track.current_memory_allocated, i64(0))
+}
+
+@(test)
+unchanged_observations_reuse_owned_maps_and_strings :: proc(t: ^testing.T) {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+	context.allocator = mem.tracking_allocator(&track)
+	state: mac.State; r: Recorder; fixture(&state.manager, &r)
+	mac.observe_changes(&state); mac.observe_changes(&state)
+	before := track.total_allocation_count
+	for _ in 0 ..< 1000 { mac.observe_changes(&state) }
+	testing.expect_value(t, track.total_allocation_count, before)
+	e.remove_window(&state.manager, 1)
+	mac.observe_changes(&state); mac.observe_changes(&state)
+	testing.expect_value(t, len(state.observed.windows), 1)
+	mac.observations_destroy(&state)
+	e.manager_destroy(&state.manager); delete(r.actions)
+	testing.expect_value(t, track.current_memory_allocated, i64(0))
 }

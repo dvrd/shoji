@@ -23,6 +23,8 @@ task build:harness
 task test:harness
 task test:compiler
 task test:motion
+task test:memory
+task test:focus
 ./bin/harness validate --preflight-only
 ./bin/inspector check-bootstrap bin/shoji-loader
 ./bin/dev clean --dry-run
@@ -34,6 +36,19 @@ harness. `normalize-arm64e` and `check-bootstrap` belong to the inspector.
 `task test:tooling` becomes `task test:harness`. Live fixture source now lives in
 `tools/harness/fixtures/desktop`; its generated binary is
 `bin/harness-fixture`. Historical evidence can retain the original names.
+
+The core, Intel, scanner and harness test tasks treat tracked memory leaks and
+bad frees as failures. `task test:memory` separately measures native malloc
+retention over 2,000 Dock identity polls in the logged-in macOS session. It creates
+no windows and writes `artifacts/memory/native-polling.json`. A running Dock is
+required; a headless runner cannot certify this check. After warming native
+caches, growth above 16 KiB or 128 live allocations fails the check. For a longer
+run, use `./bin/harness-fixture memory-check OUTPUT.json 10000`.
+
+Core socket-readiness tests create disposable Unix listeners under `/tmp` and
+drive their current native run loop. They do not connect to the running Shoji
+service or require window permissions. Restricted runners must allow local Unix
+socket binding; a denied bind is a failed prerequisite, not a skipped test.
 
 Release assembly builds Intel and Apple Silicon slices for all three CLIs and
 ships them alongside the runtime binaries. The release file list is shared by

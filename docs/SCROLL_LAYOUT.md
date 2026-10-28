@@ -19,6 +19,76 @@ Track remaining interaction and platform work in the [Niri experience checklist]
 
 Tree leaves supply ordered column membership; BSP split ratios do not determine scrolling geometry. Existing native Spaces and utility-window policies remain in effect.
 
+## Focus and drag feedback
+
+The focus ring defaults to on: a three-pixel blue inset border with rounded
+corners and an untouched center. It appears only when at least two independent
+`AXWindow` surfaces (including real floating windows and dialogs) share the focused
+window's Space and are non-hidden, non-minimized and ordered. Help tags, browser
+link-status bubbles and child helper surfaces do not count. Other Spaces
+and pending opening windows do not cause a lone window to gain a ring. It follows
+presented resize/proxy geometry, supports floating windows, and disappears for
+fullscreen, hidden or minimized windows, invisible Spaces, suspension and system
+gestures. Four straight strips and four small curved pieces are reused during
+motion and released on focus/style/generation changes or shutdown. Curves retain
+their radius during resizing instead of stretching with the window.
+Focused floating windows use their current WindowServer bounds during a held
+pointer drag and on native move/resize notifications. Full desktop discovery is
+deferred during the drag and resumes after release; structural changes still
+reconcile immediately. Failed bounds reads preserve the last valid frame.
+The ring is placed on the next sublevel above its owner, within the same native
+window level. Raising an already-focused window cannot cover its own decoration;
+menus and higher native window levels still remain above it. Opening completion,
+Shoji focus/raise/layer actions and native focus notifications refresh that
+placement, even when geometry is unchanged.
+These events coalesce into one ordering pass; idle ticks issue no reorder calls.
+Destruction notifications remove the ring before native-reference cleanup and
+layout reflow. Focus, hide and minimize notifications also check the real owner's
+native ordered state, so retained dialogs lose their ring when ordered out. This
+does not add per-frame visibility queries; inconclusive reads preserve the ring.
+
+```sh
+./bin/shoji -m config focus_ring on
+./bin/shoji -m config focus_ring_width 3
+./bin/shoji -m config focus_ring_radius 10
+./bin/shoji -m config focus_ring_color 0xff7fc8ff
+./bin/shoji -m config scroll_drag_edge_scroll on
+./bin/shoji -m config scroll_drag_edge_width 30
+./bin/shoji -m config scroll_drag_edge_delay 0.1
+./bin/shoji -m config scroll_drag_edge_speed 1500
+```
+
+These settings are global. Ring widths accept 1–16 logical pixels; colors use
+`0xAARRGGBB`, including alpha zero to conceal the ring. Corner radius defaults to
+10 logical pixels and accepts 1–64, clamped to the border thickness and available
+window dimensions. Applications can use different corner shapes; this is a
+configurable native-style radius, not a query of each application's decoration.
+Edge delay is in seconds,
+width in logical pixels and speed in logical pixels per second. Defaults match
+the documented Niri edge-view values: 30 pixels, 100ms and 1500 pixels/second,
+with speed increasing linearly toward the edge. [Niri gesture settings](https://niri-wm.github.io/niri/Configuration:-Gestures.html).
+
+Hold the configured mouse modifier (Fn by default) and left-drag a tiled window
+over another column. A thin insertion marker shows the boundary where release
+will insert the window, preserving its column width preference. Center drops
+insert before/after the target instead of swapping columns; BSP keeps its existing
+swap behavior. `mouse_drop_action stack` retains the explicit central stack drop.
+Gaps resolve to the closest eligible window and inactive tabs are excluded.
+
+Hold that window drag near a scrolling viewport's left/right edge to pan after
+the delay, without further pointer movement. Leaving the edge, reversing direction,
+releasing the drag, disabling the setting or losing ownership resets the delay.
+Panning stops at strip bounds and caps elapsed-time catch-up after a stalled tick.
+Ordinary in-application drag-and-drop, hold-to-activate and overview edge workspace
+switching are still pending; this implementation only handles Shoji-owned window
+moves. Complete row/tab/floating drag behavior also remains on the checklist.
+
+`task test:focus` checks single-window suppression, eight native owned surfaces,
+their input-transparent tags, 800 transform readbacks without reallocation and
+cleanup after removing the second window. Core raster tests check all four
+antialiased corners and transparent interiors. It does not certify
+physical click routing, visual smoothness or foreign-client compositor coherence.
+
 ## Enable and configure
 
 The feature binary is installed as `bin/shoji`. The existing LaunchAgent was restarted and checked successfully. The currently selected BSP layout and runtime animation duration were preserved. Gestures default to off.

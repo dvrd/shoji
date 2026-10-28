@@ -128,7 +128,10 @@ native_scroll_callback_routes_and_coalesces_pixels_without_app_scroll_capture ::
 		mac.mouse_callback(nil, 22, event, &state),
 		mac.Ref(nil),
 	)
-	testing.expect(t, state.mouse.scroll_delta > 53.33 && state.mouse.scroll_delta < 53.34)
+	testing.expect(
+		t,
+		state.mouse.scroll_delta > 53.33 && state.mouse.scroll_delta < 53.34,
+	)
 	testing.expect_value(t, state.mouse.scroll.space, u64(100))
 }
 
@@ -138,6 +141,7 @@ immediate_scroll_interrupt_restores_proxy_and_drops_stale_animation_target :: pr
 ) {
 	state: mac.State; r: Animation_Recorder
 	e.manager_init(&state.manager)
+	e.add_window(&state.manager, e.Window{id = 1, pid = 42})
 	defer e.manager_destroy(&state.manager)
 	state.event_user = &r
 	state.animation_backend = {
@@ -150,12 +154,16 @@ immediate_scroll_interrupt_restores_proxy_and_drops_stale_animation_target :: pr
 	state.animations = make(map[u32]mac.Animation_Job)
 	defer delete(state.animations)
 	state.animations[1] = {
+		generation = state.manager.windows[1].generation,
+		pid = state.manager.windows[1].pid,
 		presentation = mac.Live_Resize{current = {0, 0, 400, 400}},
-		target      = {100, 0, 400, 400},
+		target = {100, 0, 400, 400},
 	}
 	testing.expect_value(t, mac.animation_interrupt(&state, 1), "")
 	testing.expect_value(t, r.applied, 0)
 	state.animations[1] = {
+		generation = state.manager.windows[1].generation,
+		pid = state.manager.windows[1].pid,
 		presentation = mac.Animation_Proxy{window = 1},
 	}
 	r.fail_restore = true

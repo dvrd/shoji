@@ -4,7 +4,7 @@ Investigated 2026-10-26. Shoji's behavioral reference remains Niri v26.04 (`8ed0
 
 ## What already matches
 
-Shoji's camera and geometry trajectories use critical damping, stiffness 800 and epsilon-derived settling time. They preserve position/velocity when retargeted, and resize/neighbor/camera movement share the same model timing. These match the documented Niri defaults and synchronization intent. Changing spring constants alone does not address the backend differences below. [Niri animation settings](https://niri-wm.github.io/niri/Configuration:-Animations.html), [Shoji camera](../src/engine/scroll_motion.odin), [geometry](../src/engine/scroll_geometry.odin).
+Shoji's camera and geometry trajectories use critical damping, stiffness 800 and epsilon-derived settling time. They preserve position/velocity when retargeted, and resize/neighbor/camera movement share the same model timing. These match the documented Niri defaults and synchronization intent. Changing spring constants alone does not address the backend differences below. [Niri animation settings](https://niri-wm.github.io/niri/Configuration:-Animations.html), [Shoji camera](../src/engine/motion.odin), [geometry](../src/engine/motion.odin).
 
 ## Concrete differences relevant to smoothness
 
@@ -18,7 +18,7 @@ Shoji's camera and geometry trajectories use critical damping, stiffness 800 and
 
 Timing sources: [Niri animation timing](https://niri-wm.github.io/niri/Development:-Animation-Timing.html), [redraw loop](https://niri-wm.github.io/niri/Development:-Redraw-Loop.html), [immediate-action design](https://niri-wm.github.io/niri/Development:-Design-Principles.html). Resize policy: [animations](https://niri-wm.github.io/niri/Configuration:-Animations.html#window-resize).
 
-Shoji evidence: [daemon loop](../src/macos/daemon_darwin.odin:199), [input coalescing and native ticks](../src/macos/scroll_darwin.odin), [AX frame writes](../src/macos/frame_darwin.odin:80), [presentation batching](../src/macos/frame_updates_darwin.odin), [accepted-size correction](../src/macos/size_feedback_darwin.odin:56). The 16ms run-loop limit is a maximum wait, not a guarantee of 62.5fps or proof that it is the dominant bottleneck.
+Shoji evidence: [daemon loop](../src/macos/runtime_darwin.odin), [input coalescing and native ticks](../src/macos/input_darwin.odin), [AX frame writes](../src/macos/backend_darwin.odin), [presentation batching](../src/macos/motion_darwin.odin), [accepted-size correction](../src/macos/backend_darwin.odin). The 16ms run-loop limit is a maximum wait, not a guarantee of 62.5fps or proof that it is the dominant bottleneck.
 
 ## Next implementation order
 

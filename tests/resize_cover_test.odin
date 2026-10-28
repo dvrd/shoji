@@ -115,6 +115,8 @@ resize_content_blends_during_geometry_and_finishes_with_it :: proc(
 	current := e.Rect{0, 0, 700, 800}
 	state.animations = make(map[u32]mac.Animation_Job)
 	state.animations[1] = {
+		generation   = state.manager.windows[1].generation,
+		pid          = state.manager.windows[1].pid,
 		from         = from,
 		target       = target,
 		presentation = mac.Live_Resize{current},
@@ -433,4 +435,86 @@ content_fade_overlaps_for_short_resizes_and_holds_background_for_long_drags :: p
 		t,
 		e.execute(&m, {"config", "window_resize_animation", "blur"}).failed,
 	)
+}
+
+@(test)
+capture_budget_rejects_large_and_overflowing_images_and_releases_reservations :: proc(
+	t: ^testing.T,
+) {
+	memory := mac.Capture_Memory {
+		limit = 1024,
+	}
+	testing.expect(t, mac.capture_reserve(&memory, 700))
+	testing.expect(t, !mac.capture_reserve(&memory, 325))
+	testing.expect(t, !mac.capture_reserve(&memory, max(u64)))
+	testing.expect_value(t, memory.used, u64(700))
+	mac.capture_release(&memory, 700)
+	testing.expect(t, mac.capture_reserve(&memory, 1024))
+	mac.capture_release(&memory, 1024)
+	testing.expect_value(t, memory.used, u64(0))
+	_, ok := mac.capture_surface_bytes({0, 0, math.inf_f64(1), 10}, 2)
+	testing.expect(t, !ok)
+	_, ok = mac.capture_surface_bytes({0, 0, 1e15, 1e15}, 2)
+	testing.expect(t, !ok)
+	bytes, valid := mac.capture_surface_bytes({0, 0, 640, 480}, 2)
+	testing.expect(t, valid)
+	testing.expect_value(t, bytes, u64(640 * 480 * 16))
+	state: mac.State
+	state.capture_memory.used = 4096
+	state.resize_snapshots = make(map[u32]mac.Resize_Snapshots)
+	defer delete(state.resize_snapshots)
+	state.resize_snapshots[0] = {
+		surface_bytes = 4096,
+	}
+	mac.native_resize_cover_destroy(&state, {})
+	testing.expect_value(t, state.capture_memory.used, u64(0))
+	testing.expect_value(t, len(state.resize_snapshots), 0)
+}
+
+@(test)
+real_capture_images_are_accounted_and_released_with_their_surface :: proc(
+	t: ^testing.T,
+) {
+	color := mac.CGColorSpaceCreateDeviceRGB()
+	if !testing.expect(t, color != nil) {
+		return
+	}
+	defer mac.CGColorSpaceRelease(color)
+	ctx := mac.CGBitmapContextCreate(nil, 64, 64, 8, 256, color, 1)
+	if !testing.expect(t, ctx != nil) {
+		return
+	}
+	defer mac.CGContextRelease(ctx)
+	image := mac.CGBitmapContextCreateImage(ctx)
+	if !testing.expect(t, image != nil) {
+		return
+	}
+	bytes, valid := mac.capture_image_bytes(image)
+	if !testing.expect(t, valid) {
+		mac.CGImageRelease(image); return
+	}
+	testing.expect_value(t, bytes, u64(64 * 256))
+	state: mac.State
+	total := bytes * 2 + 64 * 64 * 4
+	testing.expect(t, mac.capture_reserve(&state.capture_memory, total))
+	state.resize_snapshots = make(map[u32]mac.Resize_Snapshots)
+	defer delete(state.resize_snapshots)
+	state.resize_snapshots[0] = {
+		initial       = image,
+		final         = mac.CGImageRetain(image),
+		initial_bytes = bytes,
+		final_bytes   = bytes,
+		surface_bytes = 64 * 64 * 4,
+	}
+	mac.native_resize_cover_destroy(&state, {})
+	testing.expect_value(t, state.capture_memory.used, u64(0))
+	state.capture_memory.limit = 1
+	rejected, held, err := mac.capture_snapshot(
+		&state,
+		999,
+		{0, 0, 640, 480},
+		2,
+	)
+	testing.expect(t, rejected == nil && held == 0 && err != "")
+	testing.expect_value(t, state.capture_memory.used, u64(0))
 }

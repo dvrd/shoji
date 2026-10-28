@@ -12,6 +12,8 @@ Usage: shoji [-c CONFIG] [--sa PATH_TO_DYLIB]
        shoji -m DOMAIN [ARGUMENTS...]
        shoji --load-sa PATH_TO_DYLIB
        shoji --check-sa
+       shoji --load-ws PID PATH_TO_DYLIB
+       shoji --check-ws
        shoji --inspect
        shoji --version
        shoji service install|start|stop|restart|status|uninstall
@@ -21,6 +23,8 @@ Run without arguments to start the window manager.
 --sa FILE          Load/reload the Dock payload using noninteractive sudo.
 -m, --message      Send a command to the running shoji daemon.
 --inspect          Print a read-only macOS window/display/space snapshot.
+--load-ws PID FILE Load the experimental WindowServer probe (requires an explicit opt-in).
+--check-ws         Check the experimental WindowServer probe handshake.
 --validation-pid N Limit a test daemon to process N; requires an explicit -c file.
 --validate-sizes N Validate two named disposable size-fixture windows in process N.
 
@@ -110,6 +114,34 @@ main :: proc() {
       }
 			fmt.printf("Dock scripting addition: %v\n", caps)
       return
+		case "--load-ws":
+			if len(args) != 3 {
+				fmt.eprintln("--load-ws requires the WindowServer PID and payload dylib path")
+				os.exit(2)
+			}
+			pid, valid := strconv.parse_u64(args[1])
+			if !valid || pid == 0 || pid > 0x7fffffff {
+				fmt.eprintln("--load-ws requires a positive process ID")
+				os.exit(2)
+			}
+			if err := loader.inject_windowserver(args[2], i32(pid)); err != "" {
+				fmt.eprintln(err)
+				os.exit(1)
+			}
+			fmt.println("WindowServer loaded the experimental load probe. Run --check-ws as the desktop user.")
+			return
+		case "--check-ws":
+			if len(args) != 1 {
+				fmt.eprintln("--check-ws takes no arguments")
+				os.exit(2)
+			}
+			caps, err := mac.windowserver_check()
+			if err != "" {
+				fmt.eprintln(err)
+				os.exit(1)
+			}
+			fmt.printf("WindowServer experimental payload: %v\n", caps)
+			return
 		case "--version", "-v":
 			fmt.println("shoji 0.1.0-dev")
 			return

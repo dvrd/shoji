@@ -76,8 +76,8 @@ from yabai's event queue and notification processing.
 
 ## Mouse implementation
 
-`src/engine/mouse.odin` handles global settings, anchored resize geometry, ancestor
-split selection and cross-Space drop mutations. `src/macos/mouse_darwin.odin` owns
+`src/engine/input.odin` handles global settings, anchored resize geometry, ancestor
+split selection and cross-Space drop mutations. `src/macos/input_darwin.odin` owns
 the session event tap and click replay; it coalesces drag points for processing
 outside the callback. `autoraise` uses Accessibility; `autofocus` uses the Dock
 focus handler. Mouse follows focus avoids warping after a hover-driven focus.

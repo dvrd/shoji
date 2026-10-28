@@ -16,6 +16,9 @@ native_drag_defers_desktop_rediscovery_and_reconciles_after_release :: proc(
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Recorder
+	e.manager_init(&state.manager)
+	defer e.manager_destroy(&state.manager)
+	e.add_window(&state.manager, e.Window{id = 1, pid = 42})
 	state.event_user = &r
 	state.dirty = true
 	state.mouse.drag.window = 1
@@ -39,6 +42,8 @@ native_drag_defers_desktop_rediscovery_and_reconciles_after_release :: proc(
 	state.animations = make(map[u32]mac.Animation_Job)
 	defer delete(state.animations)
 	state.animations[1] = {
+		generation   = state.manager.windows[1].generation,
+		pid          = state.manager.windows[1].pid,
 		presentation = mac.Live_Resize{},
 	}
 	mac.desktop_refresh_tick(&state, &last, now, resize_collect)
@@ -126,8 +131,10 @@ new_edge_drag_interrupts_fill_at_the_current_real_frame :: proc(
 	state.animations = make(map[u32]mac.Animation_Job)
 	defer delete(state.animations)
 	state.animations[1] = {
+		generation = state.manager.windows[1].generation,
+		pid = state.manager.windows[1].pid,
 		presentation = mac.Live_Resize{current = {0, 0, 800, 800}},
-		target      = {0, 0, 1000, 800},
+		target = {0, 0, 1000, 800},
 	}
 	down := CGEventCreateMouseEvent(nil, 1, {799, 400}, 0)
 	defer mac.CFRelease(down)

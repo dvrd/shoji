@@ -45,12 +45,12 @@ The classifications below are engineering assessments, not claims that these fea
 
 ## Shoji's current implementation boundary
 
-- `src/engine/tree.odin`: `Layout` contains Float, BSP and Stack. `View` owns a binary tree. Scrolling columns and viewport state do not exist. Add a distinct representation rather than forcing columns into split ratios.
-- `src/engine/model.odin`: the engine emits actions through a backend procedure. `Space.id` and `Window.space` currently refer to native Spaces. Introduce a separate identifier if logical workspaces are added.
-- `src/macos/frame_darwin.odin`: real geometry is applied through AX position/size attributes. A successful write is not evidence that an app accepted the exact off-screen geometry; readback matters.
-- `src/macos/animation_darwin.odin`: Shoji captures a window into its own proxy, and currently checks/uses the addition to hide and restore the real window. Reusing this path does not remove injection dependence. The captured image also does not provide a live input surface.
+- `src/engine/layout.odin`: `Layout` contains Float, BSP and Stack. `View` owns a binary tree. Scrolling columns and viewport state do not exist. Add a distinct representation rather than forcing columns into split ratios.
+- `src/engine/windows.odin`: the engine emits actions through a backend procedure. `Space.id` and `Window.space` currently refer to native Spaces. Introduce a separate identifier if logical workspaces are added.
+- `src/macos/backend_darwin.odin`: real geometry is applied through AX position/size attributes. A successful write is not evidence that an app accepted the exact off-screen geometry; readback matters.
+- `src/macos/motion_darwin.odin`: Shoji captures a window into its own proxy, and currently checks/uses the addition to hide and restore the real window. Reusing this path does not remove injection dependence. The captured image also does not provide a live input surface.
 - `src/macos/backend_darwin.odin`: Space operations and effects including opacity, layers, ordering and scale route through the addition. Capability reporting and fallback choices must distinguish those from ordinary frame changes.
-- `src/macos/mouse_darwin.odin`: existing gesture observation suspends conflicting work during system transitions; new viewport gestures need explicit routing rather than treating all gestures alike.
+- `src/macos/input_darwin.odin`: existing gesture observation suspends conflicting work during system transitions; new viewport gestures need explicit routing rather than treating all gestures alike.
 
 Keep logical layout coordinates separate from physical presentation coordinates. Otherwise AX clamping, parking inactive windows and animation feedback can corrupt the stored strip. This is a design recommendation based on the code above.
 

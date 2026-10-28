@@ -1,0 +1,14 @@
+Executable=/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock
+Identifier=com.apple.dock
+Format=app bundle with Mach-O thin (arm64e)
+CodeDirectory v=20400 size=38695 flags=0x0(none) hashes=1199+7 location=embedded
+Platform identifier=16
+Signature size=4442
+Authority=Software Signing
+Authority=Apple Code Signing Certification Authority
+Authority=Apple Root CA
+Signed Time=12 Jul 2025 at 01:07:19
+Info.plist entries=30
+TeamIdentifier=not set
+Sealed Resources version=2 rules=2 files=0
+Internal requirements count=1 size=64
