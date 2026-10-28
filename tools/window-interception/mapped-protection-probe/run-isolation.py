@@ -41,10 +41,10 @@ def send(process, command):
 
 def main():
     if len(sys.argv) not in (2, 3):
-        raise ValueError("usage: run-isolation.py /absolute/path/to/probe [--patch | --patch-alias]")
+        raise ValueError("usage: run-isolation.py /absolute/path/to/probe [--patch | --patch-alias | --patch-alias-max]")
     patch_mode = sys.argv[2] if len(sys.argv) == 3 else "--patch"
-    if patch_mode not in ("--patch", "--patch-alias"):
-        raise ValueError("patch mode must be --patch or --patch-alias")
+    if patch_mode not in ("--patch", "--patch-alias", "--patch-alias-max"):
+        raise ValueError("patch mode must be --patch, --patch-alias or --patch-alias-max")
     processes = []
     try:
         witness, witness_lines = start(sys.argv[1], "--witness")

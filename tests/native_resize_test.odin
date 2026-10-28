@@ -12,6 +12,21 @@ resize_collect :: proc(state: ^mac.State) {
 }
 
 @(test)
+sticky_drag_defers_desktop_rediscovery_until_release :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder
+	e.manager_init(&state.manager); defer e.manager_destroy(&state.manager)
+	e.add_window(&state.manager, e.Window{id = 1, pid = 42, sticky = true})
+	e.focus_window(&state.manager, 1)
+	state.event_user = &r; state.dirty = true; state.mouse.buttons = 1
+	last := time.now(); now := time.time_add(last, 2 * time.Second)
+	mac.desktop_refresh_tick(&state, &last, now, resize_collect)
+	testing.expect_value(t, r.calls, 0)
+	state.mouse.buttons = 0
+	mac.desktop_refresh_tick(&state, &last, now, resize_collect)
+	testing.expect_value(t, r.calls, 1)
+}
+
+@(test)
 native_drag_defers_desktop_rediscovery_and_reconciles_after_release :: proc(
 	t: ^testing.T,
 ) {
@@ -365,9 +380,8 @@ native_scrolling_resize_changes_column_width_and_repositions_neighbors :: proc(
 	testing.expect(t, !w.floating)
 	e.remove_window(&m, 2)
 	testing.expect_value(t, e.mouse_drop(&m, d, 0, d.previous), "")
-	// A scrolling column retains its resized width when it becomes the sole
-	// column; only BSP's lone tile returns to the full work area.
-	testing.expect_value(t, w.frame, e.Rect{0, 0, before.w + 80, 800})
+	// Closing the neighboring column fills the newly vacant work area.
+	testing.expect_value(t, w.frame, e.Rect{0, 0, 1000, 800})
 }
 
 @(test)

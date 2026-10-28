@@ -351,13 +351,14 @@ motion_active :: proc(state: ^State) -> bool {
 	if len(state.animations) > 0 ||
 	   len(state.resize_covers) > 0 ||
 	   state.mouse.scroll_tracking ||
+	   stack_touch_has_pending() ||
 	   state.mouse.drag.window != 0 {
 		return true
 	}
 	for s in state.manager.spaces {
 		if s.visible &&
 		   s.view.layout == .Scroll &&
-		   (s.view.scroll.motion.active || s.view.scroll.geometry_active) {
+		   (s.view.scroll.dragging || s.view.scroll.motion.active || s.view.scroll.geometry_active) {
 			return true
 		}
 	}
@@ -1747,6 +1748,13 @@ resize_cover_frame :: proc(
 		return
 	}
 	w := state.manager.windows[window]
+	// A capture taken while the client owns an interactive resize can be a
+	// blank or stale surface, and capture can stall the drag's presentation.
+	// Keep the live client visible until the gesture has ended.
+	if w != nil && (w.grabbed || state.manager.native_resize_window == window ||
+		   (state.mouse.drag.window == window && state.mouse.drag.action == .Resize)) {
+		resize_cover_remove(state, window); return
+	}
 	if w == nil ||
 	   state.opening_windows[window] ||
 	   !e.managed(w) ||
@@ -2160,7 +2168,7 @@ focus_ring_tick :: proc(state: ^State) {
 	   (state.connection == 0 && state.feedback_backend.create == nil) {
 		focus_ring_stop(state); tab_indicator_stop(state); return
 	}
-	if w.floating &&
+	if !e.managed(w) &&
 	   (state.focus_geometry_dirty || state.mouse.buttons != 0) &&
 	   w.id not_in state.animations {
 		state.focus_geometry_dirty = false
@@ -2176,6 +2184,34 @@ focus_ring_tick :: proc(state: ^State) {
 		}
 	}
 	frame, relative := w.frame, w.id
+	if s := e.space_by_id(&state.manager, w.space);
+	   s != nil && s.view.layout == .Scroll && e.managed(w) && w.id not_in state.animations {
+		moving := s.view.scroll.dragging || s.view.scroll.motion.active || s.view.scroll.geometry_active
+		if moving {
+			state.focus_scroll_pending = w.id
+			state.focus_scroll_deadline = CACurrentMediaTime() + 1
+		}
+		if moving || state.focus_scroll_pending == w.id {
+			probe := state.focus_frame_probe
+			if probe == nil && state.connection != 0 { probe = mouse_native_resize_frame }
+			if probe != nil {
+				observed, valid := probe(state, w.id)
+				if !valid || !valid_frame(observed) {
+					focus_ring_stop(state); tab_indicator_stop(state); return
+				}
+				frame = observed
+				if !moving && (CACurrentMediaTime() >= state.focus_scroll_deadline ||
+				   math.abs(observed.x-w.frame.x) < 1.5 &&
+				   math.abs(observed.y-w.frame.y) < 1.5 &&
+				   math.abs(observed.w-w.frame.w) < 1.5 &&
+				   math.abs(observed.h-w.frame.h) < 1.5) {
+					state.focus_scroll_pending = 0
+				}
+			}
+		}
+	} else {
+		state.focus_scroll_pending = 0
+	}
 	if job, exists := state.animations[w.id];
 	   exists && animation_matches(state, w.id, job) {
 		switch presentation in job.presentation {
@@ -2200,7 +2236,13 @@ focus_ring_tick :: proc(state: ^State) {
 	   state.focus_ring.owner != w.id ||
 	   state.focus_ring.generation != w.generation ||
 	   state.focus_ring.config != state.manager.focus_ring {
-		focus_ring_stop(state)
+		previous := state.manager.windows[state.focus_ring.owner]
+		space := e.space_by_id(&state.manager, w.space)
+		reuse := previous != nil && previous.generation == state.focus_ring.generation &&
+			previous.space == w.space && space != nil && space.visible && space.view.layout == .Scroll &&
+			state.focus_ring.config == state.manager.focus_ring && !state.focus_ring.failed &&
+			state.focus_ring.window == state.focus_ring.owner && relative == w.id
+		if !reuse { focus_ring_stop(state) }
 		state.focus_ring.window, state.focus_ring.generation =
 			relative, w.generation
 		state.focus_ring.owner = w.id

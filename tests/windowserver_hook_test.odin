@@ -77,6 +77,34 @@ windowserver_hook_branch_checks_alignment_and_signed_range :: proc(t: ^testing.T
 }
 
 @(test)
+windowserver_hook_nearby_allocation_is_bounded_in_both_directions :: proc(t: ^testing.T) {
+	page := u64(0x4000)
+	base := u64(0x10000000)
+	for below in ([]bool{false, true}) {
+		candidate, ok := hook.nearby_region_base(base, page, 3 * page, page, below)
+		testing.expect(t, ok)
+		expected := base + page
+		if below {expected = base - page}
+		testing.expect_value(t, candidate, expected)
+	}
+	candidate, ok := hook.nearby_region_base(base, 0x08000000 - 3 * page, 3 * page, page, true)
+	testing.expect(t, ok)
+	testing.expect_value(t, candidate, base - (0x08000000 - 3 * page))
+	_, ok = hook.nearby_region_base(base, 0x08000000, 3 * page, page, false)
+	testing.expect(t, !ok)
+	_, ok = hook.nearby_region_base(page, 2 * page, 3 * page, page, true)
+	testing.expect(t, !ok)
+	_, ok = hook.nearby_region_base(max(u64) - page + 1, page, 3 * page, page, false)
+	testing.expect(t, !ok)
+	_, ok = hook.nearby_region_base(base, 0, 3 * page, page, false)
+	testing.expect(t, !ok)
+	_, ok = hook.nearby_region_base(base, 1, 3 * page, page, false)
+	testing.expect(t, !ok)
+	_, ok = hook.nearby_region_base(base, page, 3 * page, 0, false)
+	testing.expect(t, !ok)
+}
+
+@(test)
 windowserver_hook_rejects_unverified_prologues :: proc(t: ^testing.T) {
 	testing.expect(t, hook.supported_entry(0xd503237f))
 	testing.expect(t, !hook.supported_entry(0xd503233f))

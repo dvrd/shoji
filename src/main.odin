@@ -27,6 +27,7 @@ Run without arguments to start the window manager.
 --check-ws         Check the experimental WindowServer probe handshake.
 --validation-pid N Limit a test daemon to process N; requires an explicit -c file.
 --validate-sizes N Validate two named disposable size-fixture windows in process N.
+--validate-swipe N Measure native swipe spacing with two named disposable fixture windows.
 
 Domains: config, query, window, space, display, rule, signal, debug.
 Default layout is float. Use: shoji -m config layout bsp`
@@ -86,11 +87,11 @@ main :: proc() {
 		case "service":
 			binary, _ := os.get_executable_path(context.allocator)
 			os.exit(service.cli(args[1:], binary))
-		case "--validate-sizes":
-			if len(args) != 2 {fmt.eprintln("--validate-sizes requires a fixture process ID"); os.exit(2)}
+		case "--validate-sizes", "--validate-swipe":
+			if len(args) != 2 {fmt.eprintln("validation requires a fixture process ID"); os.exit(2)}
 			pid, valid := strconv.parse_u64(args[1])
 			if !valid || pid == 0 || pid > 0x7fffffff {os.exit(2)}
-			os.exit(mac.validate_window_sizes(i32(pid)))
+			os.exit(mac.validate_window_sizes(i32(pid), args[0] == "--validate-swipe"))
 		case "--load-sa":
 			if len(args) != 2 {
         fmt.eprintln("--load-sa requires the payload dylib path")

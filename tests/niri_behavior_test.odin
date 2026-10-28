@@ -82,7 +82,7 @@ niri_behavior_intervening_focus_cancels_close_return :: proc(t: ^testing.T) {
 	e.focus_window(&m, 2); e.flush(&m, m.spaces[0])
 	e.focus_window(&m, 3); e.flush(&m, m.spaces[0])
 	e.remove_window(&m, 3); e.flush(&m, m.spaces[0])
-	testing.expect_value(t, m.windows[2].frame.x, f64(16))
+	testing.expect_value(t, m.windows[2].frame.x, f64(648))
 }
 
 @(test)

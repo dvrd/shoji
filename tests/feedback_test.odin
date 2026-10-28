@@ -83,6 +83,62 @@ floating_ring_frame_probe :: proc(
 	return r.last, !r.fail_restore
 }
 
+scroll_ring_frame_probe :: proc(state: ^mac.State, window: u32) -> (e.Rect, bool) {
+	return {120, 40, 400, 300}, true
+}
+
+@(test)
+refreshed_focus_updates_the_ring_before_later_refresh_work :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	fixture(&state.manager, &actions)
+	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update, reorder = feedback_reorder}
+	defer mac.feedback_stop(&state)
+	testing.expect_value(t, e.flush(&state.manager, state.manager.spaces[0]), "")
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, state.focus_ring.owner, u32(1))
+	mac.refresh_set_focus(&state, 2)
+	testing.expect_value(t, state.manager.focused, u32(2))
+	testing.expect_value(t, state.focus_ring.owner, u32(2))
+}
+
+@(test)
+scroll_focus_change_reuses_the_ring_surfaces :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	fixture(&state.manager, &actions)
+	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update, reorder = feedback_reorder}
+	defer mac.feedback_stop(&state)
+	e.execute(&state.manager, {"space", "--layout", "scroll"})
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, r.created, 8)
+	e.focus_window(&state.manager, 2)
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, state.focus_ring.owner, u32(2))
+	testing.expect_value(t, r.created, 8)
+	testing.expect_value(t, r.destroyed, 0)
+}
+
+@(test)
+scroll_ring_tracks_observed_window_during_motion :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	fixture(&state.manager, &actions)
+	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update}
+	state.focus_frame_probe = scroll_ring_frame_probe
+	defer mac.feedback_stop(&state)
+	testing.expect(t, !e.execute(&state.manager, {"space", "--layout", "scroll"}).failed)
+	w := state.manager.windows[state.manager.focused]
+	requested := w.frame
+	state.manager.spaces[0].view.scroll.dragging = true
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, state.focus_ring.bars[0].plan.frame.x, f64(130))
+	testing.expect_value(t, w.frame, requested)
+}
+
 @(test)
 floating_ring_tracks_native_moves_without_refreshing_the_desktop :: proc(
 	t: ^testing.T,
@@ -123,6 +179,27 @@ floating_ring_tracks_native_moves_without_refreshing_the_desktop :: proc(
 	mac.focus_ring_tick(&state)
 	testing.expect_value(t, w.frame, e.Rect{180, 220, 400, 300})
 	r.fail_restore = true; mac.focus_ring_tick(&state)
+	testing.expect_value(t, w.frame, e.Rect{180, 220, 400, 300})
+}
+
+@(test)
+sticky_window_ring_tracks_native_moves_without_refreshing_the_desktop :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	fixture(&state.manager, &actions)
+	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update}
+	state.focus_frame_probe = floating_ring_frame_probe
+	defer mac.feedback_stop(&state)
+	w := state.manager.windows[1]; w.sticky = true
+	mac.focus_ring_tick(&state)
+	state.focus_geometry_dirty = true
+	r.last = {100, 200, 400, 300}
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, w.frame, e.Rect{100, 200, 400, 300})
+	testing.expect_value(t, state.focus_ring.bars[0].plan.frame.x, f64(110))
+	state.mouse.buttons = 1; r.last = {180, 220, 400, 300}
+	mac.focus_ring_tick(&state)
 	testing.expect_value(t, w.frame, e.Rect{180, 220, 400, 300})
 }
 

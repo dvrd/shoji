@@ -109,6 +109,8 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		m.scroll_animate = value == "on"
 	case "scroll_gestures",
+	     "three_finger_horizontal",
+	     "stack_swipe",
 	     "scroll_drag_edge_scroll",
 	     "scroll_drag_edge_width",
 	     "scroll_drag_edge_delay",

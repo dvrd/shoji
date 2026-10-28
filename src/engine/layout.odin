@@ -309,6 +309,7 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 		}
 		return ok
 	}
+	if v.layout == .Scroll { v.scroll.fill_after_removal = false }
 	old := new(Node)
 	fresh := new(Node)
 	old^ = Node {
@@ -578,7 +579,7 @@ bsp_constraints :: proc(m: ^Manager, v: ^View) -> bool {
 // widths and viewport position are independent of BSP partition geometry.
 Scroll_State :: struct {
 	motion: Scroll_Motion,
-	dragging: bool,
+	dragging, fill_after_removal: bool,
 	geometry_enabled, geometry_active: bool,
 	geometry_began: f64,
 	viewport: Rect,
@@ -643,6 +644,29 @@ scroll_update :: proc(v: ^View) {
 		if n.column_observed > 0 {n.column_width, n.column_resolved = n.column_observed, n.column_observed}
 		total += n.column_width + gap
 	}
+	if v.scroll.fill_after_removal {
+		// Fill only space left by a removed column; retain each requested size
+		// so adding a new column restores the user's original proportions.
+		remaining := max(0, width - gap - total)
+		for remaining > 0.01 {
+			eligible := 0
+			for n := first(v.root); n != nil; n = next(n) {
+				if n.count > 0 && (n.column_max <= 0 || n.column_width < n.column_max - 0.01) { eligible += 1 }
+			}
+			if eligible == 0 { break }
+			share := remaining / f64(eligible)
+			added: f64
+			for n := first(v.root); n != nil; n = next(n) {
+				if n.count == 0 { continue }
+				room := n.column_max > 0 ? max(0, n.column_max - n.column_width) : share
+				increase := min(share, room)
+				n.column_width += increase; n.column_resolved = n.column_width
+				added += increase
+			}
+			if added <= 0.01 { break }
+			total += added; remaining -= added
+		}
+	}
 	v.scroll.content_width = max(0, total - gap)
 	anchor := find(v.root, v.scroll.anchor)
 	logical_x: f64
@@ -659,6 +683,9 @@ scroll_update :: proc(v: ^View) {
 			v.scroll.offset = offset; break
 		}
 		logical_x += n.column_width + gap
+	}
+	if v.scroll.fill_after_removal && !v.scroll.dragging && !v.scroll.centered {
+		v.scroll.offset = clamp(v.scroll.offset, -gap, max(-gap, v.scroll.content_width - width + gap))
 	}
 	x := r.x - v.scroll.offset
 	for n := first(v.root); n != nil; n = next(n) {
@@ -713,6 +740,7 @@ scroll_before_remove :: proc(v: ^View, id: u32) {
 		}
 		return
 	}
+	v.scroll.fill_after_removal = true
 	if v.scroll.opened == id &&
 	   v.scroll.focused == id &&
 	   find(v.root, v.scroll.return_to) != nil {
@@ -878,6 +906,7 @@ scroll_set_width :: proc(v: ^View, window: u32, operand: string) -> string {
 	if !ok || math.is_nan(value) || math.is_inf(value) {
 		return "invalid column width"
 	}
+	v.scroll.fill_after_removal = false
 	switch parts[0] {
 	case "abs":
 	case "rel":
@@ -1117,6 +1146,7 @@ scroll_config :: proc(
 }
 
 scroll_cycle_width :: proc(v: ^View, n: ^Node, reverse: bool) {
+	v.scroll.fill_after_removal = false
 	count := v.scroll_options.preset_count
 	index := reverse ? count - 1 : 0
 	if old, ok := n.column_preset.?; ok && old < count {
@@ -1435,6 +1465,7 @@ scroll_move_column :: proc(v: ^View, n: ^Node, west: bool) {
 	if other == nil {
 		return
 	}
+	v.scroll.fill_after_removal = true
 	swap(n, other)
 	n.column_size, other.column_size = other.column_size, n.column_size
 	n.column_width, other.column_width = other.column_width, n.column_width

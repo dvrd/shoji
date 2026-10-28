@@ -68,9 +68,15 @@ main :: proc() {
 	replacement_address := bridge.strip_function(u64(uintptr(rawptr(replacement))))
 	base := replacement_address & ~(page - 1)
 	region: u64
-	for distance := page; distance < 0x08000000 - 3 * page; distance += page {
-		candidate := base + distance
-		if allocate(self, &candidate, 3 * page, 0) == 0 {region = candidate; break}
+	search:
+	for distance := page; distance <= 0x08000000 - 3 * page; distance += page {
+		for below in ([]bool{false, true}) {
+			candidate, valid := hook.nearby_region_base(base, distance, 3 * page, page, below)
+			if valid && allocate(self, &candidate, 3 * page, 0) == 0 {
+				region = candidate
+				break search
+			}
+		}
 	}
 	if region == 0 {fail("no free nearby memory for test code")}
 	defer deallocate(self, region, 3 * page)

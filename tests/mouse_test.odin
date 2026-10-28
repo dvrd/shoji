@@ -6,6 +6,180 @@ import "core:testing"
 import "core:time"
 
 @(test)
+three_finger_stack_swipe_tracks_direction_and_latches_until_release :: proc(t: ^testing.T) {
+	tracker: mac.Stack_Swipe_Tracker
+	contacts: [3]mac.Touch_Contact
+	for &c, i in contacts { c.id = i32(i + 1); c.stage = 4; c.normalized.position = {.5, .4} }
+	mac.stack_swipe_sample(&tracker, contacts[:], 1)
+	testing.expect(t, tracker.active && tracker.pending == 0)
+	for &c in contacts { c.normalized.position.y = .48 }
+	mac.stack_swipe_sample(&tracker, contacts[:], 1.1)
+	testing.expect_value(t, tracker.pending, i32(-1))
+	tracker.pending = 0
+	for &c in contacts { c.normalized.position.y = .3 }
+	mac.stack_swipe_sample(&tracker, contacts[:], 1.2)
+	testing.expect_value(t, tracker.pending, i32(0))
+	mac.stack_swipe_sample(&tracker, nil, 1.3)
+	mac.stack_swipe_sample(&tracker, contacts[:], 2)
+	for &c in contacts { c.normalized.position.y = .2 }
+	mac.stack_swipe_sample(&tracker, contacts[:], 2.1)
+	testing.expect_value(t, tracker.pending, i32(1))
+	mac.stack_swipe_sample(&tracker, nil, 2.2)
+	tracker.pending = 0
+	mac.stack_swipe_sample(&tracker, contacts[:], 3)
+	contacts[0].id = 9
+	mac.stack_swipe_sample(&tracker, contacts[:], 3.1)
+	for &c in contacts { c.normalized.position.y = .4 }
+	mac.stack_swipe_sample(&tracker, contacts[:], 3.2)
+	testing.expect(t, tracker.blocked && tracker.pending == 0)
+}
+
+@(test)
+three_finger_horizontal_swipe_tracks_motion_and_release :: proc(t: ^testing.T) {
+	tracker: mac.Stack_Swipe_Tracker
+	contacts: [3]mac.Touch_Contact
+	for &c, i in contacts { c.id = i32(i + 1); c.stage = 4; c.normalized.position = {.5, .5} }
+	mac.stack_swipe_sample(&tracker, contacts[:], 1)
+	for &c in contacts { c.normalized.position.x = .45 }
+	mac.stack_swipe_sample(&tracker, contacts[:], 1.1)
+	testing.expect_value(t, tracker.axis, i32(1))
+	testing.expect(t, tracker.horizontal_delta < -.049 && tracker.pending == 0)
+	tracker.horizontal_delta = 0
+	for &c in contacts { c.normalized.position.x = .40 }
+	mac.stack_swipe_sample(&tracker, contacts[:], 1.2)
+	testing.expect(t, tracker.horizontal_delta < -.049 && tracker.horizontal_velocity < 0)
+	mac.stack_swipe_sample(&tracker, contacts[:2], 1.3)
+	testing.expect(t, tracker.horizontal_end && tracker.blocked)
+	mac.stack_swipe_sample(&tracker, nil, 1.4)
+	testing.expect(t, !tracker.active && !tracker.blocked)
+}
+
+@(test)
+three_finger_horizontal_scroll_starts_and_finishes_pan :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
+	e.execute(&state.manager, {"window", "1", "--focus"})
+	s := state.manager.spaces[0]
+	state.stack_touch.horizontal_space = s.id
+	state.stack_touch.horizontal_layout = .Scroll
+	before := s.view.scroll.offset
+	mac.stack_touch_horizontal(&state, -.1, -.5, false)
+	testing.expect(t, state.stack_touch.horizontal_active && s.view.scroll.dragging)
+	testing.expect(t, s.view.scroll.offset > before)
+	mac.stack_touch_horizontal(&state, 0, 0, true)
+	testing.expect(t, !state.stack_touch.horizontal_active && !s.view.scroll.dragging)
+}
+
+@(test)
+three_finger_slow_release_focuses_first_visible_column_at_left_edge :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
+	e.execute(&state.manager, {"window", "1", "--focus"})
+	e.execute(&state.manager, {"window", "2", "--focus"})
+	s := state.manager.spaces[0]
+	state.stack_touch.horizontal_space = s.id
+	state.stack_touch.horizontal_layout = .Scroll
+	mac.stack_touch_horizontal(&state, .1, 0, false)
+	mac.stack_touch_horizontal(&state, 0, 0, true)
+	testing.expect_value(t, state.manager.focused, u32(1))
+}
+
+@(test)
+three_finger_release_settles_without_spring_overshoot :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
+	e.execute(&state.manager, {"config", "scroll_animation", "on"})
+	e.execute(&state.manager, {"window", "1", "--focus"})
+	state.manager.animation_duration = .2
+	s := state.manager.spaces[0]
+	state.stack_touch.horizontal_space = s.id
+	state.stack_touch.horizontal_layout = .Scroll
+	mac.stack_touch_horizontal(&state, -.1, -8, false)
+	position := s.view.scroll.motion.position
+	mac.stack_touch_horizontal(&state, 0, -8, true)
+	target := s.view.scroll.motion.target
+	for i in 1 ..= 32 {
+		e.scroll_motion_sample(&s.view.scroll.motion, s.view.scroll.motion.began + f64(i) / 120)
+		x := s.view.scroll.motion.position
+		testing.expect(t, x >= min(position, target) - .001 && x <= max(position, target) + .001)
+	}
+}
+
+@(test)
+three_finger_swipes_select_each_adjacent_column :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
+	e.execute(&state.manager, {"window", "1", "--column-width", "abs:900"})
+	e.execute(&state.manager, {"window", "1", "--focus"})
+	s := state.manager.spaces[0]
+	state.stack_touch.horizontal_space = s.id
+	state.stack_touch.horizontal_layout = .Scroll
+	mac.stack_touch_horizontal(&state, -.04, -3, false)
+	mac.stack_touch_horizontal(&state, 0, -3, true)
+	testing.expect_value(t, state.manager.focused, u32(2))
+	state.stack_touch.horizontal_travel = 0
+	mac.stack_touch_horizontal(&state, -.04, -3, false)
+	mac.stack_touch_horizontal(&state, 0, -3, true)
+	testing.expect_value(t, state.manager.focused, u32(3))
+	state.stack_touch.horizontal_travel = 0
+	mac.stack_touch_horizontal(&state, .04, 3, false)
+	mac.stack_touch_horizontal(&state, 0, 3, true)
+	testing.expect_value(t, state.manager.focused, u32(2))
+}
+
+@(test)
+three_finger_horizontal_bsp_switches_once_and_wraps :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; fixture(&state.manager, &r)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	e.add_space(&state.manager, 200, 10, 2, {0, 0, 1000, 800})
+	state.stack_touch.horizontal_space = 100
+	state.stack_touch.horizontal_layout = .BSP
+	resize(&r.actions, 0)
+	mac.stack_touch_horizontal(&state, -.04, 0, false)
+	testing.expect_value(t, len(r.actions), 0)
+	mac.stack_touch_horizontal(&state, -.05, 0, false)
+	testing.expect_value(t, len(r.actions), 1)
+	if len(r.actions) > 0 {
+		testing.expect_value(t, r.actions[0].kind, e.Action_Kind.Space_Focus)
+		testing.expect_value(t, r.actions[0].space, u64(200))
+	}
+	mac.stack_touch_horizontal(&state, -.1, 0, false)
+	testing.expect_value(t, len(r.actions), 1)
+	state.stack_touch.horizontal_switched = false
+	state.stack_touch.horizontal_travel = 0
+	resize(&r.actions, 0)
+	mac.stack_touch_horizontal(&state, .1, 0, false)
+	testing.expect_value(t, len(r.actions), 1)
+	if len(r.actions) > 0 { testing.expect_value(t, r.actions[0].space, u64(200)) }
+}
+
+@(test)
+stack_swipe_focuses_only_valid_bsp_stack_members :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; fixture(&state.manager, &r)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	e.execute(&state.manager, {"window", "1", "--stack", "2"})
+	e.focus_window(&state.manager, 1)
+	w := state.manager.windows[1]
+	mac.stack_swipe_apply(&state, w.id, w.generation + 1, 1)
+	testing.expect_value(t, state.manager.focused, u32(1))
+	mac.stack_swipe_apply(&state, w.id, w.generation, 1)
+	testing.expect_value(t, state.manager.focused, u32(2))
+	mac.stack_swipe_apply(&state, w.id, w.generation, -1)
+	testing.expect_value(t, state.manager.focused, u32(2))
+	w = state.manager.windows[2]
+	mac.stack_swipe_apply(&state, w.id, w.generation, -1)
+	testing.expect_value(t, state.manager.focused, u32(1))
+	state.manager.gesture_active = true
+	w = state.manager.windows[1]
+	mac.stack_swipe_apply(&state, w.id, w.generation, 1)
+	testing.expect_value(t, state.manager.focused, u32(1))
+}
+
+@(test)
 desktop_swipe_suppresses_tiling_until_settled :: proc(t: ^testing.T) {
 	state: mac.State;r: Recorder;fixture(&state.manager, &r)
 	defer e.manager_destroy(&state.manager);defer delete(r.actions)
@@ -149,6 +323,51 @@ foreign test_cg {
 	CGEventCreateMouseEvent :: proc(source: mac.Ref, type: u32, point: mac.Point, button: u32) -> mac.Ref ---
 	CGEventSetFlags :: proc(event: mac.Ref, flags: u64) ---
 	CGEventSetIntegerValueField :: proc(event: mac.Ref, field: u32, value: i64) ---
+}
+
+@(test)
+scroll_double_click_resize_edge_toggles_width_and_resets_row :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	niri_open(&state.manager, 2)
+	e.execute(&state.manager, {"window", "1", "--stack", "2"})
+	e.execute(&state.manager, {"window", "1", "--row-height", "abs:250"})
+	w := state.manager.windows[1]
+	n := e.find(state.manager.spaces[0].view.root, 1)
+	frame := w.frame
+	down := CGEventCreateMouseEvent(nil, 1, {frame.x + frame.w - 1, frame.y + frame.h / 2}, 0)
+	defer mac.CFRelease(down)
+	CGEventSetFlags(down, 0); CGEventSetIntegerValueField(down, 91, 1); CGEventSetIntegerValueField(down, 1, 1)
+	up := CGEventCreateMouseEvent(nil, 2, {frame.x + frame.w - 1, frame.y + frame.h / 2}, 0)
+	defer mac.CFRelease(up)
+	testing.expect(t, mac.mouse_callback(nil, 1, down, &state) == down)
+	testing.expect(t, mac.mouse_callback(nil, 2, up, &state) == up)
+	mac.mouse_tick(&state, false)
+	CGEventSetIntegerValueField(down, 1, 2)
+	testing.expect(t, mac.mouse_callback(nil, 1, down, &state) == nil)
+	mac.mouse_tick(&state, false)
+	testing.expect(t, n.column_full)
+	testing.expect(t, mac.mouse_callback(nil, 2, up, &state) == nil)
+	frame = w.frame
+	top := CGEventCreateMouseEvent(nil, 1, {frame.x + frame.w / 2, frame.y + 1}, 0)
+	defer mac.CFRelease(top)
+	CGEventSetFlags(top, 0); CGEventSetIntegerValueField(top, 91, 1); CGEventSetIntegerValueField(top, 1, 2)
+	testing.expect(t, mac.mouse_callback(nil, 1, top, &state) == nil)
+	mac.mouse_tick(&state, false)
+	testing.expect_value(t, w.row_fixed, f64(0))
+	testing.expect_value(t, w.row_weight, f64(1))
+	testing.expect(t, mac.mouse_callback(nil, 2, up, &state) == nil)
+	frame = w.frame
+	right := CGEventCreateMouseEvent(nil, 3, {frame.x + frame.w - 1, frame.y + frame.h / 2}, 1)
+	defer mac.CFRelease(right)
+	CGEventSetFlags(right, state.manager.mouse.modifier)
+	CGEventSetIntegerValueField(right, 91, 1); CGEventSetIntegerValueField(right, 1, 2)
+	testing.expect(t, mac.mouse_callback(nil, 3, right, &state) == nil)
+	mac.mouse_tick(&state, false)
+	testing.expect(t, !n.column_full)
+	right_up := CGEventCreateMouseEvent(nil, 4, {frame.x + frame.w - 1, frame.y + frame.h / 2}, 1)
+	defer mac.CFRelease(right_up)
+	testing.expect(t, mac.mouse_callback(nil, 4, right_up, &state) == nil)
 }
 // These synthetic events are passed directly to our callback, never posted to macOS.
 @(test)

@@ -9,7 +9,8 @@ task build:windowserver-hook-selftest
 ```
 
 The test allocates three pages within direct-branch range of its own replacement,
-constructs a six-argument function beginning with `PACIBSP`, and constructs
+using a bounded, overflow-checked search on either side, constructs a six-argument
+function beginning with `PACIBSP`, and constructs
 an executable trampoline containing that instruction and a branch back to the
 original. It patches the target through a writable alias of the executable page,
 invalidates the instruction cache, and verifies the baseline, replacement call,

@@ -134,7 +134,7 @@ desktop_refresh_tick :: proc(
 	// Keep notifications dirty and reconcile once the interactive drag ends.
 	if !state.structural_dirty {
 		if w := state.manager.windows[state.manager.focused];
-		   w != nil && w.floating && state.mouse.buttons != 0 {
+		   w != nil && !e.managed(w) && state.mouse.buttons != 0 {
 			return
 		}
 		if state.mouse.drag.window != 0 && !state.mouse.failed {
@@ -909,6 +909,15 @@ refresh :: proc(state: ^State) {
 	opening_tick(state)
 }
 
+// Show a newly discovered focus before the remaining refresh work can block.
+refresh_set_focus :: proc(state: ^State, id: u32) {
+	changed := state.manager.focused != id
+	e.focus_window(&state.manager, id)
+	if changed && !state.read_only {
+		focus_ring_tick(state)
+	}
+}
+
 refresh_effects :: proc(state: ^State) {
 	m := &state.manager
 	if !state.read_only {
@@ -946,7 +955,7 @@ refresh_effects :: proc(state: ^State) {
 					}
 				}
 			}
-			e.focus_window(m, id)
+			refresh_set_focus(state, id)
 		}
 	}
 	if !state.read_only && m.window_opacity {

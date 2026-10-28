@@ -246,6 +246,35 @@ cover_fixture :: proc(
 }
 
 @(test)
+resize_cover_skips_and_removes_snapshots_during_interactive_resize :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; c: Cover_Recorder
+	cover_fixture(&state, &r, &c)
+	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.resize_cover_stop(&state)
+	before := e.Rect{0, 0, 500, 800}
+	after := e.Rect{0, 0, 700, 800}
+	mac.resize_cover_frame(&state, 1, after, before, 1)
+	testing.expect_value(t, c.created, 1)
+	state.manager.windows[1].grabbed = true
+	mac.resize_cover_frame(&state, 1, after, before, 1.1)
+	testing.expect_value(t, c.destroyed, 1)
+	testing.expect(t, !state.manager.windows[1].resize_transitioning)
+	mac.resize_cover_frame(&state, 1, after, before, 1.2)
+	testing.expect_value(t, c.created, 1)
+	state.manager.windows[1].grabbed = false
+	state.manager.native_resize_window = 1
+	mac.resize_cover_frame(&state, 1, after, before, 1.3)
+	testing.expect_value(t, c.created, 1)
+	state.manager.native_resize_window = 0
+	state.mouse.drag = {window = 1, action = .Resize}
+	mac.resize_cover_frame(&state, 1, after, before, 1.35)
+	testing.expect_value(t, c.created, 1)
+	state.mouse.drag = {}
+	mac.resize_cover_frame(&state, 1, after, before, 1.4)
+	testing.expect_value(t, c.created, 2)
+}
+
+@(test)
 resize_cover_retargets_one_capture_and_fades_to_live_contents :: proc(
 	t: ^testing.T,
 ) {

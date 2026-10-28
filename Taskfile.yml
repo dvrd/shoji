@@ -252,6 +252,18 @@ tasks:
       - '{{.ODIN_ARM64E}} build tools/window-interception/hook-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-hook-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-hook-selftest
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-hook-selftest'
+  build:windowserver-abi-selftest:
+    deps: [build:inspector]
+    desc: Build the owned C/Odin ABI fixture (does not attach to or modify any process)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '/usr/bin/clang -arch arm64e -std=c11 -O2 -Wall -Wextra -Werror -c tools/window-interception/abi-selftest/native.c -o bin/shoji-ws-abi-native.o'
+      - '{{.ODIN_ARM64E}} build tools/window-interception/abi-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-abi-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - ./bin/inspector normalize-arm64e bin/shoji-ws-abi-selftest
+      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-abi-selftest'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:

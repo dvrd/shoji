@@ -38,6 +38,36 @@ windowserver_target_requires_the_exact_system_executable :: proc(
 }
 
 @(test)
+windowserver_ordering_target_requires_exact_identity_range_and_signature :: proc(t: ^testing.T) {
+	location := target.Ordering_Location {
+		uuid = target.ORDERING_IMAGE_UUID,
+		slide = 0x46d8000,
+		text_start = 0x18b76b000,
+		text_size = 0x1000000,
+		candidate = 0x18bace260,
+	}
+	testing.expect(t, target.valid_ordering_location(location))
+	signature := target.ORDERING_ENTRY_SIGNATURE
+	testing.expect(t, target.matches_ordering_entry(location, signature[:]))
+	changed := location
+	changed.uuid[0] ~= 1
+	testing.expect(t, !target.valid_ordering_location(changed))
+	changed = location
+	changed.candidate += 4
+	testing.expect(t, !target.valid_ordering_location(changed))
+	changed = location
+	changed.text_size = u64(location.candidate - location.text_start) + 15
+	testing.expect(t, !target.valid_ordering_location(changed))
+	changed = location
+	changed.text_start = max(u64) - 7
+	changed.text_size = max(u64)
+	testing.expect(t, !target.valid_ordering_location(changed))
+	testing.expect(t, !target.matches_ordering_entry(location, signature[:15]))
+	signature[15] ~= 1
+	testing.expect(t, !target.matches_ordering_entry(location, signature[:]))
+}
+
+@(test)
 windowserver_protocol_has_an_independent_versioned_handshake :: proc(
 	t: ^testing.T,
 ) {

@@ -32,6 +32,22 @@ encode_branch :: proc(source, destination: u64) -> (instruction: u32, ok: bool) 
 	return 0x14000000 | (u32(-words) & 0x03ffffff), true
 }
 
+// Find an aligned candidate on either side of a replacement without wrapping.
+// The whole region stays conservatively within the direct-branch span.
+nearby_region_base :: proc(replacement_page, distance, region_size, page_size: u64, below: bool) -> (candidate: u64, ok: bool) {
+	if page_size == 0 || page_size & (page_size - 1) != 0 ||
+	   replacement_page & (page_size - 1) != 0 ||
+	   distance == 0 || distance & (page_size - 1) != 0 ||
+	   region_size == 0 || region_size & (page_size - 1) != 0 ||
+	   region_size >= 0x08000000 || distance > 0x08000000 - region_size {return}
+	if below {
+		if distance > replacement_page {return}
+		return replacement_page - distance, true
+	}
+	if replacement_page > max(u64) - distance {return}
+	return replacement_page + distance, true
+}
+
 // This is the exact first instruction observed in the guest's 26A434
 // ordering function, not a general-purpose instruction relocator.
 PACIBSP :: u32(0xd503237f)

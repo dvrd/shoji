@@ -5,6 +5,12 @@ import "core:strings"
 Version :: struct {
 	major, minor, patch: int,
 }
+// The private Dock focus entry crashed on the validated arm64 15.6 target.
+// Do not advertise it until its exact ABI and target are established.
+focus_target_blocked :: proc(v: Version) -> bool {
+	when ODIN_ARCH == .arm64 {return v == (Version{15, 6, 0})}
+	return false
+}
 // Explicit candidate builds allow target-OS validation without changing the
 // default acceptance policy for the daily-use payload.
 MACOS27_CANDIDATE :: #config(SHOJI_MACOS27_CANDIDATE, false)
