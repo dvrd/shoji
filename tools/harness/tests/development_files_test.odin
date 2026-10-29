@@ -2,7 +2,7 @@ package tests
 
 import i "../../inspector/inspect"
 import tc "../../common"
-import s "../../../src/support"
+import s "../../../src"
 import d "../../dev/dev"
 import "core:mem"
 import "core:os"

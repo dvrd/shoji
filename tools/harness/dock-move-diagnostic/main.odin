@@ -1,8 +1,7 @@
 package main
 
-import mac "../../../src/macos"
-import e "../../../src/engine"
-import wire "../../../src/addition/protocol"
+import mac "../../../src"
+import wire "../../../src/dock"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
@@ -21,12 +20,16 @@ main :: proc() {
 	cid := mac.SLSMainConnectionID(); if cid == 0 {fmt.eprintln("WindowServer unavailable"); os.exit(1)}
 	owner, known := mac.animation_recovery_query_owner(cid, wid); actual: i32
 	if !known || mac.SLSConnectionGetPID(owner, &actual) != 0 || actual != pid {fmt.eprintln("fixture owner mismatch"); os.exit(1)}
-	before: e.Rect
+	before: mac.Rect
 	if mac.SLSGetWindowBounds(cid,wid,&before)!=0 {fmt.eprintln("cannot read fixture bounds"); os.exit(1)}
 	packet := wire.begin(.Window_Move)
 	wire.pack(&packet,wid); wire.pack(&packet,i32(before.x)-20); wire.pack(&packet,i32(before.y))
 	_, err := mac.addition_exchange(&packet)
-	after: e.Rect; code := mac.SLSGetWindowBounds(cid,wid,&after)
+	after: mac.Rect; code := mac.SLSGetWindowBounds(cid,wid,&after)
 	fmt.printf("window=%d requested_x=%d before=%v after=%v readback_status=%d response=%s\n",wid,i32(before.x)-20,before,after,code,err)
-	if code != 0 {os.exit(1)}
+	if err != "" || code != 0 {os.exit(1)}
+	if after.x != before.x - 20 || after.y != before.y || after.w != before.w || after.h != before.h {
+		fmt.eprintln("fixture did not reach the requested bounds")
+		os.exit(1)
+	}
 }

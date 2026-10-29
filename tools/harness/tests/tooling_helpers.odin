@@ -1,7 +1,7 @@
 package tests
 
 import tc "../../common"
-import s "../../../src/support"
+import s "../../../src"
 import "core:fmt"
 import "core:strings"
 
@@ -66,7 +66,7 @@ tool_execute :: proc(user: rawptr, request: s.Request) -> s.Result {
 	   (r.shoji_running || a[1] == "--check-sa") {
 		return {0, "[]", "", false}
 	}
-	return s.run(
+	return s.process_run(
 		{},
 		a,
 		request.dir,

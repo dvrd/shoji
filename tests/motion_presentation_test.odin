@@ -1,17 +1,16 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:testing"
 import "core:time"
 
 Motion_Recorder :: struct {
-	frame: e.Rect,
+	frame: mac.Rect,
 	applied, presented, destroyed: int,
 	geometry_batched, cover_batched: bool,
 	alpha: f64,
 }
-motion_apply :: proc(state: ^mac.State, window: u32, frame: e.Rect) -> string {
+motion_apply :: proc(state: ^mac.State, window: u32, frame: mac.Rect) -> string {
 	r := (^Motion_Recorder)(state.event_user)
 	mac.resize_cover_frame(state, window, frame, r.frame, 10)
 	r.frame, r.geometry_batched = frame, state.frame_updates.depth > 0
@@ -21,7 +20,7 @@ motion_apply :: proc(state: ^mac.State, window: u32, frame: e.Rect) -> string {
 motion_cover_create :: proc(
 	_: ^mac.State,
 	_: u32,
-	frame: e.Rect,
+	frame: mac.Rect,
 ) -> (
 	mac.Owned_Surface,
 	string,
@@ -30,7 +29,7 @@ motion_cover_update :: proc(
 	state: ^mac.State,
 	_: mac.Owned_Surface,
 	_: u32,
-	_: e.Rect,
+	_: mac.Rect,
 	alpha: f64,
 	_: bool,
 ) -> string {
@@ -42,7 +41,7 @@ motion_cover_update :: proc(
 motion_cover_destroy :: proc(state: ^mac.State, _: mac.Owned_Surface) {
 	(^Motion_Recorder)(state.event_user).destroyed += 1
 }
-motion_cover_bounds :: proc(state: ^mac.State, _: u32) -> (e.Rect, bool) {
+motion_cover_bounds :: proc(state: ^mac.State, _: u32) -> (mac.Rect, bool) {
 	return (^Motion_Recorder)(state.event_user).frame, true
 }
 
@@ -50,9 +49,9 @@ motion_cover_bounds :: proc(state: ^mac.State, _: u32) -> (e.Rect, bool) {
 three_finger_drag_uses_the_display_presentation_batch :: proc(t: ^testing.T) {
 	state: mac.State; actions: Recorder; updates: Frame_Update_Recorder
 	fixture(&state.manager, &actions)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	defer delete(updates.enabled)
-	e.execute(&state.manager, {"space", "--layout", "scroll"})
+	mac.execute(&state.manager, {"space", "--layout", "scroll"})
 	state.manager.spaces[0].view.scroll.dragging = true
 	state.frame_updates.user, state.frame_updates.set_enabled = &updates, frame_update_set
 	testing.expect(t, mac.motion_active(&state))
@@ -69,7 +68,7 @@ display_pulse_coordinates_bsp_geometry_and_contents_in_one_batch :: proc(
 		frame = {0, 0, 500, 800},
 	}; updates: Frame_Update_Recorder
 	fixture(&state.manager, &actions)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	defer delete(updates.enabled)
 	defer mac.animation_stop(&state); defer mac.resize_cover_stop(&state)
 	state.event_user = &r; state.manager.resize_fade = true

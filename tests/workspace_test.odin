@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:testing"
 
 @(test)
@@ -9,9 +8,9 @@ read_only_inspection_rejects_backend_mutations_before_native_calls :: proc(t: ^t
 	state := mac.State {
 		read_only = true,
 	}
-	testing.expect(t, mac.perform(&state, {kind = .Frame, window = 1}) != "")
-	testing.expect(t, mac.perform(&state, {kind = .Space_Focus, space = 100}) != "")
-	testing.expect(t, mac.perform(&state, {kind = .Expose, window = 1}) != "")
+	testing.expect(t, mac.perform_native(&state, {kind = .Frame, window = 1}) != "")
+	testing.expect(t, mac.perform_native(&state, {kind = .Space_Focus, space = 100}) != "")
+	testing.expect(t, mac.perform_native(&state, {kind = .Expose, window = 1}) != "")
 }
 
 Event_Recorder :: struct {
@@ -25,16 +24,16 @@ record_event :: proc(user: rawptr, event: mac.Event) {
 mission_control_suspends_layout_until_exit :: proc(t: ^testing.T) {
 	state: mac.State;recorder: Recorder
 	fixture(&state.manager, &recorder)
-	defer e.manager_destroy(&state.manager);defer delete(recorder.actions)
+	defer mac.manager_destroy(&state.manager);defer delete(recorder.actions)
 	mac.workspace_record(&state, "AXExposeShowAllWindows")
 	mac.workspace_tick(&state, detect_dock = false)
 	testing.expect(t, state.manager.suspended)
-	testing.expect_value(t, e.flush(&state.manager, e.space_by_id(&state.manager, 100)), "")
+	testing.expect_value(t, mac.flush(&state.manager, mac.space_by_id(&state.manager, 100)), "")
 	testing.expect_value(t, len(recorder.actions), 0)
 	mac.workspace_record(&state, "AXExposeExit")
 	mac.workspace_tick(&state, detect_dock = false)
 	testing.expect(t, !state.manager.suspended)
-	testing.expect_value(t, e.flush(&state.manager, e.space_by_id(&state.manager, 100)), "")
+	testing.expect_value(t, mac.flush(&state.manager, mac.space_by_id(&state.manager, 100)), "")
 	testing.expect(t, len(recorder.actions) > 0)
 }
 
@@ -44,8 +43,8 @@ workspace_notifications_coalesce_and_request_refresh :: proc(t: ^testing.T) {
 	recorder: Event_Recorder
 	state.event_sink, state.event_user = record_event, &recorder
 	defer delete(recorder.events)
-	e.manager_init(&state.manager)
-	defer e.manager_destroy(&state.manager)
+	mac.manager_init(&state.manager)
+	defer mac.manager_destroy(&state.manager)
 	mac.workspace_record(&state, "NSWorkspaceDidWakeNotification")
 	mac.workspace_record(&state, "NSWorkspaceDidWakeNotification")
 	mac.workspace_record(&state, "com.apple.dock.prefchanged")
@@ -62,7 +61,7 @@ workspace_notifications_coalesce_and_request_refresh :: proc(t: ^testing.T) {
 application_visibility_signals_follow_snapshot_transitions :: proc(t: ^testing.T) {
 	state: mac.State;recorder: Recorder;events: Event_Recorder
 	fixture(&state.manager, &recorder)
-	defer e.manager_destroy(
+	defer mac.manager_destroy(
 		&state.manager,
 	);defer delete(recorder.actions);defer delete(events.events)
 	state.applications = make(map[i32]mac.Application)
@@ -90,8 +89,8 @@ application_visibility_signals_follow_snapshot_transitions :: proc(t: ^testing.T
 @(test)
 workspace_observer_registers_and_cleans_up_without_desktop_changes :: proc(t: ^testing.T) {
 	state: mac.State
-	e.manager_init(&state.manager)
-	defer e.manager_destroy(&state.manager)
+	mac.manager_init(&state.manager)
+	defer mac.manager_destroy(&state.manager)
 	testing.expect(t, mac.workspace_start(&state))
 	mac.workspace_stop(&state)
 	testing.expect(t, state.workspace_events.listener == nil)

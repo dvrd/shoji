@@ -1,6 +1,6 @@
 package tests
 
-import e "../src/engine"
+import e "../src"
 import "core:testing"
 
 // Independently authored behavior fixtures. Numerical expectations and assumptions

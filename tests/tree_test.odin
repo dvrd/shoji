@@ -1,6 +1,6 @@
 package tests
 
-import e "../src/engine"
+import e "../src"
 import "core:testing"
 
 assert_tree :: proc(t: ^testing.T, n: ^e.Node, parent: ^e.Node, seen: ^map[u32]bool) -> int {

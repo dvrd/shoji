@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:math"
 import "core:testing"
 import "core:time"
@@ -15,18 +14,18 @@ foreign motion_test_cg {
 scroll_keyboard_pan_begins_at_rendered_strip_without_independent_window_animations :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	e.execute(&m, {"window", "1", "--focus"})
+	mac.execute(&m, {"window", "1", "--focus"})
 	before := m.windows[2].frame
 	testing.expect(
 		t,
-		!e.execute(&m, {"config", "scroll_animation", "on"}).failed,
+		!mac.execute(&m, {"config", "scroll_animation", "on"}).failed,
 	)
 	m.animation_duration = 0.18
 	resize(&r.actions, 0)
-	e.execute(&m, {"window", "3", "--focus"})
+	mac.execute(&m, {"window", "3", "--focus"})
 	testing.expect_value(t, m.focused, u32(3))
 	testing.expect_value(t, m.windows[2].frame, before)
 	for a in r.actions {
@@ -40,8 +39,8 @@ scroll_keyboard_pan_begins_at_rendered_strip_without_independent_window_animatio
 scroll_release_matches_pinned_snap_and_directional_focus_examples :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
 	cases := [5]struct {
 		position, velocity, target: f64,
@@ -54,12 +53,12 @@ scroll_release_matches_pinned_snap_and_directional_focus_examples :: proc(
 		{300, 0, -16, 2},
 	}
 	for c in cases {
-		snap := e.scroll_snap_target(&m.spaces[0].view, c.position, c.velocity)
+		snap := mac.scroll_snap_target(&m.spaces[0].view, c.position, c.velocity)
 		testing.expect_value(t, snap.offset, c.target)
 		testing.expect_value(t, snap.window, c.window)
 	}
-	e.execute(&m, {"config", "scroll_center_focused_column", "always"})
-	snap := e.scroll_snap_target(&m.spaces[0].view, 300, 0)
+	mac.execute(&m, {"config", "scroll_center_focused_column", "always"})
+	snap := mac.scroll_snap_target(&m.spaces[0].view, 300, 0)
 	testing.expect_value(t, snap.offset, f64(300))
 	testing.expect_value(t, snap.window, u32(2))
 }
@@ -68,22 +67,22 @@ scroll_release_matches_pinned_snap_and_directional_focus_examples :: proc(
 scroll_shared_spring_preserves_visible_spacing_and_ends_exactly :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	e.execute(&m, {"window", "1", "--focus"})
-	e.execute(&m, {"config", "scroll_animation", "on"})
+	mac.execute(&m, {"window", "1", "--focus"})
+	mac.execute(&m, {"config", "scroll_animation", "on"})
 	m.animation_duration = 0.5
-	e.execute(&m, {"window", "3", "--focus"})
+	mac.execute(&m, {"window", "3", "--focus"})
 	for at in ([4]f64{0.04, 0.08, 0.12, 0.2}) {
-		testing.expect_value(t, e.scroll_motion_tick(&m, at), "")
+		testing.expect_value(t, mac.scroll_motion_tick(&m, at), "")
 		testing.expect(
 			t,
 			math.abs(m.windows[3].frame.x - m.windows[2].frame.x - 632) < 1e-9,
 		)
 		testing.expect_value(t, m.windows[2].frame.w, f64(616))
 	}
-	testing.expect_value(t, e.scroll_motion_tick(&m, 0.4), "")
+	testing.expect_value(t, mac.scroll_motion_tick(&m, 0.4), "")
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
 	testing.expect(t, !m.spaces[0].view.scroll.motion.active)
 }
@@ -92,44 +91,44 @@ scroll_shared_spring_preserves_visible_spacing_and_ends_exactly :: proc(
 scroll_retarget_and_gesture_takeover_preserve_current_position :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	e.execute(&m, {"window", "1", "--focus"})
-	e.execute(&m, {"config", "scroll_animation", "on"})
+	mac.execute(&m, {"window", "1", "--focus"})
+	mac.execute(&m, {"config", "scroll_animation", "on"})
 	m.animation_duration = 0.5
-	e.execute(&m, {"window", "3", "--focus"})
-	e.scroll_motion_tick(&m, 0.08)
+	mac.execute(&m, {"window", "3", "--focus"})
+	mac.scroll_motion_tick(&m, 0.08)
 	s := m.spaces[0]
 	position, velocity :=
 		s.view.scroll.motion.position, s.view.scroll.motion.velocity
-	e.execute(&m, {"window", "1", "--focus"})
+	mac.execute(&m, {"window", "1", "--focus"})
 	testing.expect_value(t, s.view.scroll.motion.position, position)
 	testing.expect_value(t, s.view.scroll.motion.initial_velocity, velocity)
-	e.scroll_begin_pan(&m, s)
+	mac.scroll_begin_pan(&m, s)
 	testing.expect_value(t, s.view.scroll.offset, position)
-	e.scroll_gesture_pan(&m, s.id, 20)
+	mac.scroll_gesture_pan(&m, s.id, 20)
 	testing.expect_value(t, s.view.scroll.motion.position, position + 20)
 	testing.expect_value(t, m.focused, u32(1))
 }
 
 @(test)
 scroll_release_focus_is_immediate_while_camera_settles :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	e.execute(&m, {"config", "scroll_animation", "on"})
+	mac.execute(&m, {"config", "scroll_animation", "on"})
 	m.animation_duration = 0.5
 	s := m.spaces[0]
-	e.scroll_begin_pan(&m, s)
-	e.scroll_gesture_pan(&m, s.id, -516)
+	mac.scroll_begin_pan(&m, s)
+	mac.scroll_gesture_pan(&m, s.id, -516)
 	testing.expect_value(t, s.view.scroll.offset, f64(100))
-	testing.expect_value(t, e.scroll_finish_pan(&m, s, 100), "")
+	testing.expect_value(t, mac.scroll_finish_pan(&m, s, 100), "")
 	testing.expect_value(t, m.focused, u32(2))
 	testing.expect_value(t, s.view.scroll.offset, f64(-16))
 	testing.expect_value(t, s.view.scroll.motion.position, f64(100))
 	testing.expect_value(t, s.view.scroll.motion.initial_velocity, f64(100))
-	testing.expect_value(t, e.scroll_motion_tick(&m, 0.4), "")
+	testing.expect_value(t, mac.scroll_motion_tick(&m, 0.4), "")
 	testing.expect_value(t, s.view.scroll.motion.position, f64(-16))
 }
 
@@ -137,48 +136,48 @@ scroll_release_focus_is_immediate_while_camera_settles :: proc(t: ^testing.T) {
 scroll_velocity_accounts_for_pause_and_ignores_out_of_order_samples :: proc(
 	t: ^testing.T,
 ) {
-	v: e.Scroll_Velocity
-	e.scroll_velocity_add(&v, 0, 0)
-	e.scroll_velocity_add(&v, 10, 0.01)
-	testing.expect(t, math.abs(e.scroll_velocity_get(&v) - 1000) < 0.001)
-	e.scroll_velocity_add(&v, 999, 0.005)
+	v: mac.Scroll_Velocity
+	mac.scroll_velocity_add(&v, 0, 0)
+	mac.scroll_velocity_add(&v, 10, 0.01)
+	testing.expect(t, math.abs(mac.scroll_velocity_get(&v) - 1000) < 0.001)
+	mac.scroll_velocity_add(&v, 999, 0.005)
 	testing.expect_value(t, v.position, f64(10))
-	e.scroll_velocity_add(&v, 0, 0.2)
-	testing.expect_value(t, e.scroll_velocity_get(&v), f64(0))
+	mac.scroll_velocity_add(&v, 0, 0.2)
+	testing.expect_value(t, mac.scroll_velocity_get(&v), f64(0))
 }
 
 @(test)
 scroll_pointer_stays_fixed_unless_explicitly_enabled :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	m.mouse.follows_focus = true
-	testing.expect(t, !e.pointer_follows_focus(&m, m.windows[1]))
-	e.execute(&m, {"config", "scroll_warp_pointer", "on"})
-	testing.expect(t, e.pointer_follows_focus(&m, m.windows[1]))
-	e.set_layout(&m, m.spaces[0], .BSP)
-	testing.expect(t, e.pointer_follows_focus(&m, m.windows[1]))
+	testing.expect(t, !mac.pointer_follows_focus(&m, m.windows[1]))
+	mac.execute(&m, {"config", "scroll_warp_pointer", "on"})
+	testing.expect(t, mac.pointer_follows_focus(&m, m.windows[1]))
+	mac.set_layout(&m, m.spaces[0], .BSP)
+	testing.expect(t, mac.pointer_follows_focus(&m, m.windows[1]))
 }
 
 @(test)
 scroll_animated_camera_rebases_when_an_earlier_column_resizes_or_disappears :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	e.execute(&m, {"config", "scroll_animation", "on"})
+	mac.execute(&m, {"config", "scroll_animation", "on"})
 	m.animation_duration = 0.5
 	s := m.spaces[0]
-	e.find(s.view.root, 1).column_width = 700
-	e.flush(&m, s)
+	mac.find(s.view.root, 1).column_width = 700
+	mac.flush(&m, s)
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
 	testing.expect(t, s.view.scroll.motion.active)
-	e.scroll_motion_tick(&m, 0.4)
+	mac.scroll_motion_tick(&m, 0.4)
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
-	e.remove_window(&m, 1); e.flush(&m, s)
+	mac.remove_window(&m, 1); mac.flush(&m, s)
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
 	testing.expect(t, s.view.scroll.motion.active)
-	e.scroll_motion_tick(&m, 0.8)
+	mac.scroll_motion_tick(&m, 0.8)
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
 }
 
@@ -186,15 +185,15 @@ scroll_animated_camera_rebases_when_an_earlier_column_resizes_or_disappears :: p
 scroll_failed_release_focus_keeps_logical_focus_and_releases_drag :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	e.execute(&m, {"config", "scroll_animation", "on"})
+	mac.execute(&m, {"config", "scroll_animation", "on"})
 	m.animation_duration = 0.5
 	s := m.spaces[0]
-	e.scroll_begin_pan(&m, s); e.scroll_gesture_pan(&m, s.id, -516)
+	mac.scroll_begin_pan(&m, s); mac.scroll_gesture_pan(&m, s.id, -516)
 	r.fail = true
-	testing.expect(t, e.scroll_finish_pan(&m, s, 100) != "")
+	testing.expect(t, mac.scroll_finish_pan(&m, s, 100) != "")
 	testing.expect_value(t, m.focused, u32(3))
 	testing.expect(t, !s.view.scroll.dragging)
 	testing.expect_value(t, s.view.scroll.offset, f64(100))
@@ -206,10 +205,10 @@ native_scroll_input_releases_to_shared_spring_and_discards_native_momentum :: pr
 ) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
 	m := &state.manager
-	defer e.manager_destroy(m); defer delete(r.actions)
+	defer mac.manager_destroy(m); defer delete(r.actions)
 	niri_open(m, 2); niri_open(m, 3)
-	e.execute(m, {"window", "1", "--focus"})
-	e.execute(m, {"config", "scroll_animation", "on"})
+	mac.execute(m, {"window", "1", "--focus"})
+	mac.execute(m, {"config", "scroll_animation", "on"})
 	m.animation_duration, m.scroll_time, m.mouse.scroll = 0.5, 1.05, true
 	event := CGEventCreateScrollWheelEvent(nil, 0, 2, 0, i32(-120))
 	testing.expect(t, event != nil)
@@ -256,7 +255,7 @@ native_scroll_input_releases_to_shared_spring_and_discards_native_momentum :: pr
 	)
 	testing.expect_value(t, state.mouse.scroll_delta, f64(0))
 	testing.expect(t, !state.mouse.scroll_tracking)
-	e.scroll_motion_tick(m, 1.5)
+	mac.scroll_motion_tick(m, 1.5)
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
 }
 
@@ -265,10 +264,10 @@ scroll_rediscovery_waits_for_camera_and_resumes_after_settling :: proc(
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	state.event_user = &r
-	e.set_layout(&state.manager, state.manager.spaces[0], .Scroll)
-	e.flush(&state.manager, state.manager.spaces[0])
+	mac.set_layout(&state.manager, state.manager.spaces[0], .Scroll)
+	mac.flush(&state.manager, state.manager.spaces[0])
 	r.calls = 0
 	state.manager.spaces[0].view.scroll.motion.active = true
 	state.dirty = true

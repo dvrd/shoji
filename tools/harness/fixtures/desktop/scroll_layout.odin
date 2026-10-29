@@ -1,7 +1,6 @@
 package main
 
-import e "../../../../src/engine"
-import mac "../../../../src/macos"
+import mac "../../../../src"
 import "base:intrinsics"
 import "core:encoding/json"
 import "core:fmt"
@@ -13,7 +12,7 @@ Owned_Scroll :: struct {
 	windows: map[u32]^objc.Object,
 	height: f64,
 }
-owned_scroll_apply :: proc(user: rawptr, action: e.Action) -> string {
+owned_scroll_apply :: proc(user: rawptr, action: mac.Action) -> string {
 	owned := (^Owned_Scroll)(user)
 	window := owned.windows[action.window]
 	if window == nil {
@@ -31,13 +30,13 @@ owned_scroll_apply :: proc(user: rawptr, action: e.Action) -> string {
 	}
 	return ""
 }
-owned_scroll_readback :: proc(m: ^e.Manager, cid: i32, step: string) -> bool {
+owned_scroll_readback :: proc(m: ^mac.Manager, cid: i32, step: string) -> bool {
 	deadline := time.time_add(time.now(), time.Second)
 	for time.diff(time.now(), deadline) > 0 {
 		mac.CFRunLoopRunInMode(mac.kCFRunLoopDefaultMode, 0.02, false)
 		settled := true
 		for id, w in m.windows {
-			actual: e.Rect
+			actual: mac.Rect
 			if mac.SLSGetWindowBounds(cid, id, &actual) != 0 ||
 			   math.abs(actual.x - w.frame.x) > 1 ||
 			   math.abs(actual.y - w.frame.y) > 1 ||
@@ -52,7 +51,7 @@ owned_scroll_readback :: proc(m: ^e.Manager, cid: i32, step: string) -> bool {
 	}
 	ok := true
 	for id, w in m.windows {
-		actual: e.Rect
+		actual: mac.Rect
 		code := mac.SLSGetWindowBounds(cid, id, &actual)
 		matches :=
 			code == 0 &&
@@ -63,7 +62,7 @@ owned_scroll_readback :: proc(m: ^e.Manager, cid: i32, step: string) -> bool {
 		data, err := json.marshal(struct {
 			step: string,
 			window: u32,
-			expected, actual: e.Rect,
+			expected, actual: mac.Rect,
 			matches: bool,
 		}{step, id, w.frame, actual, matches})
 		if err != nil {
@@ -85,13 +84,13 @@ run_owned_scroll :: proc(cid: i32, animate: bool = false) -> bool {
 		}
 		delete(owned.windows)
 	}
-	m: e.Manager
-	e.manager_init(&m, owned_scroll_apply, &owned)
-	defer e.manager_destroy(&m)
-	s := e.add_space(&m, 1, 1, 1, {80, 80, 1280, 800})
+	m: mac.Manager
+	mac.manager_init(&m, owned_scroll_apply, &owned)
+	defer mac.manager_destroy(&m)
+	s := mac.add_space(&m, 1, 1, 1, {80, 80, 1280, 800})
 	s.visible = true; m.active_space = 1
 	s.view.gap = 16
-	e.set_layout(&m, s, .Scroll)
+	mac.set_layout(&m, s, .Scroll)
 	ids: [4]u32
 	for i in 0 ..< len(ids) {
 		window := make_window(fmt.tprintf("Shoji disposable scroll %d", i + 1))
@@ -103,7 +102,7 @@ run_owned_scroll :: proc(cid: i32, animate: bool = false) -> bool {
 			intrinsics.objc_send(nil, window, "close"); return false
 		}
 		owned.windows[id] = window; ids[i] = id
-		e.add_window(
+		mac.add_window(
 			&m,
 			{
 				id = id,
@@ -115,8 +114,8 @@ run_owned_scroll :: proc(cid: i32, animate: bool = false) -> bool {
 				opacity = 1,
 			},
 		)
-		e.focus_window(&m, id)
-		if e.flush(&m, s) != "" ||
+		mac.focus_window(&m, id)
+		if mac.flush(&m, s) != "" ||
 		   !owned_scroll_readback(&m, cid, fmt.tprintf("open-%d", i + 1)) {
 			return false
 		}
@@ -132,7 +131,7 @@ run_owned_scroll :: proc(cid: i32, animate: bool = false) -> bool {
 		{"window", "--cycle-column-width", "next"},
 	}
 	for &command, i in commands {
-		response := e.execute(&m, command[:])
+		response := mac.execute(&m, command[:])
 		if response.failed {
 			fmt.eprintln(response.text); return false
 		}
@@ -145,16 +144,16 @@ run_owned_scroll :: proc(cid: i32, animate: bool = false) -> bool {
 		}
 	}
 	if animate {
-		e.set_layout(&m, s, .Float)
-		e.set_layout(&m, s, .Scroll)
-		e.focus_window(&m, ids[0]); e.flush(&m, s)
+		mac.set_layout(&m, s, .Float)
+		mac.set_layout(&m, s, .Scroll)
+		mac.focus_window(&m, ids[0]); mac.flush(&m, s)
 		if !owned_scroll_readback(&m, cid, "motion-baseline") {return false}
 		m.scroll_animate, m.animation_duration = true, 0.5
-		e.flush(&m, s)
-		response := e.execute(&m, {"window", fmt.tprintf("%d", ids[2]), "--focus"})
+		mac.flush(&m, s)
+		response := mac.execute(&m, {"window", fmt.tprintf("%d", ids[2]), "--focus"})
 		if response.failed {fmt.eprintln(response.text); return false}
 		for at in ([6]f64{0, 0.04, 0.08, 0.12, 0.2, 0.4}) {
-			if e.scroll_motion_tick(&m, at) != "" {return false}
+			if mac.scroll_motion_tick(&m, at) != "" {return false}
 			if !owned_scroll_readback(&m, cid, fmt.tprintf("camera-%.2f", at)) {return false}
 			if at > 0 && math.abs(m.windows[ids[2]].frame.x - m.windows[ids[1]].frame.x - 632) > 0.001 {return false}
 		}

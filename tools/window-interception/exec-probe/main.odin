@@ -3,7 +3,7 @@ package main
 // Disposable WindowServer memory-protection probe; never modifies existing code.
 import "base:runtime"
 import "core:sys/posix"
-import target "../../../src/addition/windowserver/target"
+import target "../../../src/experimental/window_server"
 
 foreign import system "system:System"
 @(default_calling_convention = "c")

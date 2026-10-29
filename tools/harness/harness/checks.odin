@@ -1,6 +1,6 @@
 package harness
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:os"
@@ -127,7 +127,7 @@ check_asm :: proc(c: tc.Context, args: []string) -> string {
 		if err = s.write(s.join(dir, "probe.odin"), item.source); err != "" {
 			return err
 		}
-		r := s.run(
+		r := s.process_run(
 			c.executor,
 			[]string {
 				odin,
@@ -222,7 +222,7 @@ validation_execute :: proc(
 	directory, name: string,
 	timeout: time.Duration = 300 * time.Second,
 ) -> Validation_Check {
-	r := s.run(
+	r := s.process_run(
 		c.executor,
 		args,
 		c.root,

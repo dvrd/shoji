@@ -1,6 +1,6 @@
 package development
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
@@ -330,7 +330,7 @@ signing_setup :: proc(
 					err,
 				)
 			}
-			if err = s.copy(certificate, cert); err != "" {
+			if err = s.copy_file(certificate, cert); err != "" {
 				return err
 			}
 		}

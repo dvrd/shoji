@@ -1,7 +1,6 @@
 package tests
 
-import mac "../src/macos"
-import e "../src/engine"
+import mac "../src"
 import "core:strings"
 import "core:testing"
 
@@ -12,23 +11,23 @@ focus_check_fake :: proc(user: rawptr, pid: i32, window: u32) -> bool {
 	return r.matched
 }
 
-focus_error_backend :: proc(user: rawptr, action: e.Action) -> string {
+focus_error_backend :: proc(user: rawptr, action: mac.Action) -> string {
 	if action.kind != .Focus {return ""}
 	return mac.focus_raise_result(-25205, 43, action.window, user, focus_check_fake)
 }
 
 @(test)
 scroll_keyboard_focus_tracks_a_verified_raise_error :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
-	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	m: mac.Manager; r: Recorder; fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
+	testing.expect(t, !mac.execute(&m, {"space", "--layout", "scroll"}).failed)
 	check := Focus_Check_Record{matched = true}
 	m.backend, m.backend_user = focus_error_backend, &check
-	testing.expect(t, !e.execute(&m, {"window", "--focus", "east"}).failed)
+	testing.expect(t, !mac.execute(&m, {"window", "--focus", "east"}).failed)
 	testing.expect_value(t, m.focused, u32(2))
 	testing.expect_value(t, check.window, u32(2))
 	check.matched = false
-	testing.expect(t, e.execute(&m, {"window", "--focus", "west"}).failed)
+	testing.expect(t, mac.execute(&m, {"window", "--focus", "west"}).failed)
 	testing.expect_value(t, m.focused, u32(2))
 }
 

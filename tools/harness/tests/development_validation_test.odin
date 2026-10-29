@@ -3,7 +3,7 @@ package tests
 import i "../../inspector/inspect"
 import h "../harness"
 import tc "../../common"
-import s "../../../src/support"
+import s "../../../src"
 import "core:mem"
 import "core:os"
 import "core:strconv"
@@ -11,6 +11,29 @@ import "core:strings"
 import posix "core:sys/posix"
 import "core:testing"
 import "core:time"
+
+@(test)
+native_prebuilt_fixture_requires_a_verified_regular_file :: proc(t: ^testing.T) {
+	arena: mem.Dynamic_Arena; mem.dynamic_arena_init(&arena)
+	defer mem.dynamic_arena_destroy(&arena)
+	context.allocator = mem.dynamic_arena_allocator(&arena)
+	context.temp_allocator = context.allocator
+	root, _ := s.temp("shoji-prebuilt-fixture-test"); defer os.remove_all(root)
+	r: Tool_Recorder
+	c := tool_context(root, &r)
+	testing.expect(t, h.build_live_helper(c, true) != "")
+	testing.expect_value(t, len(r.calls), 0)
+	_ = s.mkdir(s.join(root, "bin"))
+	_ = s.write(tc.binary(c, "harness-fixture"), "fixture")
+	r.fail_verify = true
+	testing.expect(t, h.build_live_helper(c, true) != "")
+	testing.expect_value(t, len(r.calls), 1)
+	r.fail_verify = false
+	testing.expect_value(t, h.build_live_helper(c, true), "")
+	for call in r.calls {
+		testing.expect(t, call.args[0] == "/usr/bin/codesign" || call.args[0] == "/usr/bin/shasum")
+	}
+}
 
 @(test)
 native_evidence_failures_propagate_and_preserve_original_failures :: proc(
@@ -95,7 +118,7 @@ native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
 		root = tc.project_root(),
 	}
 	fixture := s.join(root, "cancellation")
-	result := s.run(
+	result := s.process_run(
 		{},
 		[]string {
 			tc.compiler(c),
@@ -398,7 +421,7 @@ native_live_helper_emits_valid_json_without_windowserver :: proc(
 	c := tc.Context {
 		root = tc.project_root(),
 	}; helper := s.join(root, "helper")
-	r := s.run(
+	r := s.process_run(
 		{},
 		[]string {
 			tc.compiler(c),
@@ -414,7 +437,7 @@ native_live_helper_emits_valid_json_without_windowserver :: proc(
 	if r.code != 0 {
 		return
 	}
-	output := s.run(
+	output := s.process_run(
 		{},
 		[]string{helper, "--self-test-output"},
 		timeout = 15 * time.Second,

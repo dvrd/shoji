@@ -1,6 +1,6 @@
 package main
 
-import s "../../../../src/support"
+import s "../../../../src"
 import "core:fmt"
 import "core:os"
 import posix "core:sys/posix"
@@ -14,7 +14,7 @@ main :: proc() {
 		if os.args[1] == "worker-stubborn" {
 			script = `trap '' TERM; sleep 30 & echo "$!" > "$1"; wait`
 		}
-		r := s.run(
+		r := s.process_run(
 			{},
 			[]string{"/bin/sh", "-c", script, "owned-fixture", os.args[2]},
 		)
@@ -35,7 +35,7 @@ main :: proc() {
 			timeout = time.Second
 		}
 	}
-	result := s.run({}, args, timeout = timeout)
+	result := s.process_run({}, args, timeout = timeout)
 	if len(os.args) == 3 && os.args[1] != "interrupt" {
 		if !result.timed_out {
 			os.exit(3)
@@ -44,7 +44,7 @@ main :: proc() {
 		os.exit(1)
 	}
 	s.begin_cleanup()
-	cleanup := s.run({}, []string{"/usr/bin/true"})
+	cleanup := s.process_run({}, []string{"/usr/bin/true"})
 	s.end_cleanup()
 	if cleanup.code != 0 {
 		os.exit(2)

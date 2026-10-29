@@ -53,13 +53,13 @@ Current upstream also contains a gesture fallback for focus: it calculates index
 
 ## Local Shoji gap
 
-The current source routes `.Space_Focus`, creation/destruction/movement, and window-to-Space `.Space` actions through `addition_action`. Private Space queries already run in Shoji itself. Fullscreen uses the window's `AXFullScreen` attribute separately. Sources: [backend](src/macos/backend_darwin.odin), [protocol client](src/macos/addition_darwin.odin).
+The current source routes `.Space_Focus`, creation/destruction/movement, and window-to-Space `.Space` actions through `addition_action`. Private Space queries already run in Shoji itself. Fullscreen uses the window's `AXFullScreen` attribute separately. Sources: [backend](src/backend.odin), [protocol client](src/payload_client.odin).
 
-The payload performs focus inside Dock using `SLSShowSpaces`, `SLSHideSpaces`, `SLSManagedDisplaySetCurrentSpace` and Dock object state. Creation/removal/reordering use discovered Dock functions. The loader obtains Dock's task port with `task_for_pid` and explicitly reports the SIP/debugging requirement on failure. Sources: [payload Spaces](src/addition/payload/payload_darwin.odin), [loader](src/addition/loader/loader_darwin.odin).
+The payload performs focus inside Dock using `SLSShowSpaces`, `SLSHideSpaces`, `SLSManagedDisplaySetCurrentSpace` and Dock object state. Creation/removal/reordering use discovered Dock functions. The loader obtains Dock's task port with `task_for_pid` and explicitly reports the SIP/debugging requirement on failure. Sources: [payload Spaces](src/addition/payload/payload_darwin.odin), [loader](src/dock/loader_darwin.odin).
 
 Consequently, removing `--sa` alone will not preserve current Space commands. Copying payload calls into the daemon is not a demonstrated solution: those calls currently run with Dock's connection and internal objects. This is an inference from the local routing and payload above.
 
-The dialog visibility fix also uses window layering through the addition. A SIP-on migration needs a separate review of that behavior; passing Space operations alone would not certify the complete everyday configuration. Sources: [backend](src/macos/backend_darwin.odin), [addition actions](src/macos/addition_darwin.odin).
+The dialog visibility fix also uses window layering through the addition. A SIP-on migration needs a separate review of that behavior; passing Space operations alone would not certify the complete everyday configuration. Sources: [backend](src/backend.odin), [addition actions](src/payload_client.odin).
 
 ## Alternative: virtual workspaces
 

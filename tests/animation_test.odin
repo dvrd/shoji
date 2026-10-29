@@ -1,14 +1,13 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:testing"
 import "core:time"
 
 Animation_Recorder :: struct {
 	created, restored, destroyed, updates: int,
 	fail_restore, fail_apply: bool,
-	last: e.Rect,
+	last: mac.Rect,
 	applied: int,
 }
 proxy_create :: proc(
@@ -31,7 +30,7 @@ proxy_create :: proc(
 proxy_update :: proc(
 	state: ^mac.State,
 	proxy: mac.Animation_Proxy,
-	frame: e.Rect,
+	frame: mac.Rect,
 ) -> string {
 	r := (^Animation_Recorder)(state.event_user); r.updates += 1
 	r.last = frame; return ""
@@ -49,7 +48,7 @@ proxy_destroy :: proc(state: ^mac.State, proxy: mac.Animation_Proxy) {
 	r := (^Animation_Recorder)(state.event_user)
 	r.destroyed += 1
 }
-proxy_apply :: proc(state: ^mac.State, window: u32, frame: e.Rect) -> string {
+proxy_apply :: proc(state: ^mac.State, window: u32, frame: mac.Rect) -> string {
 	r := (^Animation_Recorder)(state.event_user)
 	if r.fail_apply {
 		return "frame failed"
@@ -61,7 +60,7 @@ proxy_apply :: proc(state: ^mac.State, window: u32, frame: e.Rect) -> string {
 @(test)
 layout_growth_uses_live_frames_including_close_reflow :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	state.manager.windows[1].frame = {0, 0, 500, 800}
 	fill := mac.animation_frame_action(
 		&state,
@@ -99,7 +98,7 @@ live_resize_animates_real_frames_without_capture_or_scaling :: proc(
 ) {
 	state: mac.State; r: Recorder; animation: Animation_Recorder
 	fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.animation_stop(&state)
 	state.event_user = &animation
 	state.animation_backend = {
@@ -130,11 +129,11 @@ live_resize_animates_real_frames_without_capture_or_scaling :: proc(
 	testing.expect_value(t, animation.created, 0)
 	testing.expect_value(t, animation.applied, 0)
 	mac.animation_tick(&state, time.time_add(began, 500 * time.Millisecond))
-	testing.expect_value(t, animation.last, e.Rect{0, 0, 900, 700})
+	testing.expect_value(t, animation.last, mac.Rect{0, 0, 900, 700})
 	testing.expect_value(t, animation.applied, 1)
 	testing.expect_value(t, animation.updates, 0)
 	mac.animation_tick(&state, time.time_add(began, time.Second))
-	testing.expect_value(t, animation.last, e.Rect{0, 0, 1000, 800})
+	testing.expect_value(t, animation.last, mac.Rect{0, 0, 1000, 800})
 	testing.expect_value(t, len(state.animations), 0)
 	testing.expect_value(t, animation.restored, 0)
 	testing.expect_value(t, animation.destroyed, 0)
@@ -146,7 +145,7 @@ live_resize_retargets_and_cleans_up_after_frame_failure :: proc(
 ) {
 	state: mac.State; r: Recorder; animation: Animation_Recorder
 	fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.animation_stop(&state)
 	state.event_user = &animation
 	state.animation_backend = {
@@ -183,7 +182,7 @@ live_resize_retargets_and_cleans_up_after_frame_failure :: proc(
 		},
 		middle,
 	)
-	testing.expect_value(t, state.animations[1].from, e.Rect{0, 0, 900, 700})
+	testing.expect_value(t, state.animations[1].from, mac.Rect{0, 0, 900, 700})
 	animation.fail_apply = true
 	mac.animation_tick(&state, time.time_add(middle, 100 * time.Millisecond))
 	testing.expect_value(t, len(state.animations), 0)
@@ -197,7 +196,7 @@ proxy_animation_interpolates_and_restores_before_destroying :: proc(
 ) {
 	state: mac.State; recorder: Recorder; animation: Animation_Recorder
 	fixture(&state.manager, &recorder)
-	defer e.manager_destroy(&state.manager); defer delete(recorder.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(recorder.actions)
 	state.event_user = &animation
 	state.animation_backend = {
 		proxy_create,
@@ -226,7 +225,7 @@ proxy_animation_interpolates_and_restores_before_destroying :: proc(
 		&state,
 		time.time_add(job.began, 500 * time.Millisecond),
 	)
-	testing.expect_value(t, animation.last, e.Rect{50, 25, 150, 150})
+	testing.expect_value(t, animation.last, mac.Rect{50, 25, 150, 150})
 	animation.fail_restore = true
 	mac.animation_tick(&state, time.time_add(job.began, 2 * time.Second))
 	testing.expect_value(t, animation.destroyed, 0)
@@ -242,7 +241,7 @@ proxy_animation_interpolates_and_restores_before_destroying :: proc(
 proxy_frame_failure_restores_and_releases_resources :: proc(t: ^testing.T) {
 	state: mac.State; recorder: Recorder; animation: Animation_Recorder
 	fixture(&state.manager, &recorder)
-	defer e.manager_destroy(&state.manager); defer delete(recorder.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(recorder.actions)
 	state.event_user = &animation; animation.fail_apply = true
 	state.animation_backend = {
 		proxy_create,
@@ -274,13 +273,13 @@ proxy_frame_failure_restores_and_releases_resources :: proc(t: ^testing.T) {
 easing_curves_have_exact_endpoints_and_monotonic_frames :: proc(
 	t: ^testing.T,
 ) {
-	for _, index in e.EASING_NAMES {
-		kind := e.Easing(index)
-		testing.expect_value(t, e.ease(kind, 0), f64(0))
-		testing.expect_value(t, e.ease(kind, 1), f64(1))
+	for _, index in mac.EASING_NAMES {
+		kind := mac.Easing(index)
+		testing.expect_value(t, mac.ease(kind, 0), f64(0))
+		testing.expect_value(t, mac.ease(kind, 1), f64(1))
 		previous: f64
 		for i in 1 ..= 100 {
-			value := e.ease(kind, f64(i) / 100)
+			value := mac.ease(kind, f64(i) / 100)
 			testing.expect(t, value >= previous && value >= 0 && value <= 1)
 			previous = value
 		}
@@ -293,7 +292,7 @@ rapid_window_animation_retargets_the_existing_proxy_without_restoring :: proc(
 ) {
 	state: mac.State; recorder: Recorder; animation: Animation_Recorder
 	fixture(&state.manager, &recorder)
-	defer e.manager_destroy(&state.manager); defer delete(recorder.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(recorder.actions)
 	state.event_user = &animation
 	state.animation_backend = {
 		proxy_create,
@@ -338,12 +337,12 @@ rapid_window_animation_retargets_the_existing_proxy_without_restoring :: proc(
 	testing.expect_value(t, animation.restored, 0)
 	testing.expect_value(t, animation.destroyed, 0)
 	mac.animation_tick(&state, time.time_add(now, 500 * time.Millisecond))
-	testing.expect_value(t, animation.last, e.Rect{125, 12.5, 225, 125})
+	testing.expect_value(t, animation.last, mac.Rect{125, 12.5, 225, 125})
 	// Retargeting retains the original native-scale capture for clipping.
 	testing.expect_value(
 		t,
 		state.animations[1].presentation.(mac.Animation_Proxy).frame,
-		e.Rect{0, 0, 100, 100},
+		mac.Rect{0, 0, 100, 100},
 	)
 	animation.fail_apply = true
 	testing.expect(
@@ -363,7 +362,7 @@ rapid_window_animation_retargets_the_existing_proxy_without_restoring :: proc(
 	testing.expect_value(
 		t,
 		state.animations[1].target,
-		e.Rect{200, 0, 300, 100},
+		mac.Rect{200, 0, 300, 100},
 	)
 	animation.fail_apply = false
 	mac.animation_tick(&state, time.time_add(now, 2 * time.Second))
@@ -380,7 +379,7 @@ animations_never_apply_old_geometry_to_reused_window_ids :: proc(
 		for operation in ([3]string{"tick", "finish", "interrupt"}) {
 			state: mac.State; r: Recorder; animation: Animation_Recorder
 			fixture(&state.manager, &r)
-			defer e.manager_destroy(&state.manager); defer delete(r.actions)
+			defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 			state.event_user = &animation
 			state.animation_backend = {
 				proxy_create,
@@ -407,10 +406,10 @@ animations_never_apply_old_geometry_to_reused_window_ids :: proc(
 				"",
 			)
 			pid := state.manager.windows[1].pid
-			e.remove_window(&state.manager, 1)
-			e.add_window(
+			mac.remove_window(&state.manager, 1)
+			mac.add_window(
 				&state.manager,
-				e.Window {
+				mac.Window {
 					id = 1,
 					pid = same_process ? pid : pid + 1,
 					role = "AXWindow",

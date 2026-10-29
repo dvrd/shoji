@@ -1,37 +1,36 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:testing"
 
 Tab_Probe :: struct {
 	observations: map[u32]mac.Window_Observation,
 }
-tab_probe :: proc(user: rawptr, state: ^mac.State, window: ^e.Window) -> mac.Window_Observation {
+tab_probe :: proc(user: rawptr, state: ^mac.State, window: ^mac.Window) -> mac.Window_Observation {
 	return (^Tab_Probe)(user).observations[window.id]
 }
 @(test)
 ordered_out_tab_is_untiled_invisible_and_not_draggable :: proc(t: ^testing.T) {
-	m: e.Manager;rec: Recorder;fixture(&m, &rec)
-	defer e.manager_destroy(&m);defer delete(rec.actions)
+	m: mac.Manager;rec: Recorder;fixture(&m, &rec)
+	defer mac.manager_destroy(&m);defer delete(rec.actions)
 	w := m.windows[1];w.ordered_in = false;w.manage_override = true
-	testing.expect(t, !e.managed(w))
-	testing.expect(t, !e.window_json(&m, w).is_visible)
-	testing.expect_value(t, e.mouse_begin(&m, 1, .Move, {0, 0}).window, u32(0))
-	testing.expect_value(t, e.reconcile_window_memberships(&m), "")
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) == nil)
+	testing.expect(t, !mac.managed(w))
+	testing.expect(t, !mac.window_json(&m, w).is_visible)
+	testing.expect_value(t, mac.mouse_begin(&m, 1, .Move, {0, 0}).window, u32(0))
+	testing.expect_value(t, mac.reconcile_window_memberships(&m), "")
+	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 1) == nil)
 	w.ordered_in = true
-	testing.expect_value(t, e.reconcile_window_memberships(&m), "")
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) != nil)
+	testing.expect_value(t, mac.reconcile_window_memberships(&m), "")
+	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 1) != nil)
 	testing.expect(t, !w.minimized && !w.hidden)
 }
 @(test)
 tab_switch_frees_full_stack_before_inserting_active_tab :: proc(t: ^testing.T) {
-	m: e.Manager;rec: Recorder;fixture(&m, &rec)
-	defer e.manager_destroy(&m);defer delete(rec.actions)
-	testing.expect(t, !e.execute(&m, []string{"config", "layout", "stack"}).failed)
+	m: mac.Manager;rec: Recorder;fixture(&m, &rec)
+	defer mac.manager_destroy(&m);defer delete(rec.actions)
+	testing.expect(t, !mac.execute(&m, []string{"config", "layout", "stack"}).failed)
 	for id in u32(3) ..= 32 {
-		e.add_window(
+		mac.add_window(
 			&m,
 			{
 				id = id,
@@ -43,7 +42,7 @@ tab_switch_frees_full_stack_before_inserting_active_tab :: proc(t: ^testing.T) {
 			},
 		)
 	}
-	incoming := e.add_window(
+	incoming := mac.add_window(
 		&m,
 		{
 			id = 33,
@@ -56,28 +55,28 @@ tab_switch_frees_full_stack_before_inserting_active_tab :: proc(t: ^testing.T) {
 		},
 	)
 	m.windows[1].ordered_in = false;incoming.ordered_in = true
-	testing.expect_value(t, e.reconcile_window_memberships(&m), "")
-	view := &e.space_by_id(&m, 100).view
+	testing.expect_value(t, mac.reconcile_window_memberships(&m), "")
+	view := &mac.space_by_id(&m, 100).view
 	testing.expect_value(t, view.root.count, 32)
-	testing.expect(t, e.find(view.root, 1) == nil && e.find(view.root, 33) != nil)
+	testing.expect(t, mac.find(view.root, 1) == nil && mac.find(view.root, 33) != nil)
 }
 @(test)
 unchanged_tab_reconciliation_preserves_bsp_nodes_and_ratios :: proc(t: ^testing.T) {
-	m: e.Manager;rec: Recorder;fixture(&m, &rec)
-	defer e.manager_destroy(&m);defer delete(rec.actions)
-	root := e.space_by_id(&m, 100).view.root;root.ratio = 0.72
+	m: mac.Manager;rec: Recorder;fixture(&m, &rec)
+	defer mac.manager_destroy(&m);defer delete(rec.actions)
+	root := mac.space_by_id(&m, 100).view.root;root.ratio = 0.72
 	left, right := root.left, root.right
-	for _ in 0 ..< 3 {testing.expect_value(t, e.reconcile_window_memberships(&m), "")}
+	for _ in 0 ..< 3 {testing.expect_value(t, mac.reconcile_window_memberships(&m), "")}
 	testing.expect(
 		t,
-		e.space_by_id(&m, 100).view.root == root && root.left == left && root.right == right,
+		mac.space_by_id(&m, 100).view.root == root && root.left == left && root.right == right,
 	)
 	testing.expect_value(t, root.ratio, f64(0.72))
 }
 @(test)
 inactive_tabs_missing_from_ax_list_retain_identity_and_rule_state :: proc(t: ^testing.T) {
 	state: mac.State;rec: Recorder;fixture(&state.manager, &rec)
-	defer e.manager_destroy(&state.manager);defer delete(rec.actions)
+	defer mac.manager_destroy(&state.manager);defer delete(rec.actions)
 	state.windows = make(map[u32]mac.Ref);defer delete(state.windows)
 	state.windows[1] = rawptr(uintptr(1));state.windows[2] = rawptr(uintptr(2))
 	probe := Tab_Probe {
@@ -122,13 +121,13 @@ inactive_tabs_missing_from_ax_list_retain_identity_and_rule_state :: proc(t: ^te
 }
 @(test)
 scratchpad_recovery_does_not_order_in_inactive_native_tabs :: proc(t: ^testing.T) {
-	m: e.Manager;rec: Recorder;fixture(&m, &rec)
-	defer e.manager_destroy(&m);defer delete(rec.actions)
-	testing.expect_value(t, e.scratchpad_assign(&m, m.windows[1], "term"), "")
+	m: mac.Manager;rec: Recorder;fixture(&m, &rec)
+	defer mac.manager_destroy(&m);defer delete(rec.actions)
+	testing.expect_value(t, mac.scratchpad_assign(&m, m.windows[1], "term"), "")
 	m.windows[1].ordered_in = false;m.windows[1].scratchpad_hidden = true
 	m.windows[2].ordered_in = false
 	clear(&rec.actions)
-	testing.expect_value(t, e.scratchpad_recover(&m), "")
+	testing.expect_value(t, mac.scratchpad_recover(&m), "")
 	testing.expect_value(t, len(rec.actions), 1)
 	testing.expect_value(t, rec.actions[0].window, u32(1))
 	testing.expect(t, m.windows[1].ordered_in.? or_else false)
@@ -151,7 +150,7 @@ tab_reference_rebinds_without_duplicate_retains :: proc(t: ^testing.T) {
 @(test)
 read_only_tab_retention_does_not_mutate_tiling_or_emit_commands :: proc(t: ^testing.T) {
 	state: mac.State;rec: Recorder;fixture(&state.manager, &rec)
-	defer e.manager_destroy(&state.manager);defer delete(rec.actions)
+	defer mac.manager_destroy(&state.manager);defer delete(rec.actions)
 	state.read_only = true
 	state.windows = make(map[u32]mac.Ref);defer delete(state.windows)
 	state.windows[1] = rawptr(uintptr(1))
@@ -165,16 +164,16 @@ read_only_tab_retention_does_not_mutate_tiling_or_emit_commands :: proc(t: ^test
 	}
 	seen := make(map[u32]bool);defer delete(seen)
 	apps := make(map[i32]bool);defer delete(apps);apps[42] = true
-	root := e.space_by_id(&state.manager, 100).view.root
+	root := mac.space_by_id(&state.manager, 100).view.root
 	mac.retain_unlisted_windows(&state, &seen, apps)
-	testing.expect(t, seen[1] && e.find(root, 1) != nil)
+	testing.expect(t, seen[1] && mac.find(root, 1) != nil)
 	testing.expect_value(t, len(rec.actions), 0)
 }
 @(test)
 flush_never_resizes_an_ordered_out_tab_before_reconciliation :: proc(t: ^testing.T) {
-	m: e.Manager;rec: Recorder;fixture(&m, &rec)
-	defer e.manager_destroy(&m);defer delete(rec.actions)
+	m: mac.Manager;rec: Recorder;fixture(&m, &rec)
+	defer mac.manager_destroy(&m);defer delete(rec.actions)
 	m.windows[1].ordered_in = false
-	testing.expect_value(t, e.flush(&m, e.space_by_id(&m, 100)), "")
+	testing.expect_value(t, mac.flush(&m, mac.space_by_id(&m, 100)), "")
 	for action in rec.actions {testing.expect(t, action.window != 1)}
 }

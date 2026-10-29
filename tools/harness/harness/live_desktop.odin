@@ -1,6 +1,6 @@
 package harness
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
@@ -32,7 +32,7 @@ Desktop_Check :: enum {
 	Empty,
 }
 desktop_guard :: proc(c: tc.Context) -> string {
-	r := s.run(
+	r := s.process_run(
 		c.executor,
 		[]string{tc.binary(c, "shoji"), "-m", "query", "--windows"},
 		timeout = 10 * time.Second,
@@ -133,12 +133,12 @@ wait_desktop :: proc(
 	}
 	return fmt.tprintf("timed out waiting for desktop fixture check %v", check)
 }
-live_desktop :: proc(c: tc.Context) -> string {
+live_desktop :: proc(c: tc.Context, prebuilt: bool = false) -> string {
 	l: Live
-	err := live_desktop_run(c, &l)
+	err := live_desktop_run(c, &l, prebuilt)
 	return finish_live(&l, err)
 }
-live_desktop_run :: proc(c: tc.Context, l: ^Live) -> (err: string) {
+live_desktop_run :: proc(c: tc.Context, l: ^Live, prebuilt: bool = false) -> (err: string) {
 	prepared, e := prepare_live(c, "shoji-desktop"); if e != "" {
 		return e
 	}
@@ -150,7 +150,7 @@ live_desktop_run :: proc(c: tc.Context, l: ^Live) -> (err: string) {
 	   err != "" {
 		return err
 	}
-	if err = build_live_helper(c); err != "" {
+	if err = build_live_helper(c, prebuilt); err != "" {
 		return err
 	}
 	fixture, e1 := start_child(
@@ -321,7 +321,7 @@ live_cli :: proc(c: tc.Context, args: []string) -> string {
 	o, err := s.parse(
 		args[1:],
 		nil,
-		[]string{"load-payload", "reload-payload", "dock-restart"},
+		[]string{"load-payload", "reload-payload", "dock-restart", "prebuilt-fixture"},
 	); if err != "" {
 		return err
 	}; if len(o.positionals) != 0 {
@@ -329,13 +329,13 @@ live_cli :: proc(c: tc.Context, args: []string) -> string {
 	}
 	switch args[0] {
 	case "desktop":
-		if len(o.flags) != 0 {
+		if o.flags["load-payload"] || o.flags["reload-payload"] || o.flags["dock-restart"] {
 			return "desktop does not accept payload/Dock flags"
-		}; return live_desktop(c)
+		}; return live_desktop(c, o.flags["prebuilt-fixture"])
 	case "spaces":
 		if o.flags["reload-payload"] || o.flags["dock-restart"] {
 			return "spaces never restarts Dock"
-		}; return live_spaces(c, o.flags["load-payload"])
+		}; return live_spaces(c, o.flags["load-payload"], o.flags["prebuilt-fixture"])
 	case "animation":
 		if o.flags["load-payload"] {
 			return "animation expects --reload-payload"
@@ -344,6 +344,7 @@ live_cli :: proc(c: tc.Context, args: []string) -> string {
 			c,
 			o.flags["reload-payload"],
 			o.flags["dock-restart"],
+			o.flags["prebuilt-fixture"],
 		)
 	}
 	return "unknown live-validation command"

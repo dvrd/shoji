@@ -1,10 +1,10 @@
 package main
 
-import bridge "../../../src/addition/bridge"
-import loader "../../../src/addition/loader"
-import hook "../../../src/addition/windowserver/hook"
+import bridge "../../../src/dock"
+import hook "../../../src/experimental/window_server"
 import "core:fmt"
 import "core:os"
+import "core:sys/posix"
 import mach "core:sys/darwin"
 import "base:intrinsics"
 
@@ -18,6 +18,118 @@ foreign system {
 }
 
 trampoline_original: Ordering_Callback
+Trampoline_Protect :: proc "c" (task: u32, address, size: u64, maximum, protection: i32) -> i32
+Trampoline_Exit :: proc "c" (status: i32)
+
+concurrent_start, concurrent_stop: u32
+concurrent_calls, concurrent_errors: u64
+
+concurrent_worker :: proc "c" (argument: rawptr) -> rawptr {
+	callback := transmute(Ordering_Callback)uintptr(argument)
+	for intrinsics.atomic_load_explicit(&concurrent_start, .Acquire) == 0 {intrinsics.cpu_relax()}
+	for intrinsics.atomic_load_explicit(&concurrent_stop, .Acquire) == 0 {
+		if shoji_abi_run(callback) != 0 {
+			intrinsics.atomic_add_explicit(&concurrent_errors, 1, .Relaxed)
+		}
+		intrinsics.atomic_add_explicit(&concurrent_calls, 1, .Relaxed)
+	}
+	return nil
+}
+
+concurrent_join :: proc(workers: ^[4]posix.pthread_t, started: ^int, immediate_exit: Trampoline_Exit) {
+	intrinsics.atomic_store_explicit(&concurrent_start, 1, .Release)
+	intrinsics.atomic_store_explicit(&concurrent_stop, 1, .Release)
+	for index in 0 ..< started^ {
+		if posix.pthread_join(workers[index], nil) != nil {immediate_exit(1)}
+	}
+	started^ = 0
+}
+
+concurrent_failure :: proc(reason: string, barrier_active: bool) -> bool {
+	fmt.eprintf("concurrent failure: %s; calls=%d errors=%d forwarded=%d barrier_active=%v\n",
+		reason, intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire),
+		intrinsics.atomic_load_explicit(&concurrent_errors, .Acquire),
+		intrinsics.atomic_load_explicit(&forward_calls, .Acquire), barrier_active)
+	return false
+}
+
+run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ordering_Callback,
+	protect: Trampoline_Protect, immediate_exit: Trampoline_Exit, deallocate: hook.Deallocate,
+	initial_region: Trampoline_Region) -> bool {
+	state: hook.Hook_State
+	defer hook.teardown_quiescent(&state)
+	barrier: hook.Execution_Barrier
+	workers: [4]posix.pthread_t
+	started := 0
+	defer {
+		if barrier.active {immediate_exit(1)}
+		concurrent_join(&workers, &started, immediate_exit)
+		trampoline_original = nil
+	}
+	defer {
+		if barrier.active && !hook.leave_execution_barrier(&barrier) {immediate_exit(1)}
+	}
+	intrinsics.atomic_store_explicit(&concurrent_start, 0, .Relaxed)
+	intrinsics.atomic_store_explicit(&concurrent_stop, 0, .Relaxed)
+	intrinsics.atomic_store_explicit(&concurrent_calls, 0, .Relaxed)
+	intrinsics.atomic_store_explicit(&concurrent_errors, 0, .Relaxed)
+	intrinsics.atomic_store_explicit(&forward_calls, 0, .Relaxed)
+	trampoline_original = transmute(Ordering_Callback)uintptr(trampoline)
+	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(bridge.sign_function(u64(uintptr(rawptr(concurrent_worker)))))
+	for &thread in workers {
+		if posix.pthread_create(&thread, nil, worker, rawptr(transmute(uintptr)target_callback)) != nil {
+			return concurrent_failure("pthread_create", barrier.active)
+		}
+		started += 1
+	}
+	intrinsics.atomic_store_explicit(&concurrent_start, 1, .Release)
+	baseline := false
+	for _ in 0 ..< 10_000_000 {
+		if intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire) >= 1000 {baseline = true; break}
+		intrinsics.cpu_relax()
+	}
+	if !baseline || intrinsics.atomic_load_explicit(&concurrent_errors, .Acquire) != 0 ||
+	   intrinsics.atomic_load_explicit(&forward_calls, .Acquire) != 0 {
+		return concurrent_failure("baseline calls/errors/forwarding", barrier.active)
+	}
+	if !hook.enter_execution_barrier(&barrier, deallocate) {
+		return concurrent_failure("thread barrier enter", barrier.active)
+	}
+	calls_before := intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire)
+	for _ in 0 ..< 10_000 {intrinsics.cpu_relax()}
+	if intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire) != calls_before {
+		return concurrent_failure("calls advanced while suspended", barrier.active)
+	}
+	task := bridge.mach_task_self()
+	if protect(task, base, mach.vm_page_size, 0, 1 | 2 | 16) != 0 {immediate_exit(1)}
+	intrinsics.volatile_store((^u32)(uintptr(entry)), hook.PACIBSP)
+	if protect(task, base, mach.vm_page_size, 0, initial_region.protection) != 0 {immediate_exit(1)}
+	if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {
+		return concurrent_failure("install", barrier.active)
+	}
+	if !hook.leave_execution_barrier(&barrier) {
+		return concurrent_failure("thread barrier leave", barrier.active)
+	}
+	observed := false
+	for _ in 0 ..< 10_000_000 {
+		if intrinsics.atomic_load_explicit(&forward_calls, .Acquire) >= 4000 {observed = true; break}
+		intrinsics.cpu_relax()
+	}
+	if !observed || intrinsics.atomic_load_explicit(&concurrent_errors, .Acquire) != 0 {
+		return concurrent_failure("forwarded calls/errors", barrier.active)
+	}
+	concurrent_join(&workers, &started, immediate_exit)
+	trampoline_original = nil
+	if !hook.teardown_quiescent(&state) {
+		return concurrent_failure("teardown", barrier.active)
+	}
+	// Installation can split one shoji_abi_run across original and hooked calls,
+	// so the forwarded total need not be a multiple of its four calls per run.
+	forwarded := intrinsics.atomic_load_explicit(&forward_calls, .Acquire)
+	fmt.printf("owned barrier: calls=%d forwarded=%d stable_during_privatization=true\n",
+		intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire), forwarded)
+	return true
+}
 
 trampoline_fail :: proc(message: string, code: i32 = 0) {
 	fmt.eprintf("FAIL: owned trampoline fixture: %s (%d)\n", message, code)
@@ -35,7 +147,7 @@ trampoline_region :: proc(page, page_size: u64) -> (info: Trampoline_Region, ok:
 		size: u64
 		words: [19]u32
 		count := u32(len(words))
-		code := mach_vm_region_recurse(loader.mach_task_self(), &address, &size, &depth, &words[0], &count)
+		code := mach_vm_region_recurse(bridge.mach_task_self(), &address, &size, &depth, &words[0], &count)
 		if code != 0 || count < 13 || address > page || page - address > size ||
 		   page_size > size - (page - address) {return {}, false}
 		if words[12] == 0 {return {i32(words[0]), i32(words[1])}, true}
@@ -47,26 +159,26 @@ trampoline_region :: proc(page, page_size: u64) -> (info: Trampoline_Region, ok:
 diagnose_alias :: proc(entry: u64, deallocate: hook.Deallocate) {
 	page := mach.vm_page_size
 	base := entry & ~(page - 1)
-	self := loader.mach_task_self()
+	self := bridge.mach_task_self()
 	alias: u64
 	current, maximum: i32
 	code := mach_vm_remap(self, &alias, page, 0, 1, self, base, 0, &current, &maximum, 1)
 	fmt.eprintf("alias diagnostic: remap=%d current=0x%x maximum=0x%x\n", code, current, maximum)
 	if code != 0 {return}
-	code = loader.mach_vm_protect(self, alias, page, 0, 1 | 2)
+	code = bridge.mach_vm_protect(self, alias, page, 0, 1 | 2)
 	fmt.eprintf("alias diagnostic: writable=%d\n", code)
 	fmt.eprintf("alias diagnostic: release=%d\n", deallocate(self, alias, page))
 }
 
 run_trampoline :: proc(callback: Ordering_Callback) {
 	when ODIN_ARCH != .arm64 {trampoline_fail("arm64e required")}
-	if loader._dyld_get_image_header(0).subtype != 0x80000002 {
+	if bridge._dyld_get_image_header(0).subtype != 0x80000002 {
 		trampoline_fail("arm64e ABI v0 required")
 	}
-	self_image := loader.dlopen(nil, 2)
+	self_image := bridge.dlopen(nil, 2)
 	if self_image == nil {trampoline_fail("main image handle unavailable")}
-	defer loader.dlclose(self_image)
-	entry := u64(uintptr(loader.raw_symbol(self_image, "shoji_abi_original")))
+	defer bridge.dlclose(self_image)
+	entry := u64(uintptr(bridge.raw_symbol(self_image, "shoji_abi_original")))
 	replacement := bridge.strip_function(u64(uintptr(rawptr(forward))))
 	if entry == 0 {trampoline_fail("native target symbol unavailable")}
 	target_callback := transmute(Ordering_Callback)uintptr(bridge.sign_function(entry))
@@ -84,13 +196,17 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	}
 	fmt.eprintln("trampoline stage: entry validated")
 
-	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	kernel := bridge.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {trampoline_fail("kernel library unavailable")}
-	defer loader.dlclose(kernel)
-	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)loader.raw_symbol(kernel, "mach_vm_allocate")
-	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)loader.raw_symbol(kernel, "mach_vm_deallocate")
-	if allocate == nil || deallocate == nil {trampoline_fail("Mach allocation symbols unavailable")}
-	self := loader.mach_task_self()
+	defer bridge.dlclose(kernel)
+	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)bridge.raw_symbol(kernel, "mach_vm_allocate")
+	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)bridge.raw_symbol(kernel, "mach_vm_deallocate")
+	protect := cast(Trampoline_Protect)bridge.raw_symbol(kernel, "mach_vm_protect")
+	immediate_exit := cast(Trampoline_Exit)bridge.raw_symbol(kernel, "_exit")
+	if allocate == nil || deallocate == nil || protect == nil || immediate_exit == nil {
+		trampoline_fail("Mach allocation symbols unavailable")
+	}
+	self := bridge.mach_task_self()
 	page := mach.vm_page_size
 	if page == 0 || page & (page - 1) != 0 {trampoline_fail("invalid page size")}
 	base := entry & ~(page - 1)
@@ -116,7 +232,7 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	relay_code[0], relay_code[1] = 0x58000050, 0xd61f0200
 	relay_code[2], relay_code[3] = u32(replacement), u32(replacement >> 32)
 	sys_icache_invalidate(rawptr(uintptr(region)), uint(2 * page))
-	if code := loader.mach_vm_protect(self, region, 2 * page, 0, 1 | 4); code != 0 {
+	if code := protect(self, region, 2 * page, 0, 1 | 4); code != 0 {
 		trampoline_fail("cannot protect trampoline/relay", code)
 	}
 
@@ -125,16 +241,13 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 		trampoline_fail("unexpected native text protections")
 	}
 	fmt.eprintln("trampoline stage: privatize")
-	privatize_code := loader.mach_vm_protect(self, base, page, 0, 1 | 2 | 16)
-	fmt.eprintf("privatize result=%d\n", privatize_code)
-	if privatize_code != 0 {os.exit(1)}
+	privatize_code := protect(self, base, page, 0, 1 | 2 | 16)
+	if privatize_code != 0 {immediate_exit(1)}
 	intrinsics.volatile_store((^u32)(uintptr(entry)), hook.PACIBSP)
-	fmt.eprintln("privatize COW store completed")
-	execute_code := loader.mach_vm_protect(self, base, page, 0, initial_region.protection)
-	fmt.eprintf("execute restore result=%d\n", execute_code)
-	// The native target and custom failure helper share this page. Never call
-	// that helper until execute permission is known to have been restored.
-	if execute_code != 0 {os.exit(1)}
+	// No call through this image's stubs is safe here: they share the target
+	// page. Only inline storage and raw libsystem calls may run before RX is back.
+	execute_code := protect(self, base, page, 0, initial_region.protection)
+	if execute_code != 0 {immediate_exit(1)}
 	private_region, private_ok := trampoline_region(base, page)
 	if !private_ok || private_region.protection != initial_region.protection {
 		trampoline_fail("verify privatized native text")
@@ -161,15 +274,18 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 			trampoline_fail("entry or alias restoration", i32(cycle))
 		}
 	}
+	if !run_concurrent(entry, base, trampoline, relay, target_callback, protect, immediate_exit, deallocate, initial_region) {
+		trampoline_fail("concurrent barrier/forwarding")
+	}
 	if code := shoji_abi_run(target_callback); code != 0 {
 		trampoline_fail("restored native target", code)
 	}
-	if code := loader.mach_vm_protect(self, base, page, 1, initial_region.max_protection); code != 0 {
+	if code := protect(self, base, page, 1, initial_region.max_protection); code != 0 {
 		trampoline_fail("restore native text maximum protection", code)
 	}
 	final_region, final_ok := trampoline_region(base, page)
 	if !final_ok || final_region != initial_region {
 		trampoline_fail("verify final native text protections")
 	}
-	fmt.printf("PASS: 16 C -> patched C entry -> Odin -> trampoline -> original C round trips; pointer arrays, signed operations, booleans and returns preserved; entry, aliases and protections restored\n")
+	fmt.printf("PASS: 16 native/Odin trampoline round trips plus concurrent suspended-thread installation; pointer arrays, signed operations, booleans and returns preserved; entry, aliases and protections restored\n")
 }

@@ -3,7 +3,7 @@ package main
 // One-shot VM experiment only; no hooks, daemon commands, or window state.
 import "base:runtime"
 import "core:sys/posix"
-import target "../../../src/addition/windowserver/target"
+import target "../../../src/experimental/window_server"
 
 foreign import system "system:System"
 foreign system {

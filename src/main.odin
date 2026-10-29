@@ -1,11 +1,9 @@
-package main
+package shoji
 
-import loader "addition/loader"
+import loader "dock"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
-import mac "macos"
-import service "service"
 
 HELP_MESSAGE :: `
 Usage: shoji [-c CONFIG] [--sa PATH_TO_DYLIB]
@@ -79,19 +77,19 @@ main :: proc() {
       os.exit(1)
 		}
 
-		os.exit(mac.run(config, payload, validation_pid))
+		os.exit(run(config, payload, validation_pid))
 	}
 
 	if len(args) > 0 {
 		switch args[0] {
 		case "service":
 			binary, _ := os.get_executable_path(context.allocator)
-			os.exit(service.cli(args[1:], binary))
+			os.exit(service_cli(args[1:], binary))
 		case "--validate-sizes", "--validate-swipe":
 			if len(args) != 2 {fmt.eprintln("validation requires a fixture process ID"); os.exit(2)}
 			pid, valid := strconv.parse_u64(args[1])
 			if !valid || pid == 0 || pid > 0x7fffffff {os.exit(2)}
-			os.exit(mac.validate_window_sizes(i32(pid), args[0] == "--validate-swipe"))
+			os.exit(validate_window_sizes(i32(pid), args[0] == "--validate-swipe"))
 		case "--load-sa":
 			if len(args) != 2 {
         fmt.eprintln("--load-sa requires the payload dylib path")
@@ -108,7 +106,7 @@ main :: proc() {
 			)
 			return
 		case "--check-sa":
-			caps, err := mac.addition_check()
+			caps, err := addition_check()
       if err != "" {
         fmt.eprintln(err)
         os.exit(1)
@@ -136,7 +134,7 @@ main :: proc() {
 				fmt.eprintln("--check-ws takes no arguments")
 				os.exit(2)
 			}
-			caps, err := mac.windowserver_check()
+			caps, err := windowserver_check()
 			if err != "" {
 				fmt.eprintln(err)
 				os.exit(1)
@@ -150,17 +148,17 @@ main :: proc() {
 			fmt.println(HELP_MESSAGE)
 			return
 		case "-m", "--message":
-			os.exit(mac.client(args[1:]))
+			os.exit(client(args[1:]))
 		case "--inspect":
 			if len(args) != 1 {
 				fmt.eprintln("--inspect takes no arguments")
 				os.exit(1)
 			}
-			os.exit(mac.inspect())
+			os.exit(inspect())
 		case:
 			fmt.eprintf("shoji: unknown option '%s'\n", args[0])
 			os.exit(1)
 		}
 	}
-	os.exit(mac.run(""))
+	os.exit(run(""))
 }

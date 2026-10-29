@@ -1,18 +1,19 @@
 package harness
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 
-live_spaces :: proc(c: tc.Context, load_payload: bool) -> string {
+live_spaces :: proc(c: tc.Context, load_payload: bool, prebuilt: bool = false) -> string {
 	l: Live
-	err := live_spaces_run(c, load_payload, &l)
+	err := live_spaces_run(c, load_payload, &l, prebuilt)
 	return finish_live(&l, err)
 }
 live_spaces_run :: proc(
 	c: tc.Context,
 	load_payload: bool,
 	l: ^Live,
+	prebuilt: bool = false,
 ) -> (
 	err: string,
 ) {
@@ -31,7 +32,7 @@ live_spaces_run :: proc(
 			}
 		}
 	}
-	if err = build_live_helper(c); err != "" {
+	if err = build_live_helper(c, prebuilt); err != "" {
 		return err
 	}
 	if load_payload {

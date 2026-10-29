@@ -1,6 +1,6 @@
 package tests
 
-import e "../src/engine"
+import e "../src"
 import "core:encoding/json"
 import "core:testing"
 import "core:time"

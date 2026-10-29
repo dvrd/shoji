@@ -1,4 +1,0 @@
-Baseline transform: owned=-90.0; foreign=-250.0
-Transform readback: owned status=0 tx=-50.0; foreign status=0 tx=-250.0
-Restored transform: owned status=0 tx=-90.0; foreign status=0 tx=-250.0
-Captured 96 transaction probe frames

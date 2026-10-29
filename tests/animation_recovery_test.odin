@@ -1,8 +1,7 @@
 package tests
 
-import r "../src/addition/recovery"
-import e "../src/engine"
-import mac "../src/macos"
+import r "../src/dock"
+import mac "../src"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -115,7 +114,7 @@ animation_journal_rejects_symlink :: proc(t: ^testing.T) {
 animation_shutdown_releases_proxy_after_failed_restore :: proc(t: ^testing.T) {
 	state: mac.State;recorder: Recorder;animation: Animation_Recorder
 	fixture(&state.manager, &recorder)
-	defer e.manager_destroy(&state.manager);defer delete(recorder.actions)
+	defer mac.manager_destroy(&state.manager);defer delete(recorder.actions)
 	state.event_user = &animation
 	state.animation_backend = {
 		proxy_create,

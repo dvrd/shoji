@@ -1,6 +1,6 @@
 package tests
 
-import hook "../src/addition/windowserver/hook"
+import hook "../src/experimental/window_server"
 import "core:testing"
 
 windowserver_hook_reject_release :: proc "c" (task: u32, address, size: u64) -> i32 {

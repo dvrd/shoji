@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:math"
 import "core:testing"
 
@@ -11,9 +10,9 @@ resize_blend_uses_animation_clock_despite_size_velocity :: proc(
 ) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.resize_cover_stop(&state)
-	s := e.space_by_id(&state.manager, 100)
+	s := mac.space_by_id(&state.manager, 100)
 	s.view.layout = .Scroll; s.view.scroll.geometry_active = true
 	w := state.manager.windows[1]
 	w.scroll_frame = {
@@ -22,14 +21,14 @@ resize_blend_uses_animation_clock_despite_size_velocity :: proc(
 		target           = {0, 0, 600, 800},
 		initial_velocity = {0, 0, 3000, 0},
 	}
-	e.scroll_frame_sample(&w.scroll_frame, .04)
+	mac.scroll_frame_sample(&w.scroll_frame, .04)
 	w.frame = w.scroll_frame.current; c.actual = w.frame
 	mac.resize_cover_frame(&state, 1, w.frame, w.scroll_frame.from, 1)
 	mac.resize_cover_tick(&state, 1.04)
 	expected :=
 		1 -
-		(1 + e.SCROLL_SPRING_OMEGA * .04) *
-			math.exp(-e.SCROLL_SPRING_OMEGA * .04)
+		(1 + mac.SCROLL_SPRING_OMEGA * .04) *
+			math.exp(-mac.SCROLL_SPRING_OMEGA * .04)
 	testing.expect(
 		t,
 		math.abs(c.alpha - expected) < .001,
@@ -43,13 +42,13 @@ resize_surface_is_presented_once_after_geometry_per_tick :: proc(
 ) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.resize_cover_stop(&state)
 	mac.resize_cover_frame(
 		&state,
 		1,
 		{0, 0, 700, 800},
-		e.Rect{0, 0, 500, 800},
+		mac.Rect{0, 0, 500, 800},
 		1,
 	)
 	mac.resize_cover_tick(&state, 1)
@@ -58,7 +57,7 @@ resize_surface_is_presented_once_after_geometry_per_tick :: proc(
 		&state,
 		1,
 		{0, 0, 800, 800},
-		e.Rect{0, 0, 700, 800},
+		mac.Rect{0, 0, 700, 800},
 		1.02,
 	)
 	state.manager.windows[1].frame = {0, 0, 800, 800}
@@ -69,7 +68,7 @@ resize_surface_is_presented_once_after_geometry_per_tick :: proc(
 
 Cover_Recorder :: struct {
 	created, updated, destroyed: int,
-	actual, last: e.Rect,
+	actual, last: mac.Rect,
 	alpha: f64,
 	fail_create, fail_update, invalid: bool,
 	revealing: bool,
@@ -77,7 +76,7 @@ Cover_Recorder :: struct {
 cover_create :: proc(
 	state: ^mac.State,
 	_: u32,
-	frame: e.Rect,
+	frame: mac.Rect,
 ) -> (
 	mac.Owned_Surface,
 	string,
@@ -92,7 +91,7 @@ cover_update :: proc(
 	state: ^mac.State,
 	_: mac.Owned_Surface,
 	_: u32,
-	frame: e.Rect,
+	frame: mac.Rect,
 	alpha: f64,
 	revealing: bool,
 ) -> string {
@@ -108,11 +107,11 @@ resize_content_blends_during_geometry_and_finishes_with_it :: proc(
 ) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer delete(state.animations); defer mac.resize_cover_stop(&state)
-	from := e.Rect{0, 0, 500, 800}
-	target := e.Rect{0, 0, 900, 800}
-	current := e.Rect{0, 0, 700, 800}
+	from := mac.Rect{0, 0, 500, 800}
+	target := mac.Rect{0, 0, 900, 800}
+	current := mac.Rect{0, 0, 700, 800}
 	state.animations = make(map[u32]mac.Animation_Job)
 	state.animations[1] = {
 		generation   = state.manager.windows[1].generation,
@@ -151,9 +150,9 @@ scroll_content_blend_tracks_size_and_has_no_completion_tail :: proc(
 ) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.resize_cover_stop(&state)
-	s := e.space_by_id(&state.manager, 100)
+	s := mac.space_by_id(&state.manager, 100)
 	s.view.layout = .Scroll; s.view.scroll.geometry_active = true
 	w := state.manager.windows[1]
 	w.scroll_frame = {
@@ -227,7 +226,7 @@ content_blend_retarget_preserves_opacity_with_new_clock :: proc(
 	testing.expect_value(t, cover.alpha, f64(1))
 }
 
-cover_bounds :: proc(state: ^mac.State, _: u32) -> (e.Rect, bool) {
+cover_bounds :: proc(state: ^mac.State, _: u32) -> (mac.Rect, bool) {
 	r := (^Cover_Recorder)(state.event_user); return r.actual, !r.invalid
 }
 cover_fixture :: proc(
@@ -249,10 +248,10 @@ cover_fixture :: proc(
 resize_cover_skips_and_removes_snapshots_during_interactive_resize :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.resize_cover_stop(&state)
-	before := e.Rect{0, 0, 500, 800}
-	after := e.Rect{0, 0, 700, 800}
+	before := mac.Rect{0, 0, 500, 800}
+	after := mac.Rect{0, 0, 700, 800}
 	mac.resize_cover_frame(&state, 1, after, before, 1)
 	testing.expect_value(t, c.created, 1)
 	state.manager.windows[1].grabbed = true
@@ -280,20 +279,20 @@ resize_cover_retargets_one_capture_and_fades_to_live_contents :: proc(
 ) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.resize_cover_stop(&state)
 	mac.resize_cover_frame(
 		&state,
 		1,
 		{0, 0, 700, 800},
-		e.Rect{0, 0, 500, 800},
+		mac.Rect{0, 0, 500, 800},
 		1,
 	)
 	mac.resize_cover_frame(
 		&state,
 		1,
 		{0, 0, 900, 800},
-		e.Rect{0, 0, 700, 800},
+		mac.Rect{0, 0, 700, 800},
 		1.1,
 	)
 	testing.expect_value(t, c.created, 1)
@@ -334,13 +333,13 @@ resize_cover_removes_on_disable_input_invalid_owner_or_surface_failure :: proc(
 	for mode in 0 ..< 5 {
 		state: mac.State; r: Recorder; c: Cover_Recorder
 		cover_fixture(&state, &r, &c)
-		defer e.manager_destroy(&state.manager); defer delete(r.actions)
+		defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 		defer mac.resize_cover_stop(&state)
 		mac.resize_cover_frame(
 			&state,
 			1,
 			{0, 0, 700, 800},
-			e.Rect{0, 0, 500, 800},
+			mac.Rect{0, 0, 500, 800},
 			1,
 		)
 		state.manager.windows[1].frame = {0, 0, 700, 800}
@@ -369,13 +368,13 @@ resize_cover_capture_failure_and_tiny_resizes_leave_app_usable :: proc(
 ) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.resize_cover_stop(&state)
 	mac.resize_cover_frame(
 		&state,
 		1,
 		{0, 0, 505, 800},
-		e.Rect{0, 0, 500, 800},
+		mac.Rect{0, 0, 500, 800},
 		1,
 	)
 	testing.expect_value(t, c.created, 0)
@@ -384,19 +383,19 @@ resize_cover_capture_failure_and_tiny_resizes_leave_app_usable :: proc(
 		&state,
 		1,
 		{0, 0, 700, 800},
-		e.Rect{0, 0, 500, 800},
+		mac.Rect{0, 0, 500, 800},
 		1,
 	)
 	mac.resize_cover_frame(
 		&state,
 		1,
 		{0, 0, 800, 800},
-		e.Rect{0, 0, 500, 800},
+		mac.Rect{0, 0, 500, 800},
 		1.1,
 	)
 	testing.expect_value(t, c.created, 1)
 	testing.expect_value(t, len(state.resize_covers), 0)
-	testing.expect(t, e.managed(state.manager.windows[1]))
+	testing.expect(t, mac.managed(state.manager.windows[1]))
 }
 
 @(test)
@@ -405,12 +404,12 @@ resize_cover_stop_releases_every_surface_and_window_status :: proc(
 ) {
 	state: mac.State; r: Recorder; c: Cover_Recorder
 	cover_fixture(&state, &r, &c)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer mac.resize_cover_stop(&state)
 	for id in ([2]u32 {
 			1,
 			2,
-		}) { mac.resize_cover_frame(&state, id, {0, 0, 700, 800}, e.Rect{0, 0, 500, 800}, 1) }
+		}) { mac.resize_cover_frame(&state, id, {0, 0, 700, 800}, mac.Rect{0, 0, 500, 800}, 1) }
 	testing.expect_value(t, len(state.resize_covers), 2)
 	mac.resize_cover_stop(&state)
 	testing.expect_value(t, c.destroyed, 2)
@@ -445,24 +444,24 @@ content_fade_overlaps_for_short_resizes_and_holds_background_for_long_drags :: p
 	testing.expect(t, !cover.revealing)
 	testing.expect_value(t, cover.alpha, f64(1))
 	testing.expect(t, mac.resize_cover_step(&cover, 4.01, true, false))
-	m: e.Manager
+	m: mac.Manager
 	testing.expect(
 		t,
-		!e.execute(&m, {"config", "window_resize_animation", "fade"}).failed,
+		!mac.execute(&m, {"config", "window_resize_animation", "fade"}).failed,
 	)
 	testing.expect_value(
 		t,
-		e.execute(&m, {"config", "window_resize_animation"}).text,
+		mac.execute(&m, {"config", "window_resize_animation"}).text,
 		"fade",
 	)
 	testing.expect(
 		t,
-		!e.execute(&m, {"config", "window_resize_animation", "off"}).failed,
+		!mac.execute(&m, {"config", "window_resize_animation", "off"}).failed,
 	)
 	testing.expect(t, !m.resize_fade)
 	testing.expect(
 		t,
-		e.execute(&m, {"config", "window_resize_animation", "blur"}).failed,
+		mac.execute(&m, {"config", "window_resize_animation", "blur"}).failed,
 	)
 }
 

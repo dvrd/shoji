@@ -1,8 +1,7 @@
 package main
 
-import bridge "../../../src/addition/bridge"
-import loader "../../../src/addition/loader"
-import hook "../../../src/addition/windowserver/hook"
+import bridge "../../../src/dock"
+import hook "../../../src/experimental/window_server"
 import "core:fmt"
 import "core:os"
 import mach "core:sys/darwin"
@@ -55,14 +54,14 @@ fail :: proc(message: string, code: i32 = 0) {
 
 main :: proc() {
 	when ODIN_ARCH != .arm64 {fail("arm64e required")}
-	if loader._dyld_get_image_header(0).subtype != 0x80000002 {fail("arm64e ABI v0 required")}
-	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	if bridge._dyld_get_image_header(0).subtype != 0x80000002 {fail("arm64e ABI v0 required")}
+	kernel := bridge.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {fail("kernel library unavailable")}
-	defer loader.dlclose(kernel)
-	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)loader.raw_symbol(kernel, "mach_vm_allocate")
-	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)loader.raw_symbol(kernel, "mach_vm_deallocate")
+	defer bridge.dlclose(kernel)
+	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)bridge.raw_symbol(kernel, "mach_vm_allocate")
+	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)bridge.raw_symbol(kernel, "mach_vm_deallocate")
 	if allocate == nil || deallocate == nil {fail("Mach allocation symbols unavailable")}
-	self := loader.mach_task_self()
+	self := bridge.mach_task_self()
 	page := mach.vm_page_size
 	if page == 0 || page & (page - 1) != 0 {fail("invalid page size")}
 	replacement_address := bridge.strip_function(u64(uintptr(rawptr(replacement))))
@@ -95,14 +94,14 @@ main :: proc() {
 	relay_code[0], relay_code[1] = 0x58000050, 0xd61f0200
 	relay_code[2], relay_code[3] = u32(replacement_address), u32(replacement_address >> 32)
 	sys_icache_invalidate(rawptr(uintptr(region)), uint(3 * page))
-	if code := loader.mach_vm_protect(self, region, 3 * page, 0, 1 | 4); code != 0 {
+	if code := bridge.mach_vm_protect(self, region, 3 * page, 0, 1 | 4); code != 0 {
 		fail("cannot make test pages executable", code)
 	}
 	if len(os.args) == 2 && os.args[1] == "--check-rwx" {
-		code := loader.mach_vm_protect(self, entry, page, 0, 1 | 2 | 4 | 16)
+		code := bridge.mach_vm_protect(self, entry, page, 0, 1 | 2 | 4 | 16)
 		fmt.printf("owned anonymous executable page RWX protection result: %d\n", code)
 		if code != 0 {os.exit(1)}
-		if restore := loader.mach_vm_protect(self, entry, page, 0, 1 | 4); restore != 0 {
+		if restore := bridge.mach_vm_protect(self, entry, page, 0, 1 | 4); restore != 0 {
 			fail("cannot restore test page protection", restore)
 		}
 		return
@@ -113,7 +112,7 @@ main :: proc() {
 		code := mach_vm_remap(self, &alias, page, 0, 1, self, entry, 0, &current, &maximum, 1)
 		if code != 0 {fail("cannot remap test page", code)}
 		defer deallocate(self, alias, page)
-		code = loader.mach_vm_protect(self, alias, page, 0, 1 | 2)
+		code = bridge.mach_vm_protect(self, alias, page, 0, 1 | 2)
 		if code != 0 {fail("cannot make alias writable", code)}
 		alias_code := ([^]u32)(uintptr(alias))
 		alias_code[0] = 0xd503201f

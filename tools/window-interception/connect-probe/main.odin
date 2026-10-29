@@ -3,7 +3,7 @@ package main
 // Disposable outbound-socket experiment; no hooks or production protocol.
 import "base:runtime"
 import "core:sys/posix"
-import target "../../../src/addition/windowserver/target"
+import target "../../../src/experimental/window_server"
 
 Unix_Address :: struct {length, family: u8, path: [104]u8}
 foreign import system "system:System"
