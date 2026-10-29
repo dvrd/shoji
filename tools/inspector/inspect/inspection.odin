@@ -1,6 +1,6 @@
 package inspector
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:strconv"

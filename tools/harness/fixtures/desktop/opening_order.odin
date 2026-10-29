@@ -1,13 +1,12 @@
 package main
 
-import e "../../../../src/engine"
-import mac "../../../../src/macos"
+import mac "../../../../src"
 import "base:intrinsics"
 import "core:fmt"
 import objc "core:sys/darwin/Foundation"
 
 owned_wait_hit :: proc(state: ^mac.State, anchor, expected: u32) -> bool {
-	frame: e.Rect
+	frame: mac.Rect
 	if mac.SLSGetWindowBounds(state.connection, anchor, &frame) != 0 {return false}
 	point := mac.Point{frame.x + 40, frame.y + 80}
 	for _ in 0 ..< 40 {
@@ -27,7 +26,7 @@ run_owned_opening_order :: proc() -> bool {
 	state: mac.State;mac.state_init(&state);defer mac.state_destroy(&state)
 	state.validation_pid = mac.getpid();state.manager.default_layout = .BSP
 	mac.refresh_displays(&state)
-	s := e.space_by_id(&state.manager, state.manager.active_space)
+	s := mac.space_by_id(&state.manager, state.manager.active_space)
 	if s == nil {return false}
 	surfaces: [2]mac.Owned_Surface
 	defer {for surface in surfaces {mac.surface_destroy(&state, surface)}}
@@ -41,15 +40,15 @@ run_owned_opening_order :: proc() -> bool {
 		if mac.surface_update(&state, surface, surface.frame) != "" {return false}
 		// Attach only this owned surface to the already-active Space.
 		if err := mac.addition_action({kind = .Space, window = surface.id, space = s.id}); err != "" {fmt.eprintln(err);return false}
-		w := e.add_window(&state.manager, {id = surface.id, pid = mac.getpid(), space = s.id, display = s.display, role = "AXWindow", subrole = "AXStandardWindow", frame = surface.frame, layer = "normal"})
-		if err := e.perform(&state.manager, {kind = .Layer, window = w.id, value = -1}); err != "" {fmt.eprintln(err);return false}
+		w := mac.add_window(&state.manager, {id = surface.id, pid = mac.getpid(), space = s.id, display = s.display, role = "AXWindow", subrole = "AXStandardWindow", frame = surface.frame, layer = "normal"})
+		if err := mac.perform(&state.manager, {kind = .Layer, window = w.id, value = -1}); err != "" {fmt.eprintln(err);return false}
 		if i == 0 {w.layer = "below"}
-		if err := e.perform(&state.manager, {kind = .Order, window = w.id, value = 1}); err != "" {fmt.eprintln(err);return false}
+		if err := mac.perform(&state.manager, {kind = .Order, window = w.id, value = 1}); err != "" {fmt.eprintln(err);return false}
 	}
 	if !owned_wait_hit(&state, ids[0], ids[1]) {fmt.eprintln("front-order positive control failed");return false}
-	if err := e.perform(&state.manager, {kind = .Order, window = ids[1], value = -1}); err != "" {fmt.eprintln(err);return false}
+	if err := mac.perform(&state.manager, {kind = .Order, window = ids[1], value = -1}); err != "" {fmt.eprintln(err);return false}
 	if !owned_wait_hit(&state, ids[0], ids[0]) {fmt.eprintln("new surface did not move behind existing surface");return false}
-	if err := e.perform(&state.manager, {kind = .Order, window = ids[1], value = 1}); err != "" {fmt.eprintln(err);return false}
+	if err := mac.perform(&state.manager, {kind = .Order, window = ids[1], value = 1}); err != "" {fmt.eprintln(err);return false}
 	if !owned_wait_hit(&state, ids[0], ids[1]) {fmt.eprintln("front restoration failed");return false}
 	fmt.println("PASS: owned window lowers behind its peer and restores front order; verified by WindowServer hit-tests")
 	return true

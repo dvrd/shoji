@@ -1,6 +1,6 @@
 package tests
 
-import e "../src/engine"
+import e "../src"
 import "core:strings"
 import "core:testing"
 

@@ -20,7 +20,7 @@ env:
 tasks:
   build:dev:
     desc: Build the native dev CLI
-    sources: [tools/dev/main.odin, 'tools/dev/dev/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
+    sources: [tools/dev/main.odin, 'tools/dev/dev/*.odin', 'tools/common/*.odin', 'src/*.odin', 'src/**/*.odin']
     generates: [bin/dev]
     cmds:
       - mkdir -p bin
@@ -35,7 +35,7 @@ tasks:
       - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/dev-amd64'
   build:inspector:
     desc: Build the native inspector CLI
-    sources: [tools/inspector/main.odin, 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
+    sources: [tools/inspector/main.odin, 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/*.odin', 'src/**/*.odin']
     generates: [bin/inspector]
     cmds:
       - mkdir -p bin
@@ -50,7 +50,7 @@ tasks:
       - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/inspector-amd64'
   build:harness:
     desc: Build the native harness CLI
-    sources: [tools/harness/main.odin, 'tools/harness/harness/*.odin', 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/support/*.odin']
+    sources: [tools/harness/main.odin, 'tools/harness/harness/*.odin', 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/*.odin', 'src/**/*.odin']
     generates: [bin/harness]
     cmds:
       - mkdir -p bin
@@ -102,6 +102,11 @@ tasks:
       - mkdir -p bin
       - '{{.ODIN}} build src -warnings-as-errors -out:{{.BINARY}}.new -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - './bin/dev signing sign {{.BINARY}}.new --install {{.BINARY}} --codesign {{.CODESIGN}}'
+  build:app:
+    deps: [build]
+    desc: Package the signed runtime with its macOS icon in bin/Shoji.app
+    cmds:
+      - python3 tools/macos/bundle.py
   debug:
     deps: [addition, build:dev]
     desc: Build with debug information and runtime checks
@@ -146,11 +151,11 @@ tasks:
     deps: [raven]
     cmds:
       - '{{.ODIN}} check src -warnings-as-errors -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/addition/payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/addition/windowserver/payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/dock_payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/experimental/window_server_payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tests -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock -warnings-as-errors -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/dockscan -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check tools/shoji-dock/scanner -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/dev -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/inspector -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/harness -vet-unused-imports -vet-unused-variables -warnings-as-errors'
@@ -170,7 +175,7 @@ tasks:
     deps: [raven]
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} test src/dockscan -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -out:bin/shoji-dock-tests -debug -warnings-as-errors'
+      - '{{.ODIN}} test tools/shoji-dock/scanner -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -out:bin/shoji-dock-tests -debug -warnings-as-errors'
   raven:
     desc: Build the pinned LZRAVEN decoder for the Dock diagnostic
     sources:
@@ -227,7 +232,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build src/addition/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build src/dock_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
   addition:windowserver:
@@ -238,7 +243,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build src/addition/windowserver/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build src/experimental/window_server_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws.dylib'
   build:windowserver-hook-selftest:
@@ -264,11 +269,22 @@ tasks:
       - '{{.ODIN_ARM64E}} build tools/window-interception/abi-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-abi-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-abi-selftest
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-abi-selftest'
+  build:windowserver-permission-probe:
+    deps: [build:inspector]
+    desc: Build the exact-build WindowServer permission experiment (does not load it)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build tools/window-interception/windowserver-payload-probe -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-permission-probe.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - ./bin/inspector normalize-arm64e bin/shoji-ws-permission-probe.dylib
+      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-permission-probe.dylib'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build src/addition/payload -warnings-as-errors -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} build src/dock_payload -warnings-as-errors -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa-amd64.dylib'
   addition:macos27:
     deps: [build:inspector]
@@ -278,7 +294,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin/macos27
-      - '{{.ODIN_ARM64E}} build src/addition/payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_MACOS27_CANDIDATE=true -build-mode:shared -out:bin/macos27/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build src/dock_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_MACOS27_CANDIDATE=true -build-mode:shared -out:bin/macos27/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/macos27/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/macos27/shoji-sa.dylib'
   addition:transaction-fix:
@@ -289,7 +305,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin/transaction-fix
-      - '{{.ODIN_ARM64E}} build src/addition/payload -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/transaction-fix/shoji-sa.dylib -o:speed -warnings-as-errors -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build src/dock_payload -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/transaction-fix/shoji-sa.dylib -o:speed -warnings-as-errors -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/transaction-fix/shoji-sa.dylib
       - '{{.CODESIGN}} --force --sign - bin/transaction-fix/shoji-sa.dylib'
   test:amd64:

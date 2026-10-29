@@ -1,6 +1,6 @@
 package main
 
-import s "../../src/support"
+import s "../../src"
 import tc "../common"
 import "core:os"
 import d "harness"
@@ -8,9 +8,9 @@ import d "harness"
 HELP :: `Usage: harness COMMAND [OPTIONS]
   check-asm                 Compiler diagnostic regression fixtures
   validate [--preflight-only] [--live-animation] [--dock-restart]
-  live desktop              Owned-window validation; refuses an existing daemon
-  live spaces [--load-payload]
-  live animation [--reload-payload] [--dock-restart]
+  live desktop [--prebuilt-fixture]   Owned-window validation; refuses an existing daemon
+  live spaces [--load-payload] [--prebuilt-fixture]
+  live animation [--reload-payload] [--dock-restart] [--prebuilt-fixture]
 
 Dock restart and live desktop mutations require explicit live options.`
 dispatch :: proc(c: tc.Context, args: []string) -> string {

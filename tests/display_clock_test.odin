@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:math"
 import "core:testing"
 import "core:time"
@@ -55,25 +54,25 @@ display_pacer_rejects_invalid_timestamps_and_config_is_explicit :: proc(
 			9,
 		}) { mac.frame_pacer_pulse(&p, at, 10, 1.0 / 60) }
 	testing.expect(t, !p.pending)
-	m: e.Manager; r: Recorder; fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	testing.expect(
 		t,
-		!e.execute(&m, {"config", "scroll_frame_pacing", "on"}).failed,
+		!mac.execute(&m, {"config", "scroll_frame_pacing", "on"}).failed,
 	)
 	testing.expect(t, m.scroll_frame_pacing)
 	testing.expect_value(
 		t,
-		e.execute(&m, {"config", "scroll_frame_pacing"}).text,
+		mac.execute(&m, {"config", "scroll_frame_pacing"}).text,
 		"on",
 	)
 	testing.expect(
 		t,
-		e.execute(&m, {"config", "scroll_frame_pacing", "maybe"}).failed,
+		mac.execute(&m, {"config", "scroll_frame_pacing", "maybe"}).failed,
 	)
 	testing.expect(
 		t,
-		e.execute(&m, {"config", "--space", "100", "scroll_frame_pacing", "on"}).failed,
+		mac.execute(&m, {"config", "--space", "100", "scroll_frame_pacing", "on"}).failed,
 	)
 }
 
@@ -99,9 +98,9 @@ paced_input_coalesces_native_events_without_early_frame_writes :: proc(
 ) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
 	m := &state.manager
-	defer e.manager_destroy(m); defer delete(r.actions)
+	defer mac.manager_destroy(m); defer delete(r.actions)
 	niri_open(m, 2); niri_open(m, 3)
-	e.execute(m, {"window", "1", "--focus"})
+	mac.execute(m, {"window", "1", "--focus"})
 	m.mouse.scroll = true
 	clear(&r.actions)
 	event := CGEventCreateScrollWheelEvent(nil, 0, 2, 0, i32(-120))
@@ -132,10 +131,10 @@ paced_input_coalesces_native_events_without_early_frame_writes :: proc(
 
 @(test)
 queued_resize_uses_execution_time_after_a_slow_refresh :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2)
-	e.execute(&m, {"config", "scroll_animation", "on"})
+	mac.execute(&m, {"config", "scroll_animation", "on"})
 	m.animation_duration = 0.5
 	now := time.duration_seconds(time.diff(time.Time{}, time.now()))
 	// Model the stale loop timestamp left behind by synchronous discovery.
@@ -152,7 +151,7 @@ queued_resize_uses_execution_time_after_a_slow_refresh :: proc(t: ^testing.T) {
 	if !testing.expect(t, mac.command_accept(&server, fds[1])) {
 		return
 	}
-	data, valid := e.encode_message(
+	data, valid := mac.encode_message(
 		{"window", "1", "--column-width", "abs:900"},
 	)
 	if !testing.expect(t, valid) {
@@ -162,7 +161,7 @@ queued_resize_uses_execution_time_after_a_slow_refresh :: proc(t: ^testing.T) {
 	testing.expect(t, mac.write_all(fds[0], data))
 	mac.command_server_tick(&server, &m)
 	testing.expect(t, m.spaces[0].view.scroll.geometry_began >= now)
-	e.scroll_motion_tick(&m, now + .05)
+	mac.scroll_motion_tick(&m, now + .05)
 	testing.expect(
 		t,
 		m.windows[1].frame.w > before && m.windows[1].frame.w < 900,

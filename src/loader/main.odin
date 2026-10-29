@@ -1,6 +1,6 @@
 package main
 
-import loader "../addition/loader"
+import loader "../dock"
 import "core:fmt"
 import "core:os"
 import "core:strconv"

@@ -1,8 +1,7 @@
 package main
 
-import e "../../../../src/engine"
-import mac "../../../../src/macos"
-import wire "../../../../src/addition/protocol"
+import mac "../../../../src"
+import wire "../../../../src/dock"
 import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
@@ -71,7 +70,7 @@ async_worker :: proc(_: ^thread.Thread) {
 		} else if stopping {break} else {time.sleep(2 * time.Millisecond)}
 	}
 }
-Notification :: struct {at: f64, window: u32, bounds: e.Rect, status: i32}
+Notification :: struct {at: f64, window: u32, bounds: mac.Rect, status: i32}
 notifications: [dynamic]Notification
 notification_connection: i32
 notification_timing_only: bool
@@ -80,18 +79,18 @@ fixture_notification :: proc "c" (observer, element, notification, user: mac.Ref
 	if notification_timing_only {return}
 	id: u32
 	if mac._AXUIElementGetWindow(element, &id) != 0 {return}
-	frame: e.Rect
+	frame: mac.Rect
 	code := mac.SLSGetWindowBounds(notification_connection, id, &frame)
 	if len(notifications) < 1024 {
 		append(&notifications, Notification{mac.CACurrentMediaTime(), id, frame, code})
 	}
 }
-requested_ring_frame :: proc(state: ^mac.State, id: u32) -> (e.Rect, bool) {
+requested_ring_frame :: proc(state: ^mac.State, id: u32) -> (mac.Rect, bool) {
 	w := state.manager.windows[id]
 	if w == nil {return {}, false}
 	return w.frame, true
 }
-hybrid_ring_frame :: proc(state: ^mac.State, id: u32) -> (e.Rect, bool) {
+hybrid_ring_frame :: proc(state: ^mac.State, id: u32) -> (mac.Rect, bool) {
 	observed, valid := mac.mouse_native_resize_frame(state, id)
 	if !valid {return {}, false}
 	w := state.manager.windows[id]
@@ -103,7 +102,7 @@ hybrid_ring_frame :: proc(state: ^mac.State, id: u32) -> (e.Rect, bool) {
 	}
 	return observed, true
 }
-fixture_backend :: proc(user: rawptr, action: e.Action) -> string {
+fixture_backend :: proc(user: rawptr, action: mac.Action) -> string {
 	state := (^mac.State)(user)
 	if async_focus_enabled && action.kind == .Focus {
 		sync.mutex_lock(&async_fixture.mutex)
@@ -132,14 +131,14 @@ fixture_backend :: proc(user: rawptr, action: e.Action) -> string {
 		if w == nil || w.pid != state.validation_pid {return "window is outside fixture"}
 		element := state.windows[action.window]
 		if element == nil {return "fixture accessibility window unavailable"}
-		previous: e.Rect
+		previous: mac.Rect
 		if mac.SLSGetWindowBounds(state.connection, action.window, &previous) != 0 {return "fixture bounds unavailable"}
 		start := time.tick_now()
 		err := mac.write_accessibility_frame(element, action.frame, {nil, mac.native_frame_enhanced, mac.native_frame_set}, previous, .5)
-		observed: e.Rect
+		observed: mac.Rect
 		code := mac.SLSGetWindowBounds(state.connection, action.window, &observed)
 		if err != "" {code = -1}
-		e.motion_trace_record(&state.manager.motion_trace, {kind="native-frame",window=action.window,requested=action.frame,observed=observed,status=code,duration_ms=f64(time.tick_since(start))/1e6})
+		mac.motion_trace_record(&state.manager.motion_trace, {kind="native-frame",window=action.window,requested=action.frame,observed=observed,status=code,duration_ms=f64(time.tick_since(start))/1e6})
 		return err
 	}
 	if dock_fixture_moves && action.kind == .Frame {
@@ -151,13 +150,13 @@ fixture_backend :: proc(user: rawptr, action: e.Action) -> string {
 		wire.pack(&p, i32(math.round(action.frame.y)))
 		start := time.tick_now()
 		_, err := mac.addition_exchange(&p)
-		frame: e.Rect
+		frame: mac.Rect
 		code := mac.SLSGetWindowBounds(state.connection, action.window, &frame)
 		if err != "" {code = -1}
-		e.motion_trace_record(&state.manager.motion_trace, {kind="dock-frame",window=action.window,requested=action.frame,observed=frame,status=code,duration_ms=f64(time.tick_since(start))/1e6})
+		mac.motion_trace_record(&state.manager.motion_trace, {kind="dock-frame",window=action.window,requested=action.frame,observed=frame,status=code,duration_ms=f64(time.tick_since(start))/1e6})
 		return err
 	}
-	return mac.perform(user, action)
+	return mac.perform_native(user, action)
 }
 no_update_suppression :: proc(_: rawptr, _: i32, _: bool) -> i32 {return 0}
 main :: proc() {
@@ -180,10 +179,10 @@ main :: proc() {
 	array := mac.attribute(app, "AXWindows"); if array == nil {fail("fixture has no windows")}; defer mac.CFRelease(array)
 	if mac.CFArrayGetCount(array) != 2 {fail("expected exactly two fixture windows")}
 	bounds := mac.CGDisplayBounds(mac.CGMainDisplayID())
-	area := e.Rect{80, 80, min(1280, bounds.w-160), min(800, bounds.h-160)}
+	area := mac.Rect{80, 80, min(1280, bounds.w-160), min(800, bounds.h-160)}
 	if area.w < 1000 || area.h < 600 {fail("display too small")}
-	append(&state.manager.displays, e.Display{id = 1, index = 1, active_space = 1, frame = area, usable = area})
-	s := e.add_space(&state.manager, 1, 1, 1, area); s.visible = true; s.view.gap = 16; state.manager.active_space = 1
+	append(&state.manager.displays, mac.Display{id = 1, index = 1, active_space = 1, frame = area, usable = area})
+	s := mac.add_space(&state.manager, 1, 1, 1, area); s.visible = true; s.view.gap = 16; state.manager.active_space = 1
 	a,b: u32
 	for i in 0..<2 {
 		el := mac.CFArrayGetValueAtIndex(array, i)
@@ -193,8 +192,8 @@ main :: proc() {
 		owner, known := mac.animation_recovery_query_owner(state.connection, id); actual: i32
 		if !known || mac.SLSConnectionGetPID(owner, &actual) != 0 || actual != pid {fail("fixture owner mismatch")}
 		state.windows[id] = mac.CFRetain(el)
-		frame: e.Rect; if mac.SLSGetWindowBounds(state.connection, id, &frame) != 0 {fail("fixture bounds unavailable")}
-		e.add_window(&state.manager, {id=id,pid=pid,app="Shoji swipe visual fixture",title=title,frame=frame,space=1,display=1,role="AXWindow",subrole="AXStandardWindow",opacity=1})
+		frame: mac.Rect; if mac.SLSGetWindowBounds(state.connection, id, &frame) != 0 {fail("fixture bounds unavailable")}
+		mac.add_window(&state.manager, {id=id,pid=pid,app="Shoji swipe visual fixture",title=title,frame=frame,space=1,display=1,role="AXWindow",subrole="AXStandardWindow",opacity=1})
 		if strings.has_suffix(title," A") {a=id} else {b=id}
 	}
 	if a == 0 || b == 0 {fail("fixture IDs invalid")}
@@ -214,9 +213,9 @@ main :: proc() {
 	}
 	m := &state.manager
 	m.resize_fade = false; m.focus_ring.color = 0xff0000ff; m.focus_ring.width = 6
-	e.set_layout(m,s,.Scroll); e.focus_window(m,a); m.animation_duration=0; m.scroll_animate=true
-	if err := e.flush(m,s); err != "" {fmt.eprintln("initial layout:", err); fail("initial layout failed")}
-	if response := e.execute(m,{"window",fmt.tprintf("%d",a),"--column-width","abs:800"}); response.failed {fmt.eprintln(response.text); fail("fixture width failed")}
+	mac.set_layout(m,s,.Scroll); mac.focus_window(m,a); m.animation_duration=0; m.scroll_animate=true
+	if err := mac.flush(m,s); err != "" {fmt.eprintln("initial layout:", err); fail("initial layout failed")}
+	if response := mac.execute(m,{"window",fmt.tprintf("%d",a),"--column-width","abs:800"}); response.failed {fmt.eprintln(response.text); fail("fixture width failed")}
 	for _ in 0..<30 { mac.CFRunLoopRunInMode(mac.kCFRunLoopDefaultMode, 0.01, false) }
 	mac.focus_ring_tick(&state)
 	rings: [dynamic]u32; defer delete(rings)
@@ -241,7 +240,7 @@ main :: proc() {
 	dock_fixture_moves = os.args[5] == "dock"
 	skip_enhanced_probe = os.args[5] == "position-only"
 	m.backend = fixture_backend
-	e.motion_debug(m,{"motion","start"})
+	mac.motion_debug(m,{"motion","start"})
 	keyboard := os.args[5] == "keyboard" || os.args[5] == "keyboard-async" || os.args[5] == "keyboard-async-focus" || os.args[5] == "keyboard-async-rapid" || os.args[5] == "keyboard-stop"
 	notification_timing_only = keyboard
 	worker: ^thread.Thread
@@ -249,7 +248,7 @@ main :: proc() {
 		async_fixture.jobs = {{target = mac.motion_register(&async_fixture.queue, a, 1), element = state.windows[a]}, {target = mac.motion_register(&async_fixture.queue, b, 1), element = state.windows[b]}}
 		async_fixture.application = app
 		if os.args[5] == "keyboard-async-focus" || os.args[5] == "keyboard-async-rapid" || os.args[5] == "keyboard-stop" {
-			if err := mac.perform(&state, {kind = .Focus, window = a}); err != "" {fail("fixture activation failed")}
+			if err := mac.perform_native(&state, {kind = .Focus, window = a}); err != "" {fail("fixture activation failed")}
 			async_focus_enabled = true
 		}
 		worker = thread.create(async_worker)
@@ -277,7 +276,7 @@ main :: proc() {
 				m.scroll_time = time.duration_seconds(time.diff(time.Time{}, now))
 				target := (i / step_count) % 2 == 0 ? b : a
 				focus_start := time.tick_now()
-				response := e.execute(m, {"window", fmt.tprintf("%d", target), "--focus"})
+				response := mac.execute(m, {"window", fmt.tprintf("%d", target), "--focus"})
 				fmt.printf("focus %d duration_ms %.3f\n", i, f64(time.tick_since(focus_start))/1e6)
 				if response.failed {fmt.eprintln(response.text); fail("keyboard focus failed")}
 			}
@@ -315,7 +314,7 @@ main :: proc() {
 			if code != 0 || id != m.focused {fail("fixture worker did not reach final focus")}
 		}
 		if os.args[5] != "keyboard-stop" {for id in ([2]u32{a, b}) {
-			observed: e.Rect
+			observed: mac.Rect
 			wanted := m.windows[id].frame
 			for _ in 0..<50 {
 				if mac.SLSGetWindowBounds(state.connection, id, &observed) != 0 {fail("fixture final bounds unavailable")}
@@ -326,8 +325,8 @@ main :: proc() {
 			if math.abs(wanted.x-observed.x) > 2 || math.abs(wanted.y-observed.y) > 2 {fail("fixture worker did not reach final position")}
 		}}
 	}
-	e.motion_debug(m,{"motion","stop"})
-	trace := e.motion_debug(m,{"motion","dump"}); fmt.println("TRACE:",trace.text)
+	mac.motion_debug(m,{"motion","stop"})
+	trace := mac.motion_debug(m,{"motion","dump"}); fmt.println("TRACE:",trace.text)
 	if events, err := json.marshal(notifications[:]); err == nil {fmt.println("NOTIFICATIONS:",string(events)); delete(events)}
 	if max_movement < 30 {fail("no meaningful fixture swipe observed")}
 }

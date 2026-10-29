@@ -7,9 +7,8 @@ import "core:os"
 import "core:strings"
 import "base:intrinsics"
 import posix "core:sys/posix"
-import loader "../../../src/addition/loader"
-import hook "../../../src/addition/windowserver/hook"
-import target "../../../src/addition/windowserver/target"
+import loader "../../../src/dock"
+import hook "../../../src/experimental/window_server"
 
 Header :: struct {
 	magic: u32,
@@ -343,14 +342,14 @@ main :: proc() {
 	for i in 0 ..< 16 {fmt.printf("%02x", bytes[i])}
 	fmt.println()
 	if patch_mode || witness_mode {
-		location := target.Ordering_Location {
+		location := hook.Ordering_Location {
 			uuid = uuid,
 			slide = u64(slide),
 			text_start = u64(text_start),
 			text_size = text.vm_size,
 			candidate = u64(candidate),
 		}
-		if !has_uuid || !target.matches_ordering_entry(location, bytes[:16]) {
+		if !has_uuid || !hook.matches_ordering_entry(location, bytes[:16]) {
 			fmt.eprintln("unsupported image identity, range or entry signature"); os.exit(1)
 		}
 	}

@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:testing"
 import "core:time"
 
@@ -57,9 +56,9 @@ three_finger_horizontal_swipe_tracks_motion_and_release :: proc(t: ^testing.T) {
 @(test)
 three_finger_horizontal_scroll_starts_and_finishes_pan :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
-	e.execute(&state.manager, {"window", "1", "--focus"})
+	mac.execute(&state.manager, {"window", "1", "--focus"})
 	s := state.manager.spaces[0]
 	state.stack_touch.horizontal_space = s.id
 	state.stack_touch.horizontal_layout = .Scroll
@@ -74,10 +73,10 @@ three_finger_horizontal_scroll_starts_and_finishes_pan :: proc(t: ^testing.T) {
 @(test)
 three_finger_slow_release_focuses_first_visible_column_at_left_edge :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
-	e.execute(&state.manager, {"window", "1", "--focus"})
-	e.execute(&state.manager, {"window", "2", "--focus"})
+	mac.execute(&state.manager, {"window", "1", "--focus"})
+	mac.execute(&state.manager, {"window", "2", "--focus"})
 	s := state.manager.spaces[0]
 	state.stack_touch.horizontal_space = s.id
 	state.stack_touch.horizontal_layout = .Scroll
@@ -89,10 +88,10 @@ three_finger_slow_release_focuses_first_visible_column_at_left_edge :: proc(t: ^
 @(test)
 three_finger_release_settles_without_spring_overshoot :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
-	e.execute(&state.manager, {"config", "scroll_animation", "on"})
-	e.execute(&state.manager, {"window", "1", "--focus"})
+	mac.execute(&state.manager, {"config", "scroll_animation", "on"})
+	mac.execute(&state.manager, {"window", "1", "--focus"})
 	state.manager.animation_duration = .2
 	s := state.manager.spaces[0]
 	state.stack_touch.horizontal_space = s.id
@@ -102,7 +101,7 @@ three_finger_release_settles_without_spring_overshoot :: proc(t: ^testing.T) {
 	mac.stack_touch_horizontal(&state, 0, -8, true)
 	target := s.view.scroll.motion.target
 	for i in 1 ..= 32 {
-		e.scroll_motion_sample(&s.view.scroll.motion, s.view.scroll.motion.began + f64(i) / 120)
+		mac.scroll_motion_sample(&s.view.scroll.motion, s.view.scroll.motion.began + f64(i) / 120)
 		x := s.view.scroll.motion.position
 		testing.expect(t, x >= min(position, target) - .001 && x <= max(position, target) + .001)
 	}
@@ -111,10 +110,10 @@ three_finger_release_settles_without_spring_overshoot :: proc(t: ^testing.T) {
 @(test)
 three_finger_swipes_select_each_adjacent_column :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
-	e.execute(&state.manager, {"window", "1", "--column-width", "abs:900"})
-	e.execute(&state.manager, {"window", "1", "--focus"})
+	mac.execute(&state.manager, {"window", "1", "--column-width", "abs:900"})
+	mac.execute(&state.manager, {"window", "1", "--focus"})
 	s := state.manager.spaces[0]
 	state.stack_touch.horizontal_space = s.id
 	state.stack_touch.horizontal_layout = .Scroll
@@ -134,8 +133,8 @@ three_finger_swipes_select_each_adjacent_column :: proc(t: ^testing.T) {
 @(test)
 three_finger_horizontal_bsp_switches_once_and_wraps :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
-	e.add_space(&state.manager, 200, 10, 2, {0, 0, 1000, 800})
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
+	mac.add_space(&state.manager, 200, 10, 2, {0, 0, 1000, 800})
 	state.stack_touch.horizontal_space = 100
 	state.stack_touch.horizontal_layout = .BSP
 	resize(&r.actions, 0)
@@ -144,7 +143,7 @@ three_finger_horizontal_bsp_switches_once_and_wraps :: proc(t: ^testing.T) {
 	mac.stack_touch_horizontal(&state, -.05, 0, false)
 	testing.expect_value(t, len(r.actions), 1)
 	if len(r.actions) > 0 {
-		testing.expect_value(t, r.actions[0].kind, e.Action_Kind.Space_Focus)
+		testing.expect_value(t, r.actions[0].kind, mac.Action_Kind.Space_Focus)
 		testing.expect_value(t, r.actions[0].space, u64(200))
 	}
 	mac.stack_touch_horizontal(&state, -.1, 0, false)
@@ -160,9 +159,9 @@ three_finger_horizontal_bsp_switches_once_and_wraps :: proc(t: ^testing.T) {
 @(test)
 stack_swipe_focuses_only_valid_bsp_stack_members :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
-	e.execute(&state.manager, {"window", "1", "--stack", "2"})
-	e.focus_window(&state.manager, 1)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
+	mac.execute(&state.manager, {"window", "1", "--stack", "2"})
+	mac.focus_window(&state.manager, 1)
 	w := state.manager.windows[1]
 	mac.stack_swipe_apply(&state, w.id, w.generation + 1, 1)
 	testing.expect_value(t, state.manager.focused, u32(1))
@@ -182,13 +181,13 @@ stack_swipe_focuses_only_valid_bsp_stack_members :: proc(t: ^testing.T) {
 @(test)
 desktop_swipe_suppresses_tiling_until_settled :: proc(t: ^testing.T) {
 	state: mac.State;r: Recorder;fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager);defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager);defer delete(r.actions)
 	// Public CGEvent setters cannot fabricate the private Dock-swipe fields.
 	// Exercise the extracted record path without posting a real gesture.
 	now := time.now()
 	mac.mouse_gesture_record(&state, 23, 1, 1, now)
 	testing.expect(t, state.manager.gesture_active)
-	testing.expect_value(t, e.flush(&state.manager, state.manager.spaces[0]), "")
+	testing.expect_value(t, mac.flush(&state.manager, state.manager.spaces[0]), "")
 	testing.expect_value(t, len(r.actions), 0)
 	mac.mouse_gesture_record(&state, 23, 1, 4, now)
 	mac.mouse_gesture_tick(
@@ -201,18 +200,18 @@ desktop_swipe_suppresses_tiling_until_settled :: proc(t: ^testing.T) {
 		time.time_add(state.mouse.gesture_ended, 300 * time.Millisecond),
 	)
 	testing.expect(t, !state.manager.gesture_active && state.dirty)
-	testing.expect_value(t, e.flush(&state.manager, state.manager.spaces[0]), "")
+	testing.expect_value(t, mac.flush(&state.manager, state.manager.spaces[0]), "")
 	testing.expect(t, len(r.actions) > 0)
 }
 
 @(test)
 cross_space_mouse_stack_commits_only_after_transport_success :: proc(t: ^testing.T) {
-	m: e.Manager;r: Recorder;fixture(&m, &r)
-	defer e.manager_destroy(&m);defer delete(r.actions)
-	s := e.add_space(&m, 200, 10, 2, {0, 0, 1000, 800})
-	w := e.add_window(
+	m: mac.Manager;r: Recorder;fixture(&m, &r)
+	defer mac.manager_destroy(&m);defer delete(r.actions)
+	s := mac.add_space(&m, 200, 10, 2, {0, 0, 1000, 800})
+	w := mac.add_window(
 		&m,
-		e.Window {
+		mac.Window {
 			id = 3,
 			role = "AXWindow",
 			subrole = "AXStandardWindow",
@@ -222,21 +221,21 @@ cross_space_mouse_stack_commits_only_after_transport_success :: proc(t: ^testing
 		},
 	)
 	m.mouse.drop_stack = true
-	d := e.mouse_begin(&m, 1, .Move, {0, 0})
+	d := mac.mouse_begin(&m, 1, .Move, {0, 0})
 	r.fail = true
-	testing.expect(t, e.mouse_drop(&m, d, 3, {500, 400}) != "")
+	testing.expect(t, mac.mouse_drop(&m, d, 3, {500, 400}) != "")
 	testing.expect_value(t, m.windows[1].space, u64(100))
 	r.fail = false
-	testing.expect_value(t, e.mouse_drop(&m, d, 3, {500, 400}), "")
+	testing.expect_value(t, mac.mouse_drop(&m, d, 3, {500, 400}), "")
 	testing.expect_value(t, m.windows[1].space, w.space)
-	testing.expect_value(t, e.find(s.view.root, 3).count, 2)
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) == nil)
+	testing.expect_value(t, mac.find(s.view.root, 3).count, 2)
+	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 1) == nil)
 }
 
 @(test)
 mouse_settings_validate_and_preserve_state :: proc(t: ^testing.T) {
-	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
-	testing.expect_value(t, e.config(&m, []string{"mouse_modifier"}).text, "fn")
+	m: mac.Manager;r: Recorder;fixture(&m, &r);defer mac.manager_destroy(&m);defer delete(r.actions)
+	testing.expect_value(t, mac.config(&m, []string{"mouse_modifier"}).text, "fn")
 	pairs := [][2]string {
 		{"mouse_modifier", "alt"},
 		{"mouse_action1", "resize"},
@@ -246,76 +245,76 @@ mouse_settings_validate_and_preserve_state :: proc(t: ^testing.T) {
 		{"mouse_follows_focus", "on"},
 	}
 	for &pair in pairs {
-		testing.expect(t, !e.config(&m, pair[:]).failed)
-		testing.expect_value(t, e.config(&m, pair[:1]).text, pair[1])
-		testing.expect(t, e.config(&m, []string{pair[0], "invalid"}).failed)
-		testing.expect_value(t, e.config(&m, pair[:1]).text, pair[1])
+		testing.expect(t, !mac.config(&m, pair[:]).failed)
+		testing.expect_value(t, mac.config(&m, pair[:1]).text, pair[1])
+		testing.expect(t, mac.config(&m, []string{pair[0], "invalid"}).failed)
+		testing.expect_value(t, mac.config(&m, pair[:1]).text, pair[1])
 	}
-	testing.expect(t, e.config(&m, []string{"--space", "1", "mouse_modifier", "cmd"}).failed)
+	testing.expect(t, mac.config(&m, []string{"--space", "1", "mouse_modifier", "cmd"}).failed)
 	testing.expect_value(t, len(r.actions), 0)
 }
 @(test)
 mouse_resize_preserves_opposite_edges :: proc(t: ^testing.T) {
-	d := e.Mouse_Drag {
+	d := mac.Mouse_Drag {
 		action = .Resize,
 		origin = {100, 100},
 		frame  = {100, 100, 400, 300},
 		left   = true,
 		top    = true,
 	}
-	testing.expect_value(t, e.mouse_drag_frame(d, {150, 130}), e.Rect{150, 130, 350, 270})
-	testing.expect_value(t, e.mouse_drag_frame(d, {1000, 1000}), e.Rect{499, 399, 1, 1})
+	testing.expect_value(t, mac.mouse_drag_frame(d, {150, 130}), mac.Rect{150, 130, 350, 270})
+	testing.expect_value(t, mac.mouse_drag_frame(d, {1000, 1000}), mac.Rect{499, 399, 1, 1})
 	d.left = false;d.top = false
-	testing.expect_value(t, e.mouse_drag_frame(d, {150, 130}), e.Rect{100, 100, 450, 330})
+	testing.expect_value(t, mac.mouse_drag_frame(d, {150, 130}), mac.Rect{100, 100, 450, 330})
 	d.action = .Move
-	testing.expect_value(t, e.mouse_drag_frame(d, {50, 75}), e.Rect{50, 75, 400, 300})
+	testing.expect_value(t, mac.mouse_drag_frame(d, {50, 75}), mac.Rect{50, 75, 400, 300})
 }
 @(test)
 mouse_drop_regions_match_upstream_geometry :: proc(t: ^testing.T) {
-	frame := e.Rect{10, 20, 800, 400}
-	testing.expect_value(t, e.mouse_drop_region(frame, {410, 220}, false, 1), e.Mouse_Drop.Swap)
-	testing.expect_value(t, e.mouse_drop_region(frame, {410, 220}, true, 1), e.Mouse_Drop.Stack)
-	points := []e.Mouse_Point{{410, 30}, {800, 220}, {410, 410}, {20, 220}, {0, 0}}
-	expected := []e.Mouse_Drop{.North, .East, .South, .West, .None}
+	frame := mac.Rect{10, 20, 800, 400}
+	testing.expect_value(t, mac.mouse_drop_region(frame, {410, 220}, false, 1), mac.Mouse_Drop.Swap)
+	testing.expect_value(t, mac.mouse_drop_region(frame, {410, 220}, true, 1), mac.Mouse_Drop.Stack)
+	points := []mac.Mouse_Point{{410, 30}, {800, 220}, {410, 410}, {20, 220}, {0, 0}}
+	expected := []mac.Mouse_Drop{.North, .East, .South, .West, .None}
 	for point, i in points {testing.expect_value(
 			t,
-			e.mouse_drop_region(frame, point, false, 1),
+			mac.mouse_drop_region(frame, point, false, 1),
 			expected[i],
 		)}
 }
 @(test)
 mouse_floating_drag_reports_failure_without_model_update :: proc(t: ^testing.T) {
-	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
-	s := e.space_by_id(&m, 100);e.set_layout(&m, s, .Float)
+	m: mac.Manager;r: Recorder;fixture(&m, &r);defer mac.manager_destroy(&m);defer delete(r.actions)
+	s := mac.space_by_id(&m, 100);mac.set_layout(&m, s, .Float)
 	w := m.windows[1];w.frame = {0, 0, 100, 100}
-	d := e.mouse_begin(&m, 1, .Move, {10, 10})
+	d := mac.mouse_begin(&m, 1, .Move, {10, 10})
 	r.fail = true
-	testing.expect(t, e.mouse_update(&m, &d, {50, 50}) != "")
-	testing.expect_value(t, w.frame, e.Rect{0, 0, 100, 100})
+	testing.expect(t, mac.mouse_update(&m, &d, {50, 50}) != "")
+	testing.expect_value(t, w.frame, mac.Rect{0, 0, 100, 100})
 	r.fail = false
-	testing.expect_value(t, e.mouse_update(&m, &d, {50, 50}), "")
-	testing.expect_value(t, w.frame, e.Rect{40, 40, 100, 100})
+	testing.expect_value(t, mac.mouse_update(&m, &d, {50, 50}), "")
+	testing.expect_value(t, w.frame, mac.Rect{40, 40, 100, 100})
 	w.fullscreen = true
-	testing.expect_value(t, e.mouse_begin(&m, 1, .Resize, {0, 0}).window, u32(0))
+	testing.expect_value(t, mac.mouse_begin(&m, 1, .Resize, {0, 0}).window, u32(0))
 }
 @(test)
 mouse_bsp_resize_and_drop_preserve_membership :: proc(t: ^testing.T) {
-	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
-	s := e.space_by_id(&m, 100);s.view.split = .Vertical;e.flush(&m, s)
+	m: mac.Manager;r: Recorder;fixture(&m, &r);defer mac.manager_destroy(&m);defer delete(r.actions)
+	s := mac.space_by_id(&m, 100);s.view.split = .Vertical;mac.flush(&m, s)
 	w :=
-		m.windows[1];d := e.mouse_begin(&m, 1, .Resize, {w.frame.x + w.frame.w - 1, w.frame.y + 1})
-	n := e.find(s.view.root, 1)
-	testing.expect(t, e.mouse_fence(n, .Vertical, false) == s.view.root)
-	testing.expect(t, e.mouse_fence(n, .Vertical, true) == nil)
-	testing.expect_value(t, e.mouse_update(&m, &d, {d.origin.x + 100, d.origin.y}), "")
+		m.windows[1];d := mac.mouse_begin(&m, 1, .Resize, {w.frame.x + w.frame.w - 1, w.frame.y + 1})
+	n := mac.find(s.view.root, 1)
+	testing.expect(t, mac.mouse_fence(n, .Vertical, false) == s.view.root)
+	testing.expect(t, mac.mouse_fence(n, .Vertical, true) == nil)
+	testing.expect_value(t, mac.mouse_update(&m, &d, {d.origin.x + 100, d.origin.y}), "")
 	testing.expect(t, s.view.root.ratio > 0.5)
-	d = e.mouse_begin(&m, 1, .Move, {0, 0})
+	d = mac.mouse_begin(&m, 1, .Move, {0, 0})
 	target :=
-		m.windows[2];center := e.Mouse_Point{target.frame.x + target.frame.w / 2, target.frame.y + target.frame.h / 2}
+		m.windows[2];center := mac.Mouse_Point{target.frame.x + target.frame.w / 2, target.frame.y + target.frame.h / 2}
 	m.mouse.drop_stack = true
-	testing.expect_value(t, e.mouse_drop(&m, d, 2, center), "")
-	testing.expect_value(t, e.find(s.view.root, 2).count, 2)
-	testing.expect(t, e.find(s.view.root, 1) == e.find(s.view.root, 2))
+	testing.expect_value(t, mac.mouse_drop(&m, d, 2, center), "")
+	testing.expect_value(t, mac.find(s.view.root, 2).count, 2)
+	testing.expect(t, mac.find(s.view.root, 1) == mac.find(s.view.root, 2))
 }
 foreign import test_cg "system:CoreGraphics.framework"
 @(default_calling_convention = "c")
@@ -328,12 +327,12 @@ foreign test_cg {
 @(test)
 scroll_double_click_resize_edge_toggles_width_and_resets_row :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	niri_open(&state.manager, 2)
-	e.execute(&state.manager, {"window", "1", "--stack", "2"})
-	e.execute(&state.manager, {"window", "1", "--row-height", "abs:250"})
+	mac.execute(&state.manager, {"window", "1", "--stack", "2"})
+	mac.execute(&state.manager, {"window", "1", "--row-height", "abs:250"})
 	w := state.manager.windows[1]
-	n := e.find(state.manager.spaces[0].view.root, 1)
+	n := mac.find(state.manager.spaces[0].view.root, 1)
 	frame := w.frame
 	down := CGEventCreateMouseEvent(nil, 1, {frame.x + frame.w - 1, frame.y + frame.h / 2}, 0)
 	defer mac.CFRelease(down)
@@ -373,8 +372,8 @@ scroll_double_click_resize_edge_toggles_width_and_resets_row :: proc(t: ^testing
 @(test)
 mouse_event_capture_coalesces_drag_and_releases_up :: proc(t: ^testing.T) {
 	state: mac.State;r: Recorder;fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager);defer delete(r.actions)
-	e.set_layout(&state.manager, e.space_by_id(&state.manager, 100), .Float)
+	defer mac.manager_destroy(&state.manager);defer delete(r.actions)
+	mac.set_layout(&state.manager, mac.space_by_id(&state.manager, 100), .Float)
 	state.manager.windows[1].frame = {0, 0, 100, 100}
 	down := CGEventCreateMouseEvent(nil, 1, {10, 10}, 0);defer mac.CFRelease(down)
 	CGEventSetFlags(down, 0)
@@ -386,7 +385,7 @@ mouse_event_capture_coalesces_drag_and_releases_up :: proc(t: ^testing.T) {
 	testing.expect(t, mac.mouse_callback(nil, 6, drag, &state) == nil)
 	testing.expect_value(t, len(r.actions), 0)
 	mac.mouse_tick(&state)
-	testing.expect_value(t, state.manager.windows[1].frame, e.Rect{30, 40, 100, 100})
+	testing.expect_value(t, state.manager.windows[1].frame, mac.Rect{30, 40, 100, 100})
 	up := CGEventCreateMouseEvent(nil, 2, {40, 50}, 0);defer mac.CFRelease(up)
 	testing.expect(t, mac.mouse_callback(nil, 2, up, &state) == nil)
 	mac.mouse_tick(&state)
@@ -396,8 +395,8 @@ mouse_event_capture_coalesces_drag_and_releases_up :: proc(t: ^testing.T) {
 
 @(test)
 window_resize_handles_work_in_float_layout :: proc(t: ^testing.T) {
-	m: e.Manager;r: Recorder;fixture(&m, &r);defer e.manager_destroy(&m);defer delete(r.actions)
-	e.set_layout(&m, e.space_by_id(&m, 100), .Float)
+	m: mac.Manager;r: Recorder;fixture(&m, &r);defer mac.manager_destroy(&m);defer delete(r.actions)
+	mac.set_layout(&m, mac.space_by_id(&m, 100), .Float)
 	w := m.windows[1]
 	names := []string {
 		"top_left",
@@ -409,7 +408,7 @@ window_resize_handles_work_in_float_layout :: proc(t: ^testing.T) {
 		"left",
 		"right",
 	}
-	expected := []e.Rect {
+	expected := []mac.Rect {
 		{10, 20, 90, 80},
 		{0, 20, 110, 80},
 		{10, 0, 90, 120},
@@ -421,10 +420,10 @@ window_resize_handles_work_in_float_layout :: proc(t: ^testing.T) {
 	}
 	for name, i in names {
 		w.frame = {0, 0, 100, 100}
-		testing.expect_value(t, e.resize_window(&m, w, name, 10, 20), "")
+		testing.expect_value(t, mac.resize_window(&m, w, name, 10, 20), "")
 		testing.expect_value(t, w.frame, expected[i])
 	}
-	testing.expect(t, e.resize_window(&m, w, "bogus", 0, 0) != "")
-	testing.expect(t, !e.window_command(&m, []string{"1", "--move", "abs:42:84"}).failed)
+	testing.expect(t, mac.resize_window(&m, w, "bogus", 0, 0) != "")
+	testing.expect(t, !mac.window_command(&m, []string{"1", "--move", "abs:42:84"}).failed)
 	testing.expect_value(t, w.frame.x, f64(42));testing.expect_value(t, w.frame.y, f64(84))
 }

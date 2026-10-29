@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -18,13 +17,13 @@ signal_shell_receives_shoji_event_identifiers :: proc(t: ^testing.T) {
 	defer os.remove(path)
 
 	state: mac.State
-	e.manager_init(&state.manager)
-	defer e.manager_destroy(&state.manager)
+	mac.manager_init(&state.manager)
+	defer mac.manager_destroy(&state.manager)
 	action := fmt.tprintf(
 		`action=printf '%%s:%%s:%%s:%%s:%%s:%%s:%%s' "$SHOJI_WINDOW_ID" "$SHOJI_RECENT_WINDOW_ID" "$SHOJI_PROCESS_ID" "$SHOJI_SPACE_ID" "$SHOJI_RECENT_SPACE_ID" "$SHOJI_DISPLAY_ID" "$SHOJI_RECENT_DISPLAY_ID" > '%s'`,
 		path,
 	)
-	response := e.execute(&state.manager, {"signal", "--add", "event=window_focused", action})
+	response := mac.execute(&state.manager, {"signal", "--add", "event=window_focused", action})
 	if !testing.expect(t, !response.failed, response.text) {return}
 	mac.emit(&state, {
 		name = "window_focused", window = 21, recent_window = 22, pid = 23,

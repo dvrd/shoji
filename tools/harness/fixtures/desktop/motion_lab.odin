@@ -1,7 +1,6 @@
 package main
 
-import e "../../../../src/engine"
-import mac "../../../../src/macos"
+import mac "../../../../src"
 import "base:intrinsics"
 import "core:encoding/json"
 import "core:fmt"
@@ -26,7 +25,7 @@ Lab_Frame :: struct {
 	active: bool,
 	worst_window: u32,
 	invalid_readbacks: int,
-	expected, observed: e.Rect,
+	expected, observed: mac.Rect,
 }
 Lab_Result :: struct {
 	version: int,
@@ -40,7 +39,7 @@ Lab_Backend :: struct {
 	owned: Owned_Scroll,
 	native: bool,
 }
-lab_apply :: proc(user: rawptr, action: e.Action) -> string {
+lab_apply :: proc(user: rawptr, action: mac.Action) -> string {
 	lab := (^Lab_Backend)(user)
 	if lab.native {return owned_scroll_apply(&lab.owned, action)}
 	return ""
@@ -82,12 +81,12 @@ lab_run :: proc(result: ^Lab_Result, native: bool, slowdown: f64, repetition: in
 	defer {
 		for _, window in backend.owned.windows {intrinsics.objc_send(nil, window, "close")}
 	}
-	m: e.Manager
-	e.manager_init(&m, lab_apply, &backend)
-	defer e.manager_destroy(&m)
-	s := e.add_space(&m, 1, 1, 1, {80, 80, 1280, 800})
+	m: mac.Manager
+	mac.manager_init(&m, lab_apply, &backend)
+	defer mac.manager_destroy(&m)
+	s := mac.add_space(&m, 1, 1, 1, {80, 80, 1280, 800})
 	s.visible = true; s.view.gap = 16; m.active_space = 1
-	e.set_layout(&m, s, .Scroll)
+	mac.set_layout(&m, s, .Scroll)
 	ids: [4]u32
 	for i in 0 ..< 4 {
 		ids[i] = u32(i + 1)
@@ -99,18 +98,18 @@ lab_run :: proc(result: ^Lab_Result, native: bool, slowdown: f64, repetition: in
 			intrinsics.objc_send(nil, window, "orderOut:", rawptr(nil))
 		}
 		if i < 3 {
-			e.add_window(&m, {id = ids[i], pid = mac.getpid(), space = 1, display = 1, role = "AXWindow", subrole = "AXStandardWindow", opacity = 1})
-			e.focus_window(&m, ids[i])
+			mac.add_window(&m, {id = ids[i], pid = mac.getpid(), space = 1, display = 1, role = "AXWindow", subrole = "AXStandardWindow", opacity = 1})
+			mac.focus_window(&m, ids[i])
 		}
 	}
-	e.focus_window(&m, ids[0])
-	if e.flush(&m, s) != "" {return false}
+	mac.focus_window(&m, ids[0])
+	if mac.flush(&m, s) != "" {return false}
 	if native {
 		for i in 0 ..< 3 {intrinsics.objc_send(nil, backend.owned.windows[ids[i]], "orderFrontRegardless")}
 		mac.CFRunLoopRunInMode(mac.kCFRunLoopDefaultMode, 0.05, false)
 	}
 	m.scroll_animate, m.animation_duration = true, 0.5
-	if e.flush(&m, s) != "" {return false}
+	if mac.flush(&m, s) != "" {return false}
 	events := []Lab_Event {
 		{0.05, .Focus, 2, 0}, {0.15, .Focus, 0, 0}, {0.26, .Focus, 2, 0},
 		{0.8, .Width, 1, 900}, {0.9, .Width, 1, 400}, {1.05, .Width, 1, 750}, {1.45, .Width, 1, 756},
@@ -139,32 +138,32 @@ lab_run :: proc(result: ^Lab_Result, native: bool, slowdown: f64, repetition: in
 		interval := native ? f64(time.tick_diff(last, now)) / 1e6 : 1000.0 / 120
 		last = now
 		m.scroll_time = model
-		if err := e.scroll_motion_tick(&m, model); err != "" {fmt.eprintln(err); return false}
+		if err := mac.scroll_motion_tick(&m, model); err != "" {fmt.eprintln(err); return false}
 		for index < len(events) && events[index].at <= model {
 			ev := events[index]; index += 1
 			id := fmt.tprintf("%d", ids[ev.index])
-			before: map[u32]e.Rect
+			before: map[u32]mac.Rect
 			if ev.kind == .Focus || ev.kind == .Width || ev.kind == .Height {
-				before = make(map[u32]e.Rect)
+				before = make(map[u32]mac.Rect)
 				for id, w in m.windows {before[id] = w.frame}
 			}
 			err: string
 			switch ev.kind {
-			case .Focus: err = e.execute(&m, {"window", id, "--focus"}).text
-			case .Width: err = e.execute(&m, {"window", id, "--column-width", fmt.tprintf("abs:%.0f", ev.value)}).text
-			case .Height: err = e.execute(&m, {"window", id, "--row-height", fmt.tprintf("abs:%.0f", ev.value)}).text
-			case .Stack: err = e.execute(&m, {"window", id, "--stack", fmt.tprintf("%d", ids[1])}).text
-			case .Begin: e.scroll_begin_pan(&m, s)
-			case .Pan: err = e.scroll_gesture_pan(&m, s.id, ev.value)
-			case .End: err = e.scroll_finish_pan(&m, s, ev.value)
+			case .Focus: err = mac.execute(&m, {"window", id, "--focus"}).text
+			case .Width: err = mac.execute(&m, {"window", id, "--column-width", fmt.tprintf("abs:%.0f", ev.value)}).text
+			case .Height: err = mac.execute(&m, {"window", id, "--row-height", fmt.tprintf("abs:%.0f", ev.value)}).text
+			case .Stack: err = mac.execute(&m, {"window", id, "--stack", fmt.tprintf("%d", ids[1])}).text
+			case .Begin: mac.scroll_begin_pan(&m, s)
+			case .Pan: err = mac.scroll_gesture_pan(&m, s.id, ev.value)
+			case .End: err = mac.scroll_finish_pan(&m, s, ev.value)
 			case .Open:
-				e.add_window(&m, {id = ids[ev.index], pid = mac.getpid(), space = 1, display = 1, role = "AXWindow", subrole = "AXStandardWindow", opacity = 1})
-				e.focus_window(&m, ids[ev.index]); err = e.flush(&m, s)
+				mac.add_window(&m, {id = ids[ev.index], pid = mac.getpid(), space = 1, display = 1, role = "AXWindow", subrole = "AXStandardWindow", opacity = 1})
+				mac.focus_window(&m, ids[ev.index]); err = mac.flush(&m, s)
 				if native {intrinsics.objc_send(nil, backend.owned.windows[ids[ev.index]], "orderFrontRegardless")}
 			case .Close:
-				e.remove_window(&m, ids[ev.index])
+				mac.remove_window(&m, ids[ev.index])
 				if native {intrinsics.objc_send(nil, backend.owned.windows[ids[ev.index]], "orderOut:", rawptr(nil))}
-				err = e.flush(&m, s)
+				err = mac.flush(&m, s)
 			}
 			if err != "" {delete(before); result.failure = fmt.aprintf("scenario %.4f: %s", model, err); fmt.eprintln(result.failure); return false}
 			for id, prior in before {
@@ -174,18 +173,18 @@ lab_run :: proc(result: ^Lab_Result, native: bool, slowdown: f64, repetition: in
 				if f.snap_width && math.abs(current.w-prior.w) <= 10 {allowed.w = current.w}
 				if f.snap_height && math.abs(current.h-prior.h) <= 10 {allowed.h = current.h}
 				tolerance := allowed != prior ? f64(1.5) : f64(.001)
-				if !e.scroll_rect_near(allowed, current, tolerance) {delete(before); result.failure = fmt.aprintf("frame jumped while retargeting at %.4f window %d: %v -> %v", model, id, prior, m.windows[id].frame); fmt.eprintln(result.failure); return false}
+				if !mac.scroll_rect_near(allowed, current, tolerance) {delete(before); result.failure = fmt.aprintf("frame jumped while retargeting at %.4f window %d: %v -> %v", model, id, prior, m.windows[id].frame); fmt.eprintln(result.failure); return false}
 			}
 			delete(before)
 		}
 		max_error := 0.0
 		invalid_readbacks := 0
 		worst_window: u32
-		expected, observed: e.Rect
+		expected, observed: mac.Rect
 		for id, w in m.windows {
 			if math.is_nan(w.frame.x) || math.is_nan(w.frame.w) || w.frame.w <= 0 || w.frame.h <= 0 {return false}
 			if native {
-				actual: e.Rect
+				actual: mac.Rect
 				if code := mac.SLSGetWindowBounds(cid, id, &actual); code != 0 {result.failure = fmt.aprintf("bounds read failed: window %d code %d", id, code); return false}
 				if actual.w <= 0 || actual.h <= 0 || math.is_nan(actual.w) || math.is_nan(actual.h) {invalid_readbacks += 1; continue}
 				error := max(math.abs(actual.x - w.frame.x), math.abs(actual.y - w.frame.y), math.abs(actual.w - w.frame.w), math.abs(actual.h - w.frame.h))
@@ -209,7 +208,7 @@ lab_percentile :: proc(values: []f64, fraction: f64) -> f64 {
 motion_report :: proc(args: []string) -> bool {
 	if len(args) != 1 {return false}
 	bytes, ok := os.read_entire_file(args[0], context.allocator); if ok != nil {return false}; defer delete(bytes)
-	trace: e.Motion_Export
+	trace: mac.Motion_Export
 	if json.unmarshal(bytes, &trace, allocator = context.temp_allocator) != nil || trace.version != 1 {return false}
 	ticks, calls, delays: [dynamic]f64
 	defer delete(ticks); defer delete(calls); defer delete(delays)

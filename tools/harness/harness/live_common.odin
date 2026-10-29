@@ -1,6 +1,6 @@
 package harness
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
@@ -37,7 +37,7 @@ Child :: struct {
 	group: posix.pid_t,
 }
 live_command :: proc(l: ^Live, args: []string) -> (string, string) {
-	r := s.run(l.c.executor, args, timeout = 30 * time.Second)
+	r := s.process_run(l.c.executor, args, timeout = 30 * time.Second)
 	append(
 		&l.commands,
 		Recorded_Command{s.clone_args(args), r.code, r.out, r.diagnostic},
@@ -107,7 +107,15 @@ prepare_live :: proc(c: tc.Context, prefix: string) -> (Live, string) {
 	l.report.binary_sha256 = hash
 	return l, ""
 }
-build_live_helper :: proc(c: tc.Context) -> string {
+build_live_helper :: proc(c: tc.Context, prebuilt: bool = false) -> string {
+	if prebuilt {
+		path := tc.binary(c, "harness-fixture")
+		if !s.regular(path) {return "prebuilt fixture must be a regular non-symlink file"}
+		if _, err := tc.run(c, []string{"/usr/bin/codesign", "--verify", "--strict", path}); err != "" {return err}
+		hash, err := tc.digest(c, path); if err != "" {return err}
+		fmt.println("Prebuilt fixture SHA-256:", hash)
+		return ""
+	}
 	if err := s.mkdir(tc.root_file(c, "bin")); err != "" {
 		return err
 	}
@@ -152,7 +160,7 @@ start_child :: proc(
 	stderr, b := os.create(errpath); if b != nil {
 		return {}, "cannot create child stderr"
 	}; defer os.close(stderr)
-	child, group, err := s.start(
+	child, group, err := s.process_start(
 		{command = args, stdout = out, stderr = stderr},
 	)
 	if err != nil {

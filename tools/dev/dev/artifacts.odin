@@ -1,6 +1,6 @@
 package development
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:os"
@@ -188,7 +188,7 @@ package_release :: proc(
 			return "", s.cat("missing release input: ", source)
 		}
 		destination := s.join(bundle, relative)
-		if err = s.copy(destination, source); err != "" {
+		if err = s.copy_file(destination, source); err != "" {
 			return "", err
 		}
 		hash, e := tc.digest(c, destination); if e != "" {

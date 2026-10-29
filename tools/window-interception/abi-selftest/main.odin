@@ -2,7 +2,8 @@ package main
 
 import "core:fmt"
 import "core:os"
-import bridge "../../../src/addition/bridge"
+import bridge "../../../src/dock"
+import "base:intrinsics"
 
 foreign import fixture "../../../bin/shoji-ws-abi-native.o"
 
@@ -13,7 +14,10 @@ foreign fixture {
 	shoji_abi_run :: proc "c" (callback: Ordering_Callback) -> i32 ---
 }
 
+forward_calls: u64
+
 forward :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i32, relative: [^]u32, count: u32, flag: bool) -> i32 {
+	intrinsics.atomic_add_explicit(&forward_calls, 1, .Relaxed)
 	if trampoline_original != nil {
 		return trampoline_original(connection, ids, operations, relative, count, flag)
 	}

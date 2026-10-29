@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:mem"
 import "core:strings"
 import "core:testing"
@@ -11,7 +10,7 @@ window_reconciliation_retains_unknown_capabilities_and_space :: proc(
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	w := state.manager.windows[1]
 	w.frame = {10, 10, 600, 400}
 	w.can_resize = true; w.ordered_in = true; w.can_move = true
@@ -57,7 +56,7 @@ new_window_reconciliation_knows_resize_capability_before_tiling :: proc(
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	w, created := mac.reconcile_window_model(
 		&state.manager,
 		{
@@ -77,7 +76,7 @@ new_window_reconciliation_knows_resize_capability_before_tiling :: proc(
 	testing.expect(t, created)
 	testing.expect(
 		t,
-		e.find(e.space_by_id(&state.manager, 100).view.root, w.id) == nil,
+		mac.find(mac.space_by_id(&state.manager, 100).view.root, w.id) == nil,
 	)
 }
 
@@ -87,14 +86,14 @@ snapshot_diff_owns_destroyed_window_payload_without_dispatching :: proc(
 ) {
 	state: mac.State; r: Recorder; events: Event_Recorder
 	fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer delete(events.events)
 	state.event_sink = record_event; state.event_user = &events
 	w := state.manager.windows[1]
 	delete(w.title); w.title = strings.clone("owned title")
 	before := mac.snapshot(&state, context.allocator)
 	defer mac.snapshot_destroy(&before)
-	e.remove_window(&state.manager, 1)
+	mac.remove_window(&state.manager, 1)
 	after := mac.snapshot(&state, context.allocator)
 	defer mac.snapshot_destroy(&after)
 	found := false
@@ -114,7 +113,7 @@ internal_frame_writer_does_not_interrupt_proxy_recovery :: proc(
 ) {
 	state: mac.State; r: Recorder; animation: Animation_Recorder
 	fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	state.event_user = &animation
 	state.animation_backend = {
 		proxy_create,
@@ -148,7 +147,7 @@ internal_frame_writer_does_not_interrupt_proxy_recovery :: proc(
 @(test)
 drag_reset_releases_grab_and_keeps_input_observers :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	state.mouse.drag.window = 1; state.mouse.phase = .Released_Drag
 	state.mouse.mode = .Native_Resize; state.mouse.pending = true
 	state.mouse.resize_frame = resize_frame_from_pointer
@@ -179,13 +178,13 @@ drag_reset_releases_grab_and_keeps_input_observers :: proc(t: ^testing.T) {
 
 @(test)
 failed_native_geometry_does_not_replace_a_known_frame :: proc(t: ^testing.T) {
-	m: e.Manager; r: Recorder; fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	m.windows[1].frame = {10, 20, 800, 600}
 	before := m.windows[1].frame
 	mac.reconcile_window_model(
 		&m,
-		e.Window {
+		mac.Window {
 			id = 1,
 			pid = m.windows[1].pid,
 			frame = {},
@@ -215,23 +214,23 @@ frame_read_probe :: proc(
 partial_native_frame_reads_are_explicitly_invalid :: proc(t: ^testing.T) {
 	testing.expect_value(
 		t,
-		mac.window_frame(nil, frame_read_probe).? or_else e.Rect{},
-		e.Rect{10, 20, 800, 600},
+		mac.window_frame(nil, frame_read_probe).? or_else mac.Rect{},
+		mac.Rect{10, 20, 800, 600},
 	)
 	for kind in 1 ..= 2 { testing.expect(t, mac.window_frame(rawptr(uintptr(kind)), frame_read_probe) == nil) }
-	m: e.Manager; r: Recorder; fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	m.windows[1].frame = {10, 20, 800, 600}
 	mac.reconcile_window_model(
 		&m,
-		e.Window {
+		mac.Window {
 			id = 1,
 			pid = m.windows[1].pid,
 			frame_valid = false,
 			frame = {500, 500, 400, 300},
 		},
 	)
-	testing.expect_value(t, m.windows[1].frame, e.Rect{10, 20, 800, 600})
+	testing.expect_value(t, m.windows[1].frame, mac.Rect{10, 20, 800, 600})
 }
 
 @(test)
@@ -274,10 +273,10 @@ unchanged_observations_reuse_owned_maps_and_strings :: proc(t: ^testing.T) {
 	before := track.total_allocation_count
 	for _ in 0 ..< 1000 { mac.observe_changes(&state) }
 	testing.expect_value(t, track.total_allocation_count, before)
-	e.remove_window(&state.manager, 1)
+	mac.remove_window(&state.manager, 1)
 	mac.observe_changes(&state); mac.observe_changes(&state)
 	testing.expect_value(t, len(state.observed.windows), 1)
 	mac.observations_destroy(&state)
-	e.manager_destroy(&state.manager); delete(r.actions)
+	mac.manager_destroy(&state.manager); delete(r.actions)
 	testing.expect_value(t, track.current_memory_allocated, i64(0))
 }

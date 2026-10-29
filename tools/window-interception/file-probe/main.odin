@@ -2,7 +2,7 @@ package main
 
 // VM-only sandbox probe. It never hooks server code or accepts commands.
 import "core:sys/posix"
-import target "../../../src/addition/windowserver/target"
+import target "../../../src/experimental/window_server"
 import "base:runtime"
 
 foreign import system "system:System"

@@ -1,6 +1,6 @@
 package main
 
-import d "../../src/dockscan"
+import d "scanner"
 import "core:fmt"
 import "core:mem"
 import "core:os"

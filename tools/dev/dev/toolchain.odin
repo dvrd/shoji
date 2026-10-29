@@ -1,6 +1,6 @@
 package development
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:os"
@@ -16,14 +16,14 @@ patch_assembly :: proc(c: tc.Context, source: string) -> string {
 	}
 	files := []string{"src/check_asm.cpp", "src/check_asm_cfg.cpp"}
 	for name in files {
-		if err = s.copy(s.join(stage, name), s.join(source, name)); err != "" {
+		if err = s.copy_file(s.join(stage, name), s.join(source, name)); err != "" {
 			return err
 		}
 	}
 	patch := tc.root_file(c, "tools/odin-asm-calls.patch")
-	r := s.run(c.executor, []string{"git", "apply", "--check", patch}, stage)
+	r := s.process_run(c.executor, []string{"git", "apply", "--check", patch}, stage)
 	if r.code != 0 {
-		if reverse := s.run(
+		if reverse := s.process_run(
 			c.executor,
 			[]string{"git", "apply", "--reverse", "--check", patch},
 			stage,
@@ -36,7 +36,7 @@ patch_assembly :: proc(c: tc.Context, source: string) -> string {
 		return err
 	}
 	for name in files {
-		if err = s.copy(s.join(source, name), s.join(stage, name)); err != "" {
+		if err = s.copy_file(s.join(source, name), s.join(stage, name)); err != "" {
 			return err
 		}
 	}
@@ -157,7 +157,7 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 	   err != "" {
 		return err
 	}
-	if err = s.copy(
+	if err = s.copy_file(
 		s.join(stage, "build_odin.sh"),
 		s.join(source, "build_odin.sh"),
 	); err != "" {
@@ -184,7 +184,7 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 			"llvm_backend.cpp",
 		}) {
 		include := s.cat("--include=src/", name)
-		r := s.run(
+		r := s.process_run(
 			c.executor,
 			[]string{"git", "apply", include, "--check", patch},
 			stage,
@@ -198,7 +198,7 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 				return err
 			}
 		} else {
-			if reverse := s.run(
+			if reverse := s.process_run(
 				c.executor,
 				[]string {
 					"git",
@@ -235,5 +235,5 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 	if err = s.mkdir(tc.root_file(c, "bin")); err != "" {
 		return err
 	}
-	return s.copy(tc.binary(c, "odin-arm64e"), s.join(stage, "odin"))
+	return s.copy_file(tc.binary(c, "odin-arm64e"), s.join(stage, "odin"))
 }

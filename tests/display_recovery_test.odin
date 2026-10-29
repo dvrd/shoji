@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:strings"
 import "core:testing"
 
@@ -21,9 +20,9 @@ desktop_validation_only_observes_the_owned_fixture_application :: proc(t: ^testi
 @(test)
 desktop_validation_rejects_global_commands_and_unowned_windows :: proc(t: ^testing.T) {
 	state: mac.State;r: Recorder;fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager);defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager);defer delete(r.actions)
 	state.validation_pid = 42
-	for kind in ([]e.Action_Kind {
+	for kind in ([]mac.Action_Kind {
 			.Space_Focus,
 			.Space_Create,
 			.Space_Destroy,
@@ -33,14 +32,14 @@ desktop_validation_rejects_global_commands_and_unowned_windows :: proc(t: ^testi
 		}) {
 		testing.expect_value(
 			t,
-			mac.perform(&state, {kind = kind, window = 1}),
+			mac.perform_native(&state, {kind = kind, window = 1}),
 			"global desktop operations are disabled during owned-window validation",
 		)
 	}
-	for kind in ([]e.Action_Kind{.Frame, .Close, .Focus, .Opacity, .Layer}) {
+	for kind in ([]mac.Action_Kind{.Frame, .Close, .Focus, .Opacity, .Layer}) {
 		testing.expect_value(
 			t,
-			mac.perform(&state, {kind = kind, window = 2}),
+			mac.perform_native(&state, {kind = kind, window = 2}),
 			"window is outside the validation fixture",
 		)
 	}
@@ -60,7 +59,7 @@ transient_display_failures_preserve_the_last_complete_desktop :: proc(t: ^testin
 			one_display_list,
 		}) {
 		state: mac.State;r: Recorder;fixture(&state.manager, &r)
-		defer e.manager_destroy(&state.manager);defer delete(r.actions)
+		defer mac.manager_destroy(&state.manager);defer delete(r.actions)
 		state.manager.displays[0].label = strings.clone("work")
 		space := state.manager.spaces[0]
 		root := space.view.root
@@ -70,6 +69,6 @@ transient_display_failures_preserve_the_last_complete_desktop :: proc(t: ^testin
 		testing.expect_value(t, state.manager.displays[0].label, "work")
 		testing.expect_value(t, state.manager.spaces[0], space)
 		testing.expect_value(t, space.view.root, root)
-		testing.expect(t, e.find(root, 1) != nil && e.find(root, 2) != nil)
+		testing.expect(t, mac.find(root, 1) != nil && mac.find(root, 2) != nil)
 	}
 }

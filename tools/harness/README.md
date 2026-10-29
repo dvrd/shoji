@@ -31,5 +31,10 @@ option and policy/recovery guards. Process cleanup targets owned command groups;
 evidence and cleanup failures produce nonzero results and preserve original errors.
 No live checks run merely by building the harness or running `task test:harness`.
 
+For a guest without the Odin toolchain, copy the built `harness-fixture` beside
+the other binaries and pass `--prebuilt-fixture` to a live check. The harness
+verifies the fixture's code signature and prints its SHA-256 instead of
+recompiling it. The ordinary path still builds the fixture from source.
+
 `validate` invokes Taskfile for builds, the dev CLI for archive creation, and the
 inspector for bootstrap/archive checks. It records pending live checks accurately.

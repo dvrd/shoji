@@ -1,23 +1,22 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:testing"
 
 @(test)
 opening_notice_follows_the_blocked_app_across_focus_and_space_changes :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager
+	m: mac.Manager
 	r: Recorder
 	fixture(&m, &r)
-	defer e.manager_destroy(&m)
+	defer mac.manager_destroy(&m)
 	defer delete(r.actions)
 	w := m.windows[1]
 	w.pid = 42 // Motion Lab is waiting while Chrome (43) can use the same Space.
 	w.opening.phase = .Pending
 	w.opening.wait = .Space
-	s := e.space_by_id(&m, w.space)
+	s := mac.space_by_id(&m, w.space)
 	s.visible = true
 
 	testing.expect(t, mac.opening_notice_space(&m, 42) == s)
@@ -40,7 +39,7 @@ opening_notice_skips_native_queries_until_work_or_a_surface_exists :: proc(
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	mac.opening_notice_tick(&state, notice_unexpected_query)
 	w := state.manager.windows[1]; w.pid = 42
 	w.opening.phase = .Pending; w.opening.wait = .Space

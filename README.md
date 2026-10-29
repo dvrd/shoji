@@ -161,12 +161,12 @@ request/response deadlines. Command handlers still execute serially.
 
 See the [subsystem source map](docs/SOURCE_MAP.md) for where each behavior lives.
 
-- `src/engine/`: BSP/stack trees, configuration, selectors, queries, rules,
-  signals, command dispatch, IPC encoding.
-- `src/macos/`: Odin framework declarations, Objective-C runtime calls,
-  Accessibility observers, display/space discovery, socket server/client,
-  process spawning, event delivery, daemon lifecycle.
-- `src/addition/`: loader, Dock payload, protocol, signature tables, native ABI bridges.
+- `src/`: window layouts, rules, commands, native window operations, input,
+  animation, IPC, and the daemon lifecycle.
+- `src/dock/`: shared loader, protocol, signature tables, and native ABI bridges.
+- `src/dock_payload/`: the dynamic library loaded into Dock.
+- `src/native/`: shared macOS framework and socket helpers used by Shoji and the Dock payload.
+- `tools/shoji-dock/scanner/`: offline Dock acquisition and compatibility analysis.
 - `src/main.odin`: command-line entry point.
 - `tests/`: deterministic tree and command tests, POSIX regex tests, native
   Objective-C/CoreFoundation smoke tests, Unix socket integration tests.

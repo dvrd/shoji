@@ -18,6 +18,46 @@ The fixture moved from x=250 to x=230; `SLSMoveWindowWithGroup` returned 0, but 
 
 The original diagnostic was unloaded by restarting **guest** Dock; it relaunched as PID 3127. The corrected diagnostic is staged separately as `/tmp/shoji-dock-move-vm/shoji-sa-corrected.dylib` (SHA-256 `0522efe6799d660fc48f84b7eab4bccd2428533d5721077074bb04592b8e2418`). Its validation is pending the guest administrator loading it with `sudo /tmp/shoji-dock-move-vm/shoji --load-sa /tmp/shoji-dock-move-vm/shoji-sa-corrected.dylib`. Then run `zsh /tmp/shoji-dock-move-vm/guest-run.zsh`; the baseline log has already been moved aside. The corrected diagnostic logs before/after bounds and the real move code without claiming a reassociation status. A successful submission and bounds readback are not visual frame synchronization proof. The injected payload remains loaded until guest Dock exits; recovery is a guest Dock restart or restore from the clean VM copy, never a host restart.
 
+## Resumed corrected diagnostic (2026-10-28, evening)
+
+The saved `Shoji Test` VM was resumed. Fresh SSH preflight confirms
+27.0.1 / 26A434, arm64, UID 501, SIP disabled and Dock PID 3127. Its Dock
+and corrected-payload hashes match the prepared run above; strict signature
+verification of the corrected payload passes. The addition was not loaded at
+the initial check. Guest sudo requires an administrator password, so loading
+the corrected payload remains a guest-terminal step.
+
+A fresh `move-client-verified` build now exits nonzero on a payload error or
+unexpected bounds, including changes to y/width/height. The guest copy's hash
+is `c7981041a403f615ba536524af16a7d3c098b91d5ffb0c10bd5d00dc2905d93e`;
+its strict signature check passes. `guest-run-verified.zsh` is staged separately
+and verifies the exact guest version/build/architecture/UID before creating
+the fixture. The original runner and baseline evidence are preserved.
+
+After the guest administrator loads the corrected payload, use:
+
+```sh
+SHOJI_MOVE_CLIENT=/tmp/shoji-dock-move-vm/move-client-verified \
+  /bin/zsh -f /tmp/shoji-dock-move-vm/guest-run-verified.zsh
+```
+
+The corrected fixture command **passed** after the user loaded the payload.
+Window 108 moved from `(250,708,280,252)` to `(230,708,280,252)`, with an empty
+response error string, native move result 0 and all bounds reads returning 0.
+The verified client and SSH command exited 0. This closes the original false
+`Operation_Failed` diagnostic for the recorded 27.0.1 guest.
+
+The fixture was terminated/reaped and its absence checked. Guest Dock remained
+PID 3127 after the test; it was then restarted to unload the diagnostic and
+returned as PID 4709. The final handshake correctly reports no addition loaded.
+WindowServer was PID 169 in both post-run checks. The host Dock was not touched.
+
+See [the corrected result](evidence/corrected-26A434.txt). Local provenance,
+command arrays, actual exit statuses and raw streams are retained under
+`artifacts/dock-move-diagnostic/resume-20261028/`. The normal discovery path,
+full-daemon acceptance, presentation synchronization and 27.2 remain untested
+by this fixture.
+
 ## Rebuild
 
 `payload.patch` captures the original pre-fix diagnostic; `payload-corrected.patch` applies to a temporary copy of the corrected source. These diagnostic patches are not production changes. Confirm that the selected patch applies to the intended source revision before building:
@@ -29,4 +69,4 @@ cd /tmp/shoji-dock-stage
 patch -p1 < /path/to/shoji/tools/harness/dock-move-diagnostic/payload-corrected.patch
 ```
 
-Build `src/addition/payload` in that copy using Shoji's arm64e compiler, normalize with `bin/inspector normalize-arm64e`, and ad-hoc sign the diagnostic dylib. Build `tools/harness/dock-move-diagnostic` as a separate Odin executable; retain the source and hashes. Do not replace `bin/shoji-sa.dylib`. The current stage was built with warnings treated as errors and passed strict code-signature verification.
+Build `src/dock_payload` in that copy using Shoji's arm64e compiler, normalize with `bin/inspector normalize-arm64e`, and ad-hoc sign the diagnostic dylib. Build `tools/harness/dock-move-diagnostic` as a separate Odin executable; retain the source and hashes. Do not replace `bin/shoji-sa.dylib`. The current stage was built with warnings treated as errors and passed strict code-signature verification.

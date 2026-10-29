@@ -1,7 +1,6 @@
 package main
 
-import e "../../../../src/engine"
-import mac "../../../../src/macos"
+import mac "../../../../src"
 import "base:intrinsics"
 import "core:encoding/json"
 import "core:fmt"
@@ -42,7 +41,7 @@ make_window :: proc(title: string, regular: bool = false) -> ^objc.Object {
 		^objc.Object,
 		window,
 		"initWithContentRect:styleMask:backing:defer:",
-		e.Rect{220, 180, 440, 260},
+		mac.Rect{220, 180, 440, 260},
 		uint(15),
 		uint(2),
 		bool(false),
@@ -167,14 +166,14 @@ main :: proc() {
 		return
 	}
 	if mode == "spaces" {
-		e.manager_init(&state.manager, nil, nil)
-		defer e.manager_destroy(&state.manager)
+		mac.manager_init(&state.manager, nil, nil)
+		defer mac.manager_destroy(&state.manager)
 		mac.refresh_displays(&state)
 		fmt.print(
 			"{\"spaces\":",
-			e.query(&state.manager, []string{"--spaces"}).text,
+			mac.query(&state.manager, []string{"--spaces"}).text,
 			",\"displays\":",
-			e.query(&state.manager, []string{"--displays"}).text,
+			mac.query(&state.manager, []string{"--displays"}).text,
 			"}\n",
 		)
 		return
@@ -197,8 +196,8 @@ main :: proc() {
 		}
 		kind :=
 			mode == "space-focus" \
-				? e.Action_Kind.Space_Focus \
-				: e.Action_Kind.Space_Destroy
+				? mac.Action_Kind.Space_Focus \
+				: mac.Action_Kind.Space_Destroy
 		if err := mac.addition_action({kind = kind, space = id}); err != "" {
 			fmt.eprintln(err); os.exit(1)
 		}
@@ -292,7 +291,7 @@ main :: proc() {
 		if !ok || id == 0 || id > 0xffffffff {
 			os.exit(2)
 		}
-		frame: e.Rect
+		frame: mac.Rect
 		if code := mac.SLSGetWindowBounds(state.connection, u32(id), &frame);
 		   code != 0 {
 			fmt.eprintln("could not query frame:", code); os.exit(3)
@@ -399,9 +398,9 @@ memory_statistics :: proc() -> Malloc_Statistics {
 // This uses only fixture-owned WindowServer surfaces. It never captures,
 // moves, focuses or changes the opacity of a foreign application window.
 focus_ring_check :: proc(state: ^mac.State) -> bool {
-	e.manager_init(&state.manager); defer e.manager_destroy(&state.manager)
+	mac.manager_init(&state.manager); defer mac.manager_destroy(&state.manager)
 	defer mac.callback_scratch_destroy(&state.callback_scratch)
-	frame := e.Rect{200, 200, 520, 300}
+	frame := mac.Rect{200, 200, 520, 300}
 	background, err := mac.native_feedback_create(
 		state,
 		{window = 0, frame = frame, color = 0xff303030, solid = true},
@@ -411,9 +410,9 @@ focus_ring_check :: proc(state: ^mac.State) -> bool {
 	}
 	defer mac.surface_destroy(state, background)
 	defer mac.focus_ring_stop(state)
-	s := e.add_space(&state.manager, 1, 1, 1, {0, 0, 1720, 1100})
+	s := mac.add_space(&state.manager, 1, 1, 1, {0, 0, 1720, 1100})
 	s.visible = true; state.manager.active_space = 1
-	e.add_window(
+	mac.add_window(
 		&state.manager,
 		{
 			id = background.id,
@@ -446,7 +445,7 @@ focus_ring_check :: proc(state: ^mac.State) -> bool {
 		fmt.eprintln(companion_error); return false
 	}
 	defer mac.surface_destroy(state, companion)
-	e.add_window(
+	mac.add_window(
 		&state.manager,
 		{
 			id = companion.id,
@@ -542,11 +541,11 @@ focus_ring_check :: proc(state: ^mac.State) -> bool {
 			return false
 		}
 	}
-	e.remove_window(&state.manager, companion.id)
+	mac.remove_window(&state.manager, companion.id)
 	mac.focus_ring_tick(state)
 	mac.CFRunLoopRunInMode(mac.kCFRunLoopDefaultMode, .01, false)
 	for id in ids {
-		bounds: e.Rect
+		bounds: mac.Rect
 		if mac.SLSGetWindowBounds(state.connection, id, &bounds) == 0 {
 			fmt.eprintln("focus ring surface survived cleanup"); return false
 		}

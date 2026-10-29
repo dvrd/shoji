@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:testing"
 
 foreign import scroll_test_cg "system:CoreGraphics.framework"
@@ -14,9 +13,9 @@ foreign scroll_test_cg {
 scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 	t: ^testing.T,
 ) {
-	g: e.Scroll_Gesture
+	g: mac.Scroll_Gesture
 	modifier := u64(1 << 23)
-	owned, _ := e.scroll_gesture_route(
+	owned, _ := mac.scroll_gesture_route(
 		&g,
 		{x = 20, phase = 1},
 		100,
@@ -25,7 +24,7 @@ scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 		0,
 	)
 	testing.expect(t, !owned)
-	owned, _ = e.scroll_gesture_route(
+	owned, _ = mac.scroll_gesture_route(
 		&g,
 		{x = 20, momentum = 1},
 		100,
@@ -34,7 +33,7 @@ scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 		0.1,
 	)
 	testing.expect(t, !owned)
-	owned, _ = e.scroll_gesture_route(
+	owned, _ = mac.scroll_gesture_route(
 		&g,
 		{x = 1, y = 20, modifiers = modifier, phase = 1},
 		100,
@@ -44,7 +43,7 @@ scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 	)
 	testing.expect(t, !owned)
 	delta: f64
-	owned, delta = e.scroll_gesture_route(
+	owned, delta = mac.scroll_gesture_route(
 		&g,
 		{x = -25, modifiers = modifier, phase = 2},
 		100,
@@ -53,7 +52,7 @@ scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 		0.3,
 	)
 	testing.expect(t, owned); testing.expect_value(t, delta, f64(25))
-	owned, _ = e.scroll_gesture_route(
+	owned, _ = mac.scroll_gesture_route(
 		&g,
 		{phase = 4},
 		100,
@@ -62,7 +61,7 @@ scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 		0.4,
 	)
 	testing.expect(t, owned)
-	owned, delta = e.scroll_gesture_route(
+	owned, delta = mac.scroll_gesture_route(
 		&g,
 		{x = -10, momentum = 1},
 		200,
@@ -72,7 +71,7 @@ scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 	)
 	testing.expect(t, owned); testing.expect_value(t, delta, f64(10))
 	testing.expect_value(t, g.space, u64(100))
-	owned, _ = e.scroll_gesture_route(
+	owned, _ = mac.scroll_gesture_route(
 		&g,
 		{momentum = 3},
 		200,
@@ -81,7 +80,7 @@ scroll_gesture_owns_only_modified_horizontal_input_and_its_momentum :: proc(
 		0.6,
 	)
 	testing.expect(t, owned); testing.expect(t, !g.owned)
-	owned, _ = e.scroll_gesture_route(
+	owned, _ = mac.scroll_gesture_route(
 		&g,
 		{x = 10, momentum = 2},
 		200,
@@ -97,7 +96,7 @@ native_scroll_callback_routes_and_coalesces_pixels_without_app_scroll_capture ::
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	state.manager.mouse.scroll = true
 	event := CGEventCreateScrollWheelEvent(nil, 0, 2, 0, i32(-40))
 	testing.expect(t, event != nil)
@@ -140,9 +139,9 @@ immediate_scroll_interrupt_restores_proxy_and_drops_stale_animation_target :: pr
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Animation_Recorder
-	e.manager_init(&state.manager)
-	e.add_window(&state.manager, e.Window{id = 1, pid = 42})
-	defer e.manager_destroy(&state.manager)
+	mac.manager_init(&state.manager)
+	mac.add_window(&state.manager, mac.Window{id = 1, pid = 42})
+	defer mac.manager_destroy(&state.manager)
 	state.event_user = &r
 	state.animation_backend = {
 		proxy_create,
@@ -180,9 +179,9 @@ immediate_scroll_interrupt_restores_proxy_and_drops_stale_animation_target :: pr
 scroll_gesture_cancellation_disable_and_new_application_sequence_release_ownership :: proc(
 	t: ^testing.T,
 ) {
-	g: e.Scroll_Gesture
+	g: mac.Scroll_Gesture
 	modifier := u64(1 << 23)
-	e.scroll_gesture_route(
+	mac.scroll_gesture_route(
 		&g,
 		{x = 20, modifiers = modifier, phase = 1},
 		100,
@@ -190,7 +189,7 @@ scroll_gesture_cancellation_disable_and_new_application_sequence_release_ownersh
 		true,
 		0,
 	)
-	owned, _ := e.scroll_gesture_route(
+	owned, _ := mac.scroll_gesture_route(
 		&g,
 		{phase = 8},
 		100,
@@ -199,7 +198,7 @@ scroll_gesture_cancellation_disable_and_new_application_sequence_release_ownersh
 		0.1,
 	)
 	testing.expect(t, owned); testing.expect(t, !g.owned)
-	e.scroll_gesture_route(
+	mac.scroll_gesture_route(
 		&g,
 		{x = 20, modifiers = modifier, phase = 1},
 		100,
@@ -207,7 +206,7 @@ scroll_gesture_cancellation_disable_and_new_application_sequence_release_ownersh
 		true,
 		0.2,
 	)
-	owned, _ = e.scroll_gesture_route(
+	owned, _ = mac.scroll_gesture_route(
 		&g,
 		{x = 20, phase = 1},
 		100,
@@ -216,7 +215,7 @@ scroll_gesture_cancellation_disable_and_new_application_sequence_release_ownersh
 		0.3,
 	)
 	testing.expect(t, !owned)
-	e.scroll_gesture_route(
+	mac.scroll_gesture_route(
 		&g,
 		{x = 20, modifiers = modifier, phase = 1},
 		100,
@@ -224,7 +223,7 @@ scroll_gesture_cancellation_disable_and_new_application_sequence_release_ownersh
 		true,
 		0.4,
 	)
-	owned, _ = e.scroll_gesture_route(
+	owned, _ = mac.scroll_gesture_route(
 		&g,
 		{x = 20, momentum = 1},
 		100,
@@ -239,12 +238,12 @@ scroll_gesture_cancellation_disable_and_new_application_sequence_release_ownersh
 scroll_gesture_pan_is_immediate_without_changing_keyboard_focus_or_duration :: proc(
 	t: ^testing.T,
 ) {
-	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
-	defer e.manager_destroy(&m); defer delete(r.actions)
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
 	m.animation_duration = 0.18
 	resize(&r.actions, 0)
-	testing.expect_value(t, e.scroll_gesture_pan(&m, 100, -200), "")
+	testing.expect_value(t, mac.scroll_gesture_pan(&m, 100, -200), "")
 	testing.expect_value(t, m.focused, u32(3))
 	testing.expect_value(t, m.animation_duration, f64(0.18))
 	testing.expect(t, len(r.actions) > 0)

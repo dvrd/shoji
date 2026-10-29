@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:strings"
 import "core:testing"
 
@@ -101,7 +100,7 @@ frame_writes_preserve_disabled_enhanced_ui_and_stop_on_disable_failure :: proc(
 known_frame_resizes_and_moves_without_redundant_attribute_writes :: proc(
 	t: ^testing.T,
 ) {
-	frames := []e.Rect {
+	frames := []mac.Rect {
 		{10, 20, 400, 200},
 		{30, 20, 300, 200},
 		{10, 20, 300, 200},
@@ -114,7 +113,7 @@ known_frame_resizes_and_moves_without_redundant_attribute_writes :: proc(
 			nil,
 			target,
 			{&r, frame_enhanced, frame_set},
-			e.Rect{10, 20, 300, 200},
+			mac.Rect{10, 20, 300, 200},
 		)
 		testing.expect_value(t, err, "")
 		if names[i] == "" {
@@ -165,12 +164,12 @@ resize_presentation_is_reenabled_after_a_frame_write_fails :: proc(
 ) {
 	state: mac.State; r: Recorder; updates: Frame_Update_Recorder
 	fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	defer delete(updates.enabled)
-	e.flush(&state.manager, e.space_by_id(&state.manager, 100))
+	mac.flush(&state.manager, mac.space_by_id(&state.manager, 100))
 	state.frame_updates.user = &updates
 	state.frame_updates.set_enabled = frame_update_set
-	state.mouse.drag = e.mouse_begin(&state.manager, 1, .Resize, {499, 400})
+	state.mouse.drag = mac.mouse_begin(&state.manager, 1, .Resize, {499, 400})
 	state.mouse.point = {599, 400}; state.mouse.pending = true
 	state.mouse.phase = .Dragging
 	r.fail = true
@@ -190,7 +189,7 @@ position_only_motion_ignores_subpoint_size_rounding :: proc(t: ^testing.T) {
 		nil,
 		{30, 20, 616.25, 767.75},
 		{&r, frame_enhanced, frame_set},
-		e.Rect{10, 20, 616, 768},
+		mac.Rect{10, 20, 616, 768},
 		size_tolerance = .5,
 	)
 	testing.expect_value(t, err, "")
@@ -209,7 +208,7 @@ halfpoint_resize_remains_a_real_native_resize :: proc(t: ^testing.T) {
 		nil,
 		{10, 20, 616.5, 768},
 		{&r, frame_enhanced, frame_set},
-		e.Rect{10, 20, 616, 768},
+		mac.Rect{10, 20, 616, 768},
 		size_tolerance = .5,
 	)
 	testing.expect_value(t, err, "")

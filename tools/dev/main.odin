@@ -1,6 +1,6 @@
 package main
 
-import s "../../src/support"
+import s "../../src"
 import tc "../common"
 import "core:os"
 import d "dev"

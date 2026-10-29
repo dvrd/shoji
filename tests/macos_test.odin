@@ -1,7 +1,6 @@
 package tests
 
-import e "../src/engine"
-import mac "../src/macos"
+import mac "../src"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
@@ -31,7 +30,7 @@ unix_socket_protocol_survives_fragmented_writes :: proc(t: ^testing.T) {
 	defer mac.close(fds[1])
 	mac.prepare_socket(fds[0])
 	mac.prepare_socket(fds[1])
-	data, ok := e.encode_message([]string{"query", "--windows"})
+	data, ok := mac.encode_message([]string{"query", "--windows"})
 	testing.expect(t, ok)
 	defer delete(data)
 	for i in 0 ..< len(data) {
@@ -67,14 +66,14 @@ server_returns_failure_marker_for_invalid_command :: proc(t: ^testing.T) {
 	}
 	defer mac.close(fds[0])
 	mac.prepare_socket(fds[0])
-	data, ok := e.encode_message([]string{"not-a-domain"})
+	data, ok := mac.encode_message([]string{"not-a-domain"})
 	testing.expect(t, ok)
 	defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
 	mac.shutdown(fds[0], 1)
-	manager: e.Manager
-	e.manager_init(&manager)
-	defer e.manager_destroy(&manager)
+	manager: mac.Manager
+	mac.manager_init(&manager)
+	defer mac.manager_destroy(&manager)
 	server: mac.Command_Server
 	defer mac.command_server_stop(&server)
 	if !testing.expect(t, mac.command_accept(&server, fds[1])) {
@@ -96,14 +95,14 @@ server_returns_query_response_over_socket :: proc(t: ^testing.T) {
 	}
 	defer mac.close(fds[0])
 	mac.prepare_socket(fds[0])
-	data, ok := e.encode_message([]string{"query", "--windows"})
+	data, ok := mac.encode_message([]string{"query", "--windows"})
 	testing.expect(t, ok)
 	defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
 	mac.shutdown(fds[0], 1)
-	manager: e.Manager
-	e.manager_init(&manager)
-	defer e.manager_destroy(&manager)
+	manager: mac.Manager
+	mac.manager_init(&manager)
+	defer mac.manager_destroy(&manager)
 	server: mac.Command_Server
 	defer mac.command_server_stop(&server)
 	if !testing.expect(t, mac.command_accept(&server, fds[1])) {
@@ -176,8 +175,8 @@ event_driven_listener_and_fragmented_client_wake_without_executing_callbacks :: 
 	if !testing.expect_value(t, mac.listen(fd, 8), i32(0)) {
 		return
 	}
-	state: mac.State; e.manager_init(&state.manager)
-	defer e.manager_destroy(&state.manager)
+	state: mac.State; mac.manager_init(&state.manager)
+	defer mac.manager_destroy(&state.manager)
 	server: mac.Command_Server; defer mac.command_server_stop(&server)
 	if !testing.expect_value(t, mac.command_server_start(&server, fd), "") {
 		return
@@ -187,7 +186,7 @@ event_driven_listener_and_fragmented_client_wake_without_executing_callbacks :: 
 		return
 	}
 	defer mac.close(peer)
-	data, ok := e.encode_message({"config", "window_gap", "37"})
+	data, ok := mac.encode_message({"config", "window_gap", "37"})
 	testing.expect(t, ok); defer delete(data)
 	testing.expect(t, mac.write_all(peer, data[:2]))
 	testing.expect_value(
@@ -227,8 +226,8 @@ commands_use_reconciled_space_state_before_presentation :: proc(
 	t: ^testing.T,
 ) {
 	state: mac.State; r: Recorder; fixture(&state.manager, &r)
-	defer e.manager_destroy(&state.manager); defer delete(r.actions)
-	e.add_space(&state.manager, 200, 10, 2, {0, 0, 1000, 800})
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
+	mac.add_space(&state.manager, 200, 10, 2, {0, 0, 1000, 800})
 	state.dirty = true
 	fds: [2]i32
 	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) {
@@ -237,7 +236,7 @@ commands_use_reconciled_space_state_before_presentation :: proc(
 	defer mac.close(fds[0])
 	server: mac.Command_Server; defer mac.command_server_stop(&server)
 	testing.expect(t, mac.command_accept(&server, fds[1]))
-	data, valid := e.encode_message({"space", "--label", "fresh"})
+	data, valid := mac.encode_message({"space", "--label", "fresh"})
 	testing.expect(t, valid); defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
 	now := time.now(); last := now
@@ -248,25 +247,25 @@ commands_use_reconciled_space_state_before_presentation :: proc(
 		now,
 		refresh_command_space,
 	)
-	testing.expect_value(t, e.space_by_id(&state.manager, 200).label, "fresh")
-	testing.expect_value(t, e.space_by_id(&state.manager, 100).label, "")
+	testing.expect_value(t, mac.space_by_id(&state.manager, 200).label, "fresh")
+	testing.expect_value(t, mac.space_by_id(&state.manager, 100).label, "")
 }
 
 @(test)
 blocked_command_replies_rearm_write_readiness_until_they_drain :: proc(
 	t: ^testing.T,
 ) {
-	manager: e.Manager; e.manager_init(&manager)
-	defer e.manager_destroy(&manager)
-	e.add_window(
+	manager: mac.Manager; mac.manager_init(&manager)
+	defer mac.manager_destroy(&manager)
+	mac.add_window(
 		&manager,
-		e.Window {
+		mac.Window {
 			id = 1,
 			title = strings.repeat("x", 256 * 1024, context.temp_allocator),
 		},
 	)
 	expected := strings.concatenate(
-		{e.query(&manager, {"--windows"}).text, "\n"},
+		{mac.query(&manager, {"--windows"}).text, "\n"},
 	); defer delete(expected)
 	fds: [2]i32
 	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) {
@@ -283,7 +282,7 @@ blocked_command_replies_rearm_write_readiness_until_they_drain :: proc(
 	) {
 		return
 	}
-	data, valid := e.encode_message({"query", "--windows"})
+	data, valid := mac.encode_message({"query", "--windows"})
 	testing.expect(t, valid); defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
 	if !testing.expect_value(

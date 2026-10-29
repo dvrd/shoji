@@ -1,6 +1,6 @@
 package tests
 
-import mac "../src/macos"
+import mac "../src"
 import "core:sys/posix"
 import "core:testing"
 import "core:time"

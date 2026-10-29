@@ -1,6 +1,6 @@
 package tool_common
 
-import s "../../src/support"
+import s "../../src"
 import "core:fmt"
 import "core:mem"
 import "core:os"

@@ -1,6 +1,6 @@
 package harness
 
-import s "../../../src/support"
+import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
@@ -59,7 +59,7 @@ restart_dock :: proc(
 		s.begin_cleanup()
 		defer s.end_cleanup()
 		if !replaced {
-			_ = s.run(
+			_ = s.process_run(
 				c.executor,
 				[]string{"/bin/launchctl", "kickstart", target},
 				timeout = 15 * time.Second,
@@ -151,15 +151,17 @@ replay_journal :: proc(l: ^Live, journal: string, window: u32) -> string {
 live_animation :: proc(
 	c: tc.Context,
 	reload_payload, dock_restart: bool,
+	prebuilt: bool = false,
 ) -> string {
 	l: Live
-	err := live_animation_run(c, reload_payload, dock_restart, &l)
+	err := live_animation_run(c, reload_payload, dock_restart, &l, prebuilt)
 	return finish_live(&l, err)
 }
 live_animation_run :: proc(
 	c: tc.Context,
 	reload_payload, dock_restart: bool,
 	l: ^Live,
+	prebuilt: bool = false,
 ) -> (
 	err: string,
 ) {
@@ -172,7 +174,7 @@ live_animation_run :: proc(
 	   err != "" {
 		return err
 	}
-	if err = build_live_helper(c); err != "" {
+	if err = build_live_helper(c, prebuilt); err != "" {
 		return err
 	}
 	prepared, e := prepare_live(c, "shoji-live-crash"); if e != "" {

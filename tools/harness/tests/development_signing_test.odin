@@ -1,7 +1,7 @@
 package tests
 
 import tc "../../common"
-import s "../../../src/support"
+import s "../../../src"
 import d "../../dev/dev"
 import "core:mem"
 import "core:os"
@@ -106,7 +106,7 @@ native_signing_reuses_configuration_and_never_silently_downgrades :: proc(
 	adhoc, err := d.signing_load(c, path, true)
 	testing.expect_value(t, err, ""); testing.expect(t, adhoc.adhoc)
 	candidate := s.join(root, "adhoc")
-	testing.expect_value(t, s.copy(candidate, "/usr/bin/true"), "")
+	testing.expect_value(t, s.copy_file(candidate, "/usr/bin/true"), "")
 	testing.expect_value(
 		t,
 		d.sign(tc.Context{root = root}, candidate, {adhoc = true}),

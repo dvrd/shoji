@@ -1,8 +1,7 @@
 package tests
 
-import loader "../src/addition/loader"
-import e "../src/engine"
-import mac "../src/macos"
+import loader "../src/dock"
+import mac "../src"
 import "base:intrinsics"
 import "core:mem"
 import "core:strings"
@@ -98,7 +97,7 @@ display_focus :: proc(state: ^mac.State, id: u32) -> string {
 	r.focused = id
 	return ""
 }
-display_activate :: proc(state: ^mac.State, d: ^e.Display) -> string {
+display_activate :: proc(state: ^mac.State, d: ^mac.Display) -> string {
 	r := (^Display_Recorder)(state.event_user)
 	if r.fail_activate {
 		return "activation failed"
@@ -123,14 +122,14 @@ display_fixture :: proc(
 	fixture(&state.manager, actions)
 	append(
 		&state.manager.displays,
-		e.Display {
+		mac.Display {
 			id = 20,
 			index = 2,
 			active_space = 200,
 			frame = {1000, -100, 1200, 900},
 		},
 	)
-	s := e.add_space(&state.manager, 200, 20, 2, {1000, -100, 1200, 900})
+	s := mac.add_space(&state.manager, 200, 20, 2, {1000, -100, 1200, 900})
 	s.visible = true
 	state.event_user = display
 	state.display_focus_backend = {
@@ -147,11 +146,11 @@ display_focus_activates_visible_display_and_uses_windowserver_order :: proc(
 ) {
 	state: mac.State; actions: Recorder; display: Display_Recorder
 	display_fixture(&state, &actions, &display)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	for id in 3 ..= 6 {
-		e.add_window(
+		mac.add_window(
 			&state.manager,
-			e.Window {
+			mac.Window {
 				id = u32(id),
 				space = 200,
 				display = 20,
@@ -164,17 +163,17 @@ display_focus_activates_visible_display_and_uses_windowserver_order :: proc(
 	state.manager.windows[5].minimized = true
 	state.manager.windows[6].ordered_in = false
 	display.order = []u32{1, 6, 5, 4, 3}
-	response := e.execute(
+	response := mac.execute(
 		&state.manager,
 		[]string{"display", "--focus", "east"},
 	)
 	testing.expect(t, !response.failed)
 	action := actions.actions[len(actions.actions) - 1]
-	if !testing.expect_value(t, action.kind, e.Action_Kind.Display_Focus) {
+	if !testing.expect_value(t, action.kind, mac.Action_Kind.Display_Focus) {
 		return
 	}
 	testing.expect_value(t, action.display, u32(20))
-	testing.expect_value(t, mac.perform(&state, action), "")
+	testing.expect_value(t, mac.perform_native(&state, action), "")
 	testing.expect_value(t, display.focused, u32(3))
 	testing.expect_value(t, display.activated, u32(20))
 	testing.expect(t, !display.warped && state.dirty)
@@ -188,10 +187,10 @@ empty_display_focus_warps_to_center_and_propagates_failures :: proc(
 ) {
 	state: mac.State; actions: Recorder; display: Display_Recorder
 	display_fixture(&state, &actions, &display)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	testing.expect_value(
 		t,
-		mac.perform(&state, {kind = .Display_Focus, display = 20}),
+		mac.perform_native(&state, {kind = .Display_Focus, display = 20}),
 		"",
 	)
 	testing.expect(t, display.warped)
@@ -210,7 +209,7 @@ empty_display_focus_warps_to_center_and_propagates_failures :: proc(
 	display = {}
 	testing.expect(
 		t,
-		mac.perform(&state, {kind = .Display_Focus, display = 20}) != "",
+		mac.perform_native(&state, {kind = .Display_Focus, display = 20}) != "",
 	)
 	testing.expect(t, !display.warped && display.activated == 0)
 }
@@ -221,10 +220,10 @@ populated_display_focus_failure_does_not_activate_or_warp :: proc(
 ) {
 	state: mac.State; actions: Recorder; display: Display_Recorder
 	display_fixture(&state, &actions, &display)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
-	e.add_window(
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
+	mac.add_window(
 		&state.manager,
-		e.Window {
+		mac.Window {
 			id = 3,
 			space = 200,
 			display = 20,
@@ -264,13 +263,13 @@ command_focus_signals_compare_against_last_observation_once :: proc(
 ) {
 	state: mac.State; actions: Recorder; events: Observation_Recorder
 	fixture(&state.manager, &actions)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	defer mac.observations_destroy(&state); defer delete(events.events)
 	state.event_sink, state.event_user = record_observation, &events
 	mac.observe_changes(&state); clear(&events.events)
 	testing.expect(
 		t,
-		!e.execute(&state.manager, []string{"window", "--focus", "2"}).failed,
+		!mac.execute(&state.manager, []string{"window", "--focus", "2"}).failed,
 	)
 	mac.observe_changes(&state)
 	if !testing.expect_value(t, len(events.events), 4) {
@@ -289,12 +288,12 @@ command_focus_signals_compare_against_last_observation_once :: proc(
 	actions.fail = true
 	testing.expect(
 		t,
-		e.execute(&state.manager, []string{"window", "--focus", "1"}).failed,
+		mac.execute(&state.manager, []string{"window", "--focus", "1"}).failed,
 	)
 	mac.observe_changes(&state)
 	testing.expect_value(t, len(events.events), 4)
 	// A mouse/AX-observed focus transition follows the same event path.
-	e.focus_window(&state.manager, 1); mac.observe_changes(&state)
+	mac.focus_window(&state.manager, 1); mac.observe_changes(&state)
 	testing.expect_value(t, len(events.events), 8)
 	testing.expect_value(t, events.events[4].window, u32(1))
 	testing.expect_value(t, events.events[4].recent_window, u32(2))
@@ -306,13 +305,13 @@ display_changed_waits_for_observation_and_has_current_and_recent_ids :: proc(
 ) {
 	state: mac.State; actions: Recorder; events: Observation_Recorder
 	fixture(&state.manager, &actions)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	defer mac.observations_destroy(&state); defer delete(events.events)
 	append(
 		&state.manager.displays,
-		e.Display{id = 20, index = 2, active_space = 200},
+		mac.Display{id = 20, index = 2, active_space = 200},
 	)
-	e.add_space(&state.manager, 200, 20, 2, {1000, 0, 1000, 800})
+	mac.add_space(&state.manager, 200, 20, 2, {1000, 0, 1000, 800})
 	state.event_sink, state.event_user = record_observation, &events
 	mac.observe_changes(&state); clear(&events.events)
 	mac.workspace_record(
@@ -340,21 +339,21 @@ display_changed_waits_for_observation_and_has_current_and_recent_ids :: proc(
 command_frame_signals_survive_optimistic_updates :: proc(t: ^testing.T) {
 	state: mac.State; actions: Recorder; events: Observation_Recorder
 	fixture(&state.manager, &actions)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	defer mac.observations_destroy(&state); defer delete(events.events)
 	state.event_sink, state.event_user = record_observation, &events
 	testing.expect(
 		t,
-		!e.execute(&state.manager, []string{"window", "1", "--toggle", "float"}).failed,
+		!mac.execute(&state.manager, []string{"window", "1", "--toggle", "float"}).failed,
 	)
 	mac.observe_changes(&state); clear(&events.events)
 	testing.expect(
 		t,
-		!e.execute(&state.manager, []string{"window", "1", "--move", "abs:50:60"}).failed,
+		!mac.execute(&state.manager, []string{"window", "1", "--move", "abs:50:60"}).failed,
 	)
 	testing.expect(
 		t,
-		!e.execute(&state.manager, []string{"window", "1", "--resize", "abs:640:480"}).failed,
+		!mac.execute(&state.manager, []string{"window", "1", "--resize", "abs:640:480"}).failed,
 	)
 	mac.observe_changes(&state)
 	if !testing.expect_value(t, len(events.events), 2) {
@@ -373,7 +372,7 @@ observed_snapshot_owns_titles_beyond_tick_arena_and_window_destruction :: proc(
 ) {
 	state: mac.State; actions: Recorder; events: Observation_Recorder
 	fixture(&state.manager, &actions)
-	defer e.manager_destroy(&state.manager); defer delete(actions.actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
 	defer mac.observations_destroy(&state); defer delete(events.events)
 	state.event_sink, state.event_user = record_observation, &events
 	scratch: mem.Dynamic_Arena; mem.dynamic_arena_init(&scratch)
@@ -383,7 +382,7 @@ observed_snapshot_owns_titles_beyond_tick_arena_and_window_destruction :: proc(
 	}
 	mem.dynamic_arena_destroy(&scratch)
 	clear(&events.events)
-	e.remove_window(&state.manager, 2)
+	mac.remove_window(&state.manager, 2)
 	testing.expect_value(
 		t,
 		state.observed.windows[2].title,

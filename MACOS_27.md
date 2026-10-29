@@ -1,5 +1,13 @@
 # macOS 27 and Shoji's Dock addition
 
+**2026-10-28 reassessment:** the target release and local guest evidence have
+advanced beyond this historical investigation. See the
+[current migration assessment](docs/MACOS27_MIGRATION_ASSESSMENT.md) and
+[updated external sources](docs/MACOS27_EXTERNAL_REASSESSMENT.md). The current
+public release is 27.2 / 26B123; existing Shoji candidate evidence targets
+27.0.1 / 26A434. A diagnostic has since loaded in the old guest and moved a
+fixture, but full candidate acceptance and daily-use readiness remain pending.
+
 Investigated 2026-10-25. Research and source inspection only: no OS update, injection, Dock restart, or security-setting change was performed.
 
 ## Decision

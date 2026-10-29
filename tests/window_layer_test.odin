@@ -1,6 +1,6 @@
 package tests
 
-import wire "../src/addition/protocol"
+import wire "../src/dock"
 import "core:testing"
 
 foreign import layer_cg "system:CoreGraphics.framework"

@@ -1,8 +1,7 @@
 package tests
 
-import loader "../src/addition/loader"
-import wire "../src/addition/windowserver/protocol"
-import target "../src/addition/windowserver/target"
+import loader "../src/dock"
+import wire "../src/experimental/window_server"
 import "core:os"
 import "core:sys/posix"
 import "core:testing"
@@ -11,20 +10,20 @@ import "core:testing"
 windowserver_target_requires_the_exact_system_executable :: proc(
 	t: ^testing.T,
 ) {
-	testing.expect(t, target.valid_path(target.PATH))
-	testing.expect(t, target.valid_path(target.CANONICAL_PATH))
-	testing.expect(t, !target.valid_path(target.CANONICAL_PATH + ".copy"))
-	testing.expect(t, !target.valid_path("/usr/local/bin/WindowServer"))
-	testing.expect(t, !target.valid_path(target.PATH + ".copy"))
-	testing.expect_value(t, target.validate(123, target.PATH), "")
+	testing.expect(t, wire.valid_path(wire.PATH))
+	testing.expect(t, wire.valid_path(wire.CANONICAL_PATH))
+	testing.expect(t, !wire.valid_path(wire.CANONICAL_PATH + ".copy"))
+	testing.expect(t, !wire.valid_path("/usr/local/bin/WindowServer"))
+	testing.expect(t, !wire.valid_path(wire.PATH + ".copy"))
+	testing.expect_value(t, wire.validate_target(123, wire.PATH), "")
 	testing.expect_value(
 		t,
-		target.validate(0, target.PATH),
+		wire.validate_target(0, wire.PATH),
 		"WindowServer injection requires a positive process ID",
 	)
 	testing.expect_value(
 		t,
-		target.validate(123, "/tmp/WindowServer"),
+		wire.validate_target(123, "/tmp/WindowServer"),
 		"target process is not the system WindowServer",
 	)
 	// Reject this test process before task-port acquisition or helper delegation.
@@ -39,32 +38,32 @@ windowserver_target_requires_the_exact_system_executable :: proc(
 
 @(test)
 windowserver_ordering_target_requires_exact_identity_range_and_signature :: proc(t: ^testing.T) {
-	location := target.Ordering_Location {
-		uuid = target.ORDERING_IMAGE_UUID,
+	location := wire.Ordering_Location {
+		uuid = wire.ORDERING_IMAGE_UUID,
 		slide = 0x46d8000,
 		text_start = 0x18b76b000,
 		text_size = 0x1000000,
 		candidate = 0x18bace260,
 	}
-	testing.expect(t, target.valid_ordering_location(location))
-	signature := target.ORDERING_ENTRY_SIGNATURE
-	testing.expect(t, target.matches_ordering_entry(location, signature[:]))
+	testing.expect(t, wire.valid_ordering_location(location))
+	signature := wire.ORDERING_ENTRY_SIGNATURE
+	testing.expect(t, wire.matches_ordering_entry(location, signature[:]))
 	changed := location
 	changed.uuid[0] ~= 1
-	testing.expect(t, !target.valid_ordering_location(changed))
+	testing.expect(t, !wire.valid_ordering_location(changed))
 	changed = location
 	changed.candidate += 4
-	testing.expect(t, !target.valid_ordering_location(changed))
+	testing.expect(t, !wire.valid_ordering_location(changed))
 	changed = location
 	changed.text_size = u64(location.candidate - location.text_start) + 15
-	testing.expect(t, !target.valid_ordering_location(changed))
+	testing.expect(t, !wire.valid_ordering_location(changed))
 	changed = location
 	changed.text_start = max(u64) - 7
 	changed.text_size = max(u64)
-	testing.expect(t, !target.valid_ordering_location(changed))
-	testing.expect(t, !target.matches_ordering_entry(location, signature[:15]))
+	testing.expect(t, !wire.valid_ordering_location(changed))
+	testing.expect(t, !wire.matches_ordering_entry(location, signature[:15]))
 	signature[15] ~= 1
-	testing.expect(t, !target.matches_ordering_entry(location, signature[:]))
+	testing.expect(t, !wire.matches_ordering_entry(location, signature[:]))
 }
 
 @(test)
