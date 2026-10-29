@@ -126,3 +126,36 @@ windowserver_hook_plans_only_bounded_verified_forwarding :: proc(t: ^testing.T) 
 	_, ok = hook.plan(0x1000, 0x80001000, 0x3000, hook.PACIBSP)
 	testing.expect(t, !ok)
 }
+
+@(test)
+windowserver_hook_plans_inline_absolute_forwarding :: proc(t: ^testing.T) {
+	displaced := [4]u32{0xd503237f, 0xa9ba6ffc, 0x910003fd, 0xa9025ff8}
+	p, ok := hook.plan_inline(0x1000, 0x9000, 0x123456788, displaced)
+	testing.expect(t, ok)
+	testing.expect_value(t, p.entry_jump[0], hook.INLINE_LDR_X16_LITERAL)
+	testing.expect_value(t, p.entry_jump[1], hook.INLINE_BR_X16)
+	testing.expect_value(t, p.entry_jump[2], u32(0x23456788))
+	testing.expect_value(t, p.entry_jump[3], u32(0x1))
+	testing.expect_value(t, p.displaced, displaced)
+	testing.expect_value(t, p.resume_jump[2], u32(0x1010))
+	testing.expect_value(t, p.resume_jump[3], u32(0))
+	_, ok = hook.plan_inline(0x1002, 0x9000, 0x3000, displaced)
+	testing.expect(t, !ok)
+	_, ok = hook.plan_inline(max(u64) - 8, 0x9000, 0x3000, displaced)
+	testing.expect(t, !ok)
+}
+
+@(test)
+windowserver_hook_inline_restore_requires_matching_words :: proc(t: ^testing.T) {
+	original := [4]u32{1, 2, 3, 4}
+	jump := [4]u32{5, 6, 7, 8}
+	testing.expect_value(t, hook.inline_restore_decision(original, original, original, jump), hook.Restore_Decision.Restored)
+	testing.expect_value(t, hook.inline_restore_decision(jump, jump, original, jump), hook.Restore_Decision.Write)
+	testing.expect_value(t, hook.inline_restore_decision(original, jump, original, jump), hook.Restore_Decision.Conflict)
+	partial := original
+	partial[3] = 99
+	testing.expect_value(t, hook.inline_restore_decision(partial, partial, original, jump), hook.Restore_Decision.Conflict)
+	state: hook.Inline_State
+	testing.expect(t, hook.teardown_inline_quiescent(&state))
+	testing.expect(t, !hook.install_inline_via_alias(&state, 0, 4, original, nil))
+}

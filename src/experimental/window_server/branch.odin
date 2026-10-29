@@ -75,6 +75,204 @@ plan :: proc(entry, trampoline, replacement: u64, first_instruction: u32) -> (re
 
 Deallocate :: proc "c" (task: u32, address, size: u64) -> i32
 
+INLINE_PATCH_BYTES :: 16
+INLINE_LDR_X16_LITERAL :: u32(0x58000050)
+INLINE_BR_X16 :: u32(0xd61f0200)
+INLINE_LOOP :: u32(0x14000000)
+
+Inline_Plan :: struct {
+	entry_jump: [4]u32,
+	displaced: [4]u32,
+	resume_jump: [4]u32,
+}
+
+// An inline absolute jump needs no nearby allocation or code cave. The first
+// four target instructions must be the exact validated prologue; they execute
+// at the start of the trampoline with the unchanged stack.
+plan_inline :: proc(entry, trampoline, replacement: u64, displaced: [4]u32) -> (result: Inline_Plan, ok: bool) {
+	if entry & 3 != 0 || trampoline & 3 != 0 || replacement & 3 != 0 ||
+	   entry > max(u64) - INLINE_PATCH_BYTES ||
+	   trampoline == entry || replacement == entry || replacement == trampoline {return}
+	jump :: proc(destination: u64) -> [4]u32 {
+		return {INLINE_LDR_X16_LITERAL, INLINE_BR_X16, u32(destination), u32(destination >> 32)}
+	}
+	return {jump(replacement), displaced, jump(entry + INLINE_PATCH_BYTES)}, true
+}
+
+Inline_State :: struct {
+	installed: bool,
+	entry, target_page, alias_page, page_size: u64,
+	original_words, jump_words: [4]u32,
+	task: u32,
+	deallocate: Deallocate,
+}
+
+inline_restore_decision :: proc(alias_words, entry_words, original_words, jump_words: [4]u32) -> Restore_Decision {
+	alias_original, entry_original, alias_jump, entry_jump := true, true, true, true
+	for index in 0 ..< 4 {
+		alias_original &= alias_words[index] == original_words[index]
+		entry_original &= entry_words[index] == original_words[index]
+		alias_jump &= alias_words[index] == jump_words[index]
+		entry_jump &= entry_words[index] == jump_words[index]
+	}
+	if alias_original && entry_original {return .Restored}
+	if alias_jump && entry_jump {return .Write}
+	return .Conflict
+}
+
+teardown_inline_quiescent :: proc(state: ^Inline_State) -> bool {
+	if state == nil {return false}
+	if state.alias_page == 0 {return !state.installed}
+	if state.deallocate == nil {return false}
+	if state.installed {
+		alias := ([^]u32)(uintptr(state.alias_page + state.entry - state.target_page))
+		entry := ([^]u32)(uintptr(state.entry))
+		alias_words, entry_words: [4]u32
+		for index in 0 ..< 4 {alias_words[index], entry_words[index] = alias[index], entry[index]}
+		switch inline_restore_decision(alias_words, entry_words, state.original_words, state.jump_words) {
+		case .Restored:
+			state.installed = false
+		case .Write:
+			for index in 0 ..< 4 {alias[index] = state.original_words[index]}
+			hook_sys_icache_invalidate(rawptr(uintptr(state.entry)), INLINE_PATCH_BYTES)
+			for index in 0 ..< 4 {if entry[index] != state.original_words[index] {return false}}
+			state.installed = false
+		case .Conflict:
+			return false
+		}
+	}
+	if state.deallocate(state.task, state.alias_page, state.page_size) != 0 {return false}
+	state^ = {}
+	return true
+}
+
+// Park future callers at the entry while callers already past word zero finish
+// the original prologue. The caller must hold an execution barrier and later
+// resume before installing the complete inline jump.
+write_inline_loop_via_alias :: proc(entry: u64, expected: [4]u32, deallocate: Deallocate) -> bool {
+	if deallocate == nil || entry & 3 != 0 {return false}
+	page_size := mach.vm_page_size
+	if page_size == 0 || page_size & (page_size - 1) != 0 {return false}
+	page := entry & ~(page_size - 1)
+	entry_words := ([^]u32)(uintptr(entry))
+	for index in 0 ..< 4 {if entry_words[index] != expected[index] {return false}}
+	alias: u64
+	current, maximum: i32
+	task := hook_mach_task_self()
+	if hook_mach_vm_remap(task, &alias, page_size, 0, 1, task, page, 0, &current, &maximum, 1) != 0 {return false}
+	owned := true
+	defer {
+		if owned {deallocate(task, alias, page_size)}
+	}
+	if hook_mach_vm_protect(task, alias, page_size, 0, 1 | 2) != 0 {return false}
+	patch := ([^]u32)(uintptr(alias + (entry - page)))
+	for index in 0 ..< 4 {
+		if patch[index] != expected[index] || entry_words[index] != expected[index] {return false}
+	}
+	patch[0] = INLINE_LOOP
+	hook_sys_icache_invalidate(rawptr(uintptr(entry)), 4)
+	if entry_words[0] != INLINE_LOOP {return false}
+	if deallocate(task, alias, page_size) != 0 {return false}
+	owned = false
+	return true
+}
+
+restore_inline_loop_via_alias :: proc(entry: u64, expected: [4]u32, deallocate: Deallocate) -> bool {
+	if deallocate == nil || entry & 3 != 0 {return false}
+	page_size := mach.vm_page_size
+	if page_size == 0 || page_size & (page_size - 1) != 0 {return false}
+	entry_words := ([^]u32)(uintptr(entry))
+	if entry_words[0] != INLINE_LOOP {return false}
+	for index in 1 ..< 4 {if entry_words[index] != expected[index] {return false}}
+	page := entry & ~(page_size - 1)
+	alias: u64
+	current, maximum: i32
+	task := hook_mach_task_self()
+	if hook_mach_vm_remap(task, &alias, page_size, 0, 1, task, page, 0, &current, &maximum, 1) != 0 {return false}
+	owned := true
+	defer {if owned {deallocate(task, alias, page_size)}}
+	if hook_mach_vm_protect(task, alias, page_size, 0, 1 | 2) != 0 {return false}
+	patch := ([^]u32)(uintptr(alias + (entry - page)))
+	if patch[0] != INLINE_LOOP {return false}
+	for index in 1 ..< 4 {if patch[index] != expected[index] {return false}}
+	patch[0] = expected[0]
+	hook_sys_icache_invalidate(rawptr(uintptr(entry)), 4)
+	if entry_words[0] != expected[0] {return false}
+	if deallocate(task, alias, page_size) != 0 {return false}
+	owned = false
+	return true
+}
+
+install_inline_after_loop :: proc(state: ^Inline_State, entry, replacement: u64, expected: [4]u32, deallocate: Deallocate) -> bool {
+	if state == nil || state.installed || state.alias_page != 0 || deallocate == nil {return false}
+	page_size := mach.vm_page_size
+	if page_size == 0 || page_size & (page_size - 1) != 0 || entry & 3 != 0 || replacement & 3 != 0 ||
+	   entry == replacement {return false}
+	entry_words := ([^]u32)(uintptr(entry))
+	if entry_words[0] != INLINE_LOOP {return false}
+	for index in 1 ..< 4 {if entry_words[index] != expected[index] {return false}}
+	plan, ok := plan_inline(entry, 0, replacement, expected)
+	if !ok {return false}
+	page := entry & ~(page_size - 1)
+	alias: u64
+	current, maximum: i32
+	task := hook_mach_task_self()
+	if hook_mach_vm_remap(task, &alias, page_size, 0, 1, task, page, 0, &current, &maximum, 1) != 0 {return false}
+	state^ = {entry = entry, target_page = page, alias_page = alias, page_size = page_size,
+		original_words = expected, jump_words = plan.entry_jump, task = task, deallocate = deallocate}
+	if hook_mach_vm_protect(task, alias, page_size, 0, 1 | 2) != 0 {
+		teardown_inline_quiescent(state)
+		return false
+	}
+	patch := ([^]u32)(uintptr(alias + (entry - page)))
+	if patch[0] != INLINE_LOOP {return false}
+	for index in 1 ..< 4 {
+		if patch[index] != expected[index] || entry_words[index] != expected[index] {
+			teardown_inline_quiescent(state)
+			return false
+		}
+	}
+	for index in 0 ..< 4 {patch[index] = plan.entry_jump[index]}
+	state.installed = true
+	hook_sys_icache_invalidate(rawptr(uintptr(entry)), INLINE_PATCH_BYTES)
+	for index in 0 ..< 4 {if entry_words[index] != plan.entry_jump[index] {return false}}
+	return true
+}
+
+install_inline_via_alias :: proc(state: ^Inline_State, entry, replacement: u64, expected: [4]u32, deallocate: Deallocate) -> bool {
+	if state == nil || state.installed || state.alias_page != 0 || deallocate == nil {return false}
+	page_size := mach.vm_page_size
+	if page_size == 0 || page_size & (page_size - 1) != 0 || entry & 3 != 0 || replacement & 3 != 0 ||
+	   entry == replacement {return false}
+	plan, ok := plan_inline(entry, 0, replacement, expected)
+	if !ok {return false}
+	page := entry & ~(page_size - 1)
+	entry_words := ([^]u32)(uintptr(entry))
+	for index in 0 ..< 4 {if entry_words[index] != expected[index] {return false}}
+	alias: u64
+	current, maximum: i32
+	task := hook_mach_task_self()
+	if hook_mach_vm_remap(task, &alias, page_size, 0, 1, task, page, 0, &current, &maximum, 1) != 0 {return false}
+	state^ = {entry = entry, target_page = page, alias_page = alias, page_size = page_size,
+		original_words = expected, jump_words = plan.entry_jump, task = task, deallocate = deallocate}
+	if hook_mach_vm_protect(task, alias, page_size, 0, 1 | 2) != 0 {
+		teardown_inline_quiescent(state)
+		return false
+	}
+	patch := ([^]u32)(uintptr(alias + (entry - page)))
+	for index in 0 ..< 4 {
+		if patch[index] != expected[index] || entry_words[index] != expected[index] {
+			teardown_inline_quiescent(state)
+			return false
+		}
+	}
+	for index in 0 ..< 4 {patch[index] = plan.entry_jump[index]}
+	state.installed = true
+	hook_sys_icache_invalidate(rawptr(uintptr(entry)), INLINE_PATCH_BYTES)
+	for index in 0 ..< 4 {if entry_words[index] != plan.entry_jump[index] {return false}}
+	return true
+}
+
 // Non-copyable ownership by convention. Installation/teardown must be serialized.
 // The caller owns executable target/relay/trampoline memory separately and must
 // retain it until all users have stopped and in-flight calls have drained.

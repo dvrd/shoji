@@ -1,5 +1,6 @@
 package experimental
 
+import "base:intrinsics"
 
 foreign import system "system:System"
 
@@ -7,6 +8,7 @@ foreign import system "system:System"
 foreign system {
 	@(link_name = "task_threads") barrier_task_threads :: proc(task: u32, threads: ^[^]u32, count: ^u32) -> i32 ---
 	@(link_name = "thread_info") barrier_thread_info :: proc(thread, flavor: u32, info: rawptr, count: ^u32) -> i32 ---
+	@(link_name = "thread_get_state") barrier_thread_get_state :: proc(thread, flavor: u32, state: rawptr, count: ^u32) -> i32 ---
 	@(link_name = "thread_suspend") barrier_thread_suspend :: proc(thread: u32) -> i32 ---
 	@(link_name = "thread_resume") barrier_thread_resume :: proc(thread: u32) -> i32 ---
 	@(link_name = "mach_thread_self") barrier_mach_thread_self :: proc() -> u32 ---
@@ -14,8 +16,19 @@ foreign system {
 }
 
 BARRIER_MAX_THREADS :: 128
+barrier_last_run_state, barrier_last_suspend_count: i32
+barrier_last_pc, barrier_nearest_pc: u64
 Barrier_Thread_Info :: struct {
 	id, handle, queue: u64,
+}
+Barrier_ARM_State :: struct {
+	x: [29]u64,
+	fp, lr, sp, pc: u64,
+	cpsr, flags: u32,
+}
+Barrier_Basic_Info :: struct {
+	user_seconds, user_microseconds, system_seconds, system_microseconds: i32,
+	cpu_usage, policy, run_state, flags, suspend_count, sleep_time: i32,
 }
 Execution_Barrier :: struct {
 	task: u32,
@@ -34,6 +47,17 @@ barrier_thread_id :: proc(thread: u32) -> (id: u64, ok: bool) {
 		return 0, false
 	}
 	return info.id, info.id != 0
+}
+
+barrier_thread_stopped :: proc(thread: u32) -> bool {
+	info: Barrier_Basic_Info
+	count := u32(size_of(info) / 4)
+	if barrier_thread_info(thread, 3, &info, &count) == 0 && count == size_of(info) / 4 {
+		barrier_last_run_state = info.run_state
+		barrier_last_suspend_count = info.suspend_count
+		return (info.run_state == 2 || info.run_state == 3) && info.suspend_count > 0
+	}
+	return false
 }
 
 leave_execution_barrier :: proc(state: ^Execution_Barrier) -> bool {
@@ -61,6 +85,45 @@ leave_execution_barrier :: proc(state: ^Execution_Barrier) -> bool {
 	if state.deallocate(state.task, address, size) != 0 {return false}
 	state^ = {}
 	return true
+}
+
+pc_in_range :: proc(pc, start, size: u64) -> bool {
+	if size == 0 || start > max(u64) - size {return true}
+	masked := pc & 0x0000ffffffffffff
+	return (pc >= start && pc - start < size) || (masked >= start && masked - start < size)
+}
+
+barrier_has_pc_in_range :: proc(state: ^Execution_Barrier, start, size: u64) -> (inside, checked: bool) {
+	if state == nil || !state.active || state.count == 0 || state.count > BARRIER_MAX_THREADS {return true, false}
+	barrier_nearest_pc = max(u64)
+	for index in 0 ..< state.count {
+		if !state.suspended[index] {continue}
+		thread_state: Barrier_ARM_State
+		count := u32(size_of(thread_state) / 4)
+		if barrier_thread_get_state(state.threads[index], 6, &thread_state, &count) != 0 ||
+		   count != size_of(thread_state) / 4 {return true, false}
+		pc := thread_state.pc & 0x0000ffffffffffff
+		barrier_last_pc = pc
+		distance := pc >= start ? pc - start : start - pc
+		if distance < barrier_nearest_pc {barrier_nearest_pc = distance}
+		if pc_in_range(thread_state.pc, start, size) {return true, true}
+	}
+	return false, true
+}
+
+enter_execution_barrier_avoiding :: proc(state: ^Execution_Barrier, deallocate: Deallocate, start, size: u64, attempts: int) -> bool {
+	if state == nil || attempts <= 0 {return false}
+	for _ in 0 ..< attempts {
+		if !enter_execution_barrier(state, deallocate) {return false}
+		inside, checked := barrier_has_pc_in_range(state, start, size)
+		if checked && !inside {
+			for _ in 0 ..< 10_000 {intrinsics.cpu_relax()}
+			inside, checked = barrier_has_pc_in_range(state, start, size)
+			if checked && !inside {return true}
+		}
+		if !leave_execution_barrier(state) {return false}
+	}
+	return false
 }
 
 enter_execution_barrier :: proc(state: ^Execution_Barrier, deallocate: Deallocate) -> bool {
@@ -105,6 +168,15 @@ enter_execution_barrier :: proc(state: ^Execution_Barrier, deallocate: Deallocat
 			return false
 		}
 		state.suspended[index] = true
+		stopped := false
+		for _ in 0 ..< 1000 {
+			if barrier_thread_stopped(threads[index]) {stopped = true; break}
+			intrinsics.cpu_relax()
+		}
+		if !stopped {
+			leave_execution_barrier(state)
+			return false
+		}
 	}
 
 	verification: [^]u32
