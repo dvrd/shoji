@@ -655,44 +655,27 @@ apply_accessibility_frame :: proc(
 	previous: Maybe(Rect) = nil,
 	size_tolerance: f64 = 0,
 ) -> string {
-	// Enhanced accessibility can cause applications to animate or clamp frame
-	// writes. Restore the application's original setting on every return path.
+	// This optional workaround is best-effort. AppKit's legacy Carbon callback
+	// can return NotImplemented after the enhanced-UI flag has changed.
+	// Keep frame errors authoritative and always attempt to restore prior state.
 	enhanced := attributes.enhanced(attributes.user, application)
-	if enhanced {
-		if code := attributes.set(
-			attributes.user,
-			application,
-			"AXEnhancedUserInterface",
-			kCFBooleanFalse,
-		); code != 0 {
-			return fmt.tprintf(
-				"Accessibility could not suspend enhanced UI (%d)",
-				code,
+	defer {
+		if enhanced {
+			attributes.set(
+				attributes.user, application,
+				"AXEnhancedUserInterface", kCFBooleanTrue,
 			)
 		}
 	}
-	err := write_accessibility_frame(
-		element,
-		frame,
-		attributes,
-		previous,
-		size_tolerance,
+	if enhanced {
+		attributes.set(
+			attributes.user, application,
+			"AXEnhancedUserInterface", kCFBooleanFalse,
+		)
+	}
+	return write_accessibility_frame(
+		element, frame, attributes, previous, size_tolerance,
 	)
-	if enhanced {
-		if code := attributes.set(
-			attributes.user,
-			application,
-			"AXEnhancedUserInterface",
-			kCFBooleanTrue,
-		); code != 0 {
-			err = fmt.tprintf(
-				"%sAccessibility could not restore enhanced UI (%d)",
-				err == "" ? "" : fmt.tprintf("%s; ", err),
-				code,
-			)
-		}
-	}
-	return err
 }
 
 write_accessibility_frame :: proc(

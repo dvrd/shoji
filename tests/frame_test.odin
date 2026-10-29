@@ -5,36 +5,34 @@ import "core:strings"
 import "core:testing"
 
 Frame_Recorder :: struct {
-	enhanced: bool,
-	names: [dynamic]string,
-	fail_at: int,
-	restored: bool,
+	enhanced:      bool,
+	applied_error: i32,
+	names:         [dynamic]string,
+	fail_at:       int,
+	restored:      bool,
 }
 frame_enhanced :: proc(user: rawptr, _: mac.Ref) -> bool {
 	return (^Frame_Recorder)(user).enhanced
 }
-frame_set :: proc(
-	user: rawptr,
-	element: mac.Ref,
-	name: string,
-	value: mac.Ref,
-) -> i32 {
+frame_set :: proc(user: rawptr, element: mac.Ref, name: string, value: mac.Ref) -> i32 {
 	r := (^Frame_Recorder)(user)
 	append(&r.names, name)
 	if r.fail_at == len(r.names) {
 		return -1
 	}
-	if name == "AXEnhancedUserInterface" && value == mac.kCFBooleanTrue {
-		r.restored = true
+	if name == "AXEnhancedUserInterface" {
+		r.enhanced = value == mac.kCFBooleanTrue
+		if r.enhanced {
+			r.restored = true
+		}
+		return r.applied_error
 	}
 	return 0
 }
 
 @(test)
-enhanced_ui_is_restored_after_frame_success_and_failure :: proc(
-	t: ^testing.T,
-) {
-	for fail_at in ([]int{0, 3, 4, 5}) {
+enhanced_ui_is_restored_after_frame_success_and_failure :: proc(t: ^testing.T) {
+	for fail_at in ([]int{0, 1, 3, 4, 5}) {
 		r := Frame_Recorder {
 			enhanced = true,
 			fail_at  = fail_at,
@@ -45,7 +43,7 @@ enhanced_ui_is_restored_after_frame_success_and_failure :: proc(
 			{10, 20, 300, 200},
 			{&r, frame_enhanced, frame_set},
 		)
-		testing.expect_value(t, err == "", fail_at == 0)
+		testing.expect_value(t, err == "", fail_at != 3 && fail_at != 4)
 		testing.expect_value(t, len(r.names), 5)
 		testing.expect_value(t, r.names[0], "AXEnhancedUserInterface")
 		testing.expect_value(t, r.names[1], "AXSize")
@@ -53,58 +51,29 @@ enhanced_ui_is_restored_after_frame_success_and_failure :: proc(
 		testing.expect_value(t, r.names[3], "AXSize")
 		testing.expect_value(t, r.names[4], "AXEnhancedUserInterface")
 		testing.expect_value(t, r.restored, fail_at != 5)
-		if fail_at == 5 {
-			testing.expect(t, strings.contains(err, "restore enhanced UI"))
+		if fail_at == 3 || fail_at == 4 {
+			testing.expect(t, strings.contains(err, "set window frame"))
 		}
 		delete(r.names)
 	}
 }
 
 @(test)
-frame_writes_preserve_disabled_enhanced_ui_and_stop_on_disable_failure :: proc(
-	t: ^testing.T,
-) {
+frame_writes_preserve_disabled_enhanced_ui :: proc(t: ^testing.T) {
 	r: Frame_Recorder
 	testing.expect_value(
 		t,
-		mac.apply_accessibility_frame(
-			nil,
-			nil,
-			{0, 0, 300, 200},
-			{&r, frame_enhanced, frame_set},
-		),
+		mac.apply_accessibility_frame(nil, nil, {0, 0, 300, 200}, {&r, frame_enhanced, frame_set}),
 		"",
 	)
 	testing.expect_value(t, len(r.names), 3)
 	testing.expect(t, !r.restored)
 	delete(r.names)
-	r = Frame_Recorder {
-		enhanced = true,
-		fail_at  = 1,
-	}
-	testing.expect(
-		t,
-		mac.apply_accessibility_frame(
-			nil,
-			nil,
-			{0, 0, 300, 200},
-			{&r, frame_enhanced, frame_set},
-		) !=
-		"",
-	)
-	testing.expect_value(t, len(r.names), 1)
-	delete(r.names)
 }
 
 @(test)
-known_frame_resizes_and_moves_without_redundant_attribute_writes :: proc(
-	t: ^testing.T,
-) {
-	frames := []mac.Rect {
-		{10, 20, 400, 200},
-		{30, 20, 300, 200},
-		{10, 20, 300, 200},
-	}
+known_frame_resizes_and_moves_without_redundant_attribute_writes :: proc(t: ^testing.T) {
+	frames := []mac.Rect{{10, 20, 400, 200}, {30, 20, 300, 200}, {10, 20, 300, 200}}
 	names := []string{"AXSize", "AXPosition", ""}
 	for target, i in frames {
 		r: Frame_Recorder
@@ -127,7 +96,7 @@ known_frame_resizes_and_moves_without_redundant_attribute_writes :: proc(
 }
 
 Frame_Update_Recorder :: struct {
-	enabled: [dynamic]bool,
+	enabled:      [dynamic]bool,
 	fail_disable: bool,
 }
 frame_update_set :: proc(user: rawptr, _: i32, enabled: bool) -> i32 {
@@ -137,9 +106,7 @@ frame_update_set :: proc(user: rawptr, _: i32, enabled: bool) -> i32 {
 }
 
 @(test)
-nested_frame_batches_present_only_after_the_last_window_update :: proc(
-	t: ^testing.T,
-) {
+nested_frame_batches_present_only_after_the_last_window_update :: proc(t: ^testing.T) {
 	state: mac.State; r: Frame_Update_Recorder
 	defer delete(r.enabled)
 	state.frame_updates.user = &r
@@ -159,9 +126,7 @@ nested_frame_batches_present_only_after_the_last_window_update :: proc(
 }
 
 @(test)
-resize_presentation_is_reenabled_after_a_frame_write_fails :: proc(
-	t: ^testing.T,
-) {
+resize_presentation_is_reenabled_after_a_frame_write_fails :: proc(t: ^testing.T) {
 	state: mac.State; r: Recorder; updates: Frame_Update_Recorder
 	fixture(&state.manager, &r)
 	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
@@ -215,5 +180,30 @@ halfpoint_resize_remains_a_real_native_resize :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(r.names), 1)
 	if len(r.names) > 0 {
 		testing.expect_value(t, r.names[0], "AXSize")
+	}
+}
+
+
+@(test)
+frame_writes_continue_when_enhanced_ui_reports_an_error_after_applying :: proc(t: ^testing.T) {
+	for failure in ([]int{0, 3}) {
+		r := Frame_Recorder {
+			enhanced      = true,
+			applied_error = -25208,
+			fail_at       = failure,
+		}
+		err := mac.apply_accessibility_frame(
+			nil,
+			nil,
+			{10, 20, 300, 200},
+			{&r, frame_enhanced, frame_set},
+		)
+		testing.expect_value(t, err == "", failure == 0)
+		testing.expect_value(t, len(r.names), 5)
+		testing.expect(t, r.restored && r.enhanced)
+		if failure != 0 {
+			testing.expect(t, strings.contains(err, "set window frame"))
+		}
+		delete(r.names)
 	}
 }

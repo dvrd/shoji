@@ -317,6 +317,28 @@ tasks:
       - '{{.ODIN_ARM64E}} build tools/window-interception/windowserver-payload-probe -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-permission-probe.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-permission-probe.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-permission-probe.dylib'
+  build:windowserver-ordering-observer:
+    deps: [build:inspector]
+    desc: Build the disposable exact-build ordering observer (does not load it)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build tools/window-interception/windowserver-ordering-observer -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - ./bin/inspector normalize-arm64e bin/shoji-ws-observer.dylib
+      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-observer.dylib'
+  build:windowserver-ordering-trigger:
+    deps: [build:inspector]
+    desc: Build the disposable guest window-ordering trigger (does not run it)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build tools/window-interception/ordering-trigger -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-ordering-trigger -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - ./bin/inspector normalize-arm64e bin/shoji-ws-ordering-trigger
+      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-ordering-trigger'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:

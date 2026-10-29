@@ -55,9 +55,12 @@ concurrent_failure :: proc(reason: string, barrier_active: bool) -> bool {
 
 run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ordering_Callback,
 	protect: Trampoline_Protect, immediate_exit: Trampoline_Exit, deallocate: hook.Deallocate,
-	initial_region: Trampoline_Region) -> bool {
+	initial_region: Trampoline_Region, inline_mode: bool, expected: [4]u32) -> bool {
 	state: hook.Hook_State
-	defer hook.teardown_quiescent(&state)
+	inline_state: hook.Inline_State
+	defer {
+		if inline_mode {hook.teardown_inline_quiescent(&inline_state)} else {hook.teardown_quiescent(&state)}
+	}
 	barrier: hook.Execution_Barrier
 	workers: [4]posix.pthread_t
 	started := 0
@@ -93,6 +96,8 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 		return concurrent_failure("baseline calls/errors/forwarding", barrier.active)
 	}
 	if !hook.enter_execution_barrier(&barrier, deallocate) {
+		fmt.eprintf("barrier diagnostics: run_state=%d suspend_count=%d\n",
+			hook.barrier_last_run_state, hook.barrier_last_suspend_count)
 		return concurrent_failure("thread barrier enter", barrier.active)
 	}
 	calls_before := intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire)
@@ -102,9 +107,44 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 	}
 	task := bridge.mach_task_self()
 	if protect(task, base, mach.vm_page_size, 0, 1 | 2 | 16) != 0 {immediate_exit(1)}
-	intrinsics.volatile_store((^u32)(uintptr(entry)), hook.PACIBSP)
+	entry_patch := ([^]u32)(uintptr(entry))
+	if inline_mode {
+		for index in 0 ..< 4 {intrinsics.volatile_store(&entry_patch[index], expected[index])}
+	} else {
+		intrinsics.volatile_store(&entry_patch[0], hook.PACIBSP)
+	}
 	if protect(task, base, mach.vm_page_size, 0, initial_region.protection) != 0 {immediate_exit(1)}
-	if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {
+	installed := false
+	if inline_mode {
+		if !hook.write_inline_loop_via_alias(entry, expected, deallocate) {
+			return concurrent_failure("inline parking branch", barrier.active)
+		}
+		if !hook.leave_execution_barrier(&barrier) {
+			return concurrent_failure("thread barrier parking leave", barrier.active)
+		}
+		for _ in 0 ..< 100_000 {intrinsics.cpu_relax()}
+		parked := false
+		for _ in 0 ..< 64 {
+			if !hook.enter_execution_barrier(&barrier, deallocate) {
+				return concurrent_failure("thread barrier re-enter", barrier.active)
+			}
+			calls_before = intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire)
+			for _ in 0 ..< 10_000 {intrinsics.cpu_relax()}
+			inside, checked := hook.barrier_has_pc_in_range(&barrier, entry + 4, hook.INLINE_PATCH_BYTES - 4)
+			if checked && !inside && intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire) == calls_before {
+				parked = true
+				break
+			}
+			if !hook.leave_execution_barrier(&barrier) {
+				return concurrent_failure("thread barrier retry leave", barrier.active)
+			}
+		}
+		if !parked {return concurrent_failure("inline callers did not park", barrier.active)}
+		installed = hook.install_inline_after_loop(&inline_state, entry, relay, expected, deallocate)
+	} else {
+		installed = hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate)
+	}
+	if !installed {
 		return concurrent_failure("install", barrier.active)
 	}
 	if !hook.leave_execution_barrier(&barrier) {
@@ -120,7 +160,13 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 	}
 	concurrent_join(&workers, &started, immediate_exit)
 	trampoline_original = nil
-	if !hook.teardown_quiescent(&state) {
+	teardown_ok := false
+	if inline_mode {
+		teardown_ok = hook.teardown_inline_quiescent(&inline_state)
+	} else {
+		teardown_ok = hook.teardown_quiescent(&state)
+	}
+	if !teardown_ok {
 		return concurrent_failure("teardown", barrier.active)
 	}
 	// Installation can split one shoji_abi_run across original and hooked calls,
@@ -168,6 +214,95 @@ diagnose_alias :: proc(entry: u64, deallocate: hook.Deallocate) {
 	code = bridge.mach_vm_protect(self, alias, page, 0, 1 | 2)
 	fmt.eprintf("alias diagnostic: writable=%d\n", code)
 	fmt.eprintf("alias diagnostic: release=%d\n", deallocate(self, alias, page))
+}
+
+run_inline_trampoline :: proc(callback: Ordering_Callback) {
+	when ODIN_ARCH != .arm64 {trampoline_fail("arm64e required")}
+	self_image := bridge.dlopen(nil, 2)
+	if self_image == nil {trampoline_fail("main image handle unavailable")}
+	defer bridge.dlclose(self_image)
+	entry := u64(uintptr(bridge.raw_symbol(self_image, "shoji_abi_original")))
+	replacement := bridge.strip_function(u64(uintptr(rawptr(forward))))
+	if entry == 0 {trampoline_fail("native target symbol unavailable")}
+	target_callback := transmute(Ordering_Callback)uintptr(bridge.sign_function(entry))
+	entry_words := ([^]u32)(uintptr(entry))
+	expected: [4]u32
+	for index in 0 ..< 4 {expected[index] = entry_words[index]}
+	fmt.eprintf("inline trampoline target: entry=0x%x words=%x %x %x %x replacement=0x%x\n",
+		entry, expected[0], expected[1], expected[2], expected[3], replacement)
+	if code := shoji_abi_run(callback); code != 0 {trampoline_fail("direct forwarding baseline", code)}
+	if code := shoji_abi_run(target_callback); code != 0 {trampoline_fail("native baseline", code)}
+	if expected[0] != hook.PACIBSP {trampoline_fail("native target does not start with PACIBSP")}
+	fmt.eprintln("inline stage: baselines")
+
+	kernel := bridge.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	if kernel == nil {trampoline_fail("kernel library unavailable")}
+	defer bridge.dlclose(kernel)
+	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)bridge.raw_symbol(kernel, "mach_vm_allocate")
+	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)bridge.raw_symbol(kernel, "mach_vm_deallocate")
+	protect := cast(Trampoline_Protect)bridge.raw_symbol(kernel, "mach_vm_protect")
+	immediate_exit := cast(Trampoline_Exit)bridge.raw_symbol(kernel, "_exit")
+	if allocate == nil || deallocate == nil || protect == nil || immediate_exit == nil {
+		trampoline_fail("Mach allocation symbols unavailable")
+	}
+	self := bridge.mach_task_self()
+	page := mach.vm_page_size
+	if page == 0 || page & (page - 1) != 0 {trampoline_fail("invalid page size")}
+	base := entry & ~(page - 1)
+	trampoline: u64
+	if code := allocate(self, &trampoline, page, 1); code != 0 {trampoline_fail("trampoline allocation", code)}
+	defer deallocate(self, trampoline, page)
+	plan, plan_ok := hook.plan_inline(entry, trampoline, replacement, expected)
+	if !plan_ok {trampoline_fail("cannot plan inline absolute jump")}
+	code := ([^]u32)(uintptr(trampoline))
+	for index in 0 ..< 4 {
+		code[index] = plan.displaced[index]
+		code[4 + index] = plan.resume_jump[index]
+	}
+	sys_icache_invalidate(rawptr(uintptr(trampoline)), uint(page))
+	if code := protect(self, trampoline, page, 0, 1 | 4); code != 0 {
+		trampoline_fail("cannot protect inline trampoline", code)
+	}
+	fmt.eprintln("inline stage: trampoline ready")
+	initial_region, region_ok := trampoline_region(base, page)
+	if !region_ok || initial_region.protection != 5 || initial_region.max_protection != 5 {
+		trampoline_fail("unexpected native text protections")
+	}
+	privatize_code := protect(self, base, page, 0, 1 | 2 | 16)
+	if privatize_code != 0 {immediate_exit(1)}
+	for index in 0 ..< 4 {intrinsics.volatile_store(&entry_words[index], expected[index])}
+	execute_code := protect(self, base, page, 0, initial_region.protection)
+	if execute_code != 0 {immediate_exit(1)}
+	fmt.eprintln("inline stage: privatized")
+
+	for cycle in 0 ..< 16 {
+		state: hook.Inline_State
+		if !hook.install_inline_via_alias(&state, entry, replacement, expected, deallocate) {
+			hook.teardown_inline_quiescent(&state)
+			trampoline_fail("inline installation", i32(cycle))
+		}
+		if cycle == 0 {fmt.eprintln("inline stage: installed")}
+		trampoline_original = transmute(Ordering_Callback)uintptr(trampoline)
+		result := shoji_abi_run(target_callback)
+		trampoline_original = nil
+		if cycle == 0 {fmt.eprintln("inline stage: invocation returned")}
+		if result != 0 {trampoline_fail("C -> Odin -> inline trampoline -> C", result)}
+		if cycle == 0 {fmt.eprintln("inline stage: teardown")}
+		if !hook.teardown_inline_quiescent(&state) {trampoline_fail("inline quiescent teardown", i32(cycle))}
+		if cycle == 0 {fmt.eprintln("inline stage: teardown returned")}
+		for index in 0 ..< 4 {if entry_words[index] != expected[index] {trampoline_fail("inline entry restoration", i32(cycle))}}
+	}
+	if !run_concurrent(entry, base, trampoline, replacement, target_callback, protect, immediate_exit,
+		deallocate, initial_region, true, expected) {
+		trampoline_fail("inline concurrent barrier/forwarding")
+	}
+	if code := shoji_abi_run(target_callback); code != 0 {trampoline_fail("restored native target", code)}
+	if code := protect(self, base, page, 1, initial_region.max_protection); code != 0 {
+		trampoline_fail("restore native text maximum protection", code)
+	}
+	final_region, final_ok := trampoline_region(base, page)
+	if !final_ok || final_region != initial_region {trampoline_fail("verify final native text protections")}
+	fmt.println("PASS: 16 inline native/Odin trampoline round trips plus concurrent suspended-thread installation; four-instruction prologue and protections restored")
 }
 
 run_trampoline :: proc(callback: Ordering_Callback) {
@@ -274,7 +409,8 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 			trampoline_fail("entry or alias restoration", i32(cycle))
 		}
 	}
-	if !run_concurrent(entry, base, trampoline, relay, target_callback, protect, immediate_exit, deallocate, initial_region) {
+	old_expected := [4]u32{hook.PACIBSP, 0, 0, 0}
+	if !run_concurrent(entry, base, trampoline, relay, target_callback, protect, immediate_exit, deallocate, initial_region, false, old_expected) {
 		trampoline_fail("concurrent barrier/forwarding")
 	}
 	if code := shoji_abi_run(target_callback); code != 0 {

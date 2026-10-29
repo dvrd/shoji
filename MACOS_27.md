@@ -1,5 +1,21 @@
 # macOS 27 and Shoji's Dock addition
 
+**Readback port candidate:** [implementation and VM evidence](docs/MACOS27_READBACK_PORT.md)
+passes all seven layer/sticky/shadow checks through the signed service on
+27.0.1, with independent owner-side verification, plus 339 local tests.
+The earlier appearance failures are resolved; complete support remains unproven.
+
+**Readiness continuation:** [remaining-check evidence](docs/MACOS27_READINESS_REMAINDER.md)
+now records two independently verified window-to-Space round trips and successful
+fresh-process recovery-journal replay. Physical gestures and Dock reload recovery
+await live user input; optional animation visual proof and physical multi-display
+validation remain separate gates.
+
+**Latest full-runtime baseline:** [27.0.1 full-runtime testing](docs/MACOS27_FULL_RUNTIME_RESULTS.md)
+passed real service startup/restart and core window management, but found
+appearance readback and sticky/shadow restoration bugs. Full acceptance did not
+pass. The earlier investigation below is historical.
+
 **2026-10-28 reassessment:** the target release and local guest evidence have
 advanced beyond this historical investigation. See the
 [current migration assessment](docs/MACOS27_MIGRATION_ASSESSMENT.md) and

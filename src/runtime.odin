@@ -980,7 +980,7 @@ refresh_effects :: proc(state: ^State) {
 // A single native read, with unknown values retained explicitly. Borrowed
 // strings remain valid for the refresh tick; reconciliation owns model strings.
 Window_Appearance :: struct {
-	sub_level: i32,
+	sub_level: Maybe(i32),
 	ordered_in: Maybe(bool),
 	tags: Maybe(u64),
 	opacity: Maybe(f64),
@@ -1053,15 +1053,8 @@ collect_window_appearance :: proc(
 	id: u32,
 ) -> Window_Appearance {
 	result: Window_Appearance
-	tags: u64
-	if SLSGetWindowTags(state.connection, id, &tags, 64) == 0 {
-		result.tags = tags
-	}
-	level: i32
-	if SLSGetWindowLevel(state.connection, id, &level) == 0 {
-		result.level = level
-	}
-	result.sub_level = SLSGetWindowSubLevel(state.connection, id)
+	result.tags, result.level = window_query_appearance(state.connection, id)
+	result.sub_level = window_sublevel(state.connection, id)
 	alpha: f32
 	if SLSGetWindowAlpha(state.connection, id, &alpha) == 0 {
 		result.opacity = f64(alpha)
@@ -1155,9 +1148,11 @@ reconcile_window_appearance :: proc(
 	if level, known := appearance.level.?; known {
 		w.level = level
 	}
-	w.sub_level = appearance.sub_level
-	w.layer =
-		w.sub_level < 0 ? "below" : (w.sub_level > 0 ? "above" : "normal")
+	if sub_level, known := appearance.sub_level.?; known {
+		w.sub_level = sub_level
+		w.layer =
+			sub_level < 0 ? "below" : (sub_level > 0 ? "above" : "normal")
+	}
 	if opacity, known := appearance.opacity.?; known {
 		w.opacity = opacity
 	}

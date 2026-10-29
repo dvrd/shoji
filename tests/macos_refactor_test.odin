@@ -6,6 +6,22 @@ import "core:strings"
 import "core:testing"
 
 @(test)
+unavailable_appearance_preserves_the_last_observed_window_layer :: proc(
+	t: ^testing.T,
+) {
+	w := mac.Window {
+		layer     = "above",
+		sub_level = 3,
+		sticky    = true,
+		shadow    = false,
+	}
+	mac.reconcile_window_appearance(&w, {})
+	testing.expect_value(t, w.sub_level, i32(3))
+	testing.expect_value(t, w.layer, "above")
+	testing.expect(t, w.sticky && !w.shadow)
+}
+
+@(test)
 window_reconciliation_retains_unknown_capabilities_and_space :: proc(
 	t: ^testing.T,
 ) {
@@ -279,4 +295,109 @@ unchanged_observations_reuse_owned_maps_and_strings :: proc(t: ^testing.T) {
 	mac.observations_destroy(&state)
 	mac.manager_destroy(&state.manager); delete(r.actions)
 	testing.expect_value(t, track.current_memory_allocated, i64(0))
+}
+
+@(test)
+appearance_accepts_observed_zero_sublevel :: proc(t: ^testing.T) {
+	w := mac.Window {
+		layer     = "above",
+		sub_level = 3,
+	}
+	mac.reconcile_window_appearance(&w, {sub_level = i32(0)})
+	testing.expect_value(t, w.sub_level, i32(0))
+	testing.expect_value(t, w.layer, "normal")
+}
+
+@(test)
+sublevel_reply_requires_a_complete_successful_matching_message :: proc(
+	t: ^testing.T,
+) {
+	reply := mac.Sublevel_Message {
+		size  = 40,
+		id    = 0x7747,
+		ndr   = {0, 0, 0, 0, 1, 0, 0, 0},
+		value = -20,
+	}
+	testing.expect_value(
+		t,
+		mac.decode_sublevel_reply(&reply, 0x76e3).? or_else 999,
+		i32(-20),
+	)
+	reply.value = 0
+	testing.expect(t, mac.decode_sublevel_reply(&reply, 0x76e3) != nil)
+	reply.size = 36
+	testing.expect(t, mac.decode_sublevel_reply(&reply, 0x76e3) == nil)
+	reply.size = 40; reply.id += 1
+	testing.expect(t, mac.decode_sublevel_reply(&reply, 0x76e3) == nil)
+	reply.id -= 1; reply.code = 5
+	testing.expect(t, mac.decode_sublevel_reply(&reply, 0x76e3) == nil)
+	reply.code = 0; reply.bits = 0x80000000
+	testing.expect(t, mac.decode_sublevel_reply(&reply, 0x76e3) == nil)
+	reply.bits = 0; reply.ndr[4] = 0
+	testing.expect(t, mac.decode_sublevel_reply(&reply, 0x76e3) == nil)
+}
+
+@(test)
+readback_symbol_lookup_respects_loaded_image_table_bounds :: proc(
+	t: ^testing.T,
+) {
+	Image :: struct {
+		header: mac.Readback_Header,
+		text, linkedit: mac.Readback_Segment,
+		table: mac.Readback_Symtab,
+		symbol: mac.Readback_Symbol,
+		names: [32]u8,
+	}
+	image: Image
+	base := u64(uintptr(&image))
+	image.header = {
+		magic         = 0xfeedfacf,
+		commands      = 3,
+		commands_size = 2 *
+			size_of(mac.Readback_Segment) + size_of(mac.Readback_Symtab),
+	}
+	image.text = {
+		kind    = 0x19,
+		size    = size_of(mac.Readback_Segment),
+		address = base,
+		vm_size = size_of(Image),
+	}
+	image.linkedit = {
+		kind      = 0x19,
+		size      = size_of(mac.Readback_Segment),
+		address   = base,
+		file_size = size_of(Image),
+	}
+	for ch, index in "__TEXT" { image.text.name[index] = u8(ch) }
+	for ch, index in "__LINKEDIT" { image.linkedit.name[index] = u8(ch) }
+	for ch, index in "_CGSGetConnectionPortById" {
+		image.names[index] = u8(ch)
+	}
+	image.table = {
+		kind         = 2,
+		size         = size_of(mac.Readback_Symtab),
+		symbols      = u32(offset_of(Image, symbol)),
+		count        = 1,
+		strings      = u32(offset_of(Image, names)),
+		strings_size = len(image.names),
+	}
+	image.symbol = {
+		kind  = 0x0e,
+		value = base + 4,
+	}
+	name := "_CGSGetConnectionPortById"
+	testing.expect_value(
+		t,
+		mac.readback_image_symbol(&image, 0, name),
+		rawptr(uintptr(base + 4)),
+	)
+	testing.expect(t, mac.readback_image_symbol(&image, 0, "_missing") == nil)
+	image.symbol.name = len(image.names)
+	testing.expect(t, mac.readback_image_symbol(&image, 0, name) == nil)
+	image.symbol.name = 0; image.table.count = max(u32)
+	testing.expect(t, mac.readback_image_symbol(&image, 0, name) == nil)
+	image.table.count = 1; image.symbol.value = base + size_of(Image)
+	testing.expect(t, mac.readback_image_symbol(&image, 0, name) == nil)
+	image.symbol.value = base + 4; image.text.size = 0
+	testing.expect(t, mac.readback_image_symbol(&image, 0, name) == nil)
 }

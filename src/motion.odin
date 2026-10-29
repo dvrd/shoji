@@ -1185,14 +1185,14 @@ surface_create :: proc(
 	}
 	SLSSetWindowOpacity(state.connection, surface.id, false)
 	SLSSetWindowResolution(state.connection, surface.id, scale)
-	level: i32
-	SLSGetWindowLevel(state.connection, owner, &level)
+	_, observed_level := window_query_appearance(state.connection, owner)
+	level, level_known := observed_level.?
+	sublevel, sublevel_known := window_sublevel(state.connection, owner).?
+	if !level_known || !sublevel_known {
+		return {}, "could not read surface owner layer"
+	}
 	SLSSetWindowLevel(state.connection, surface.id, level)
-	SLSSetWindowSubLevel(
-		state.connection,
-		surface.id,
-		SLSGetWindowSubLevel(state.connection, owner),
-	)
+	SLSSetWindowSubLevel(state.connection, surface.id, sublevel)
 	success = true
 	return surface, ""
 }
@@ -2311,16 +2311,17 @@ native_focus_ring_reorder :: proc(
 	owner: u32,
 	surfaces: []Owned_Surface,
 ) -> string {
-	level: i32
-	if SLSGetWindowLevel(state.connection, owner, &level) != 0 {
-		return "could not read focus owner level"
+	_, observed_level := window_query_appearance(state.connection, owner)
+	level, level_known := observed_level.?
+	owner_sublevel, sublevel_known := window_sublevel(
+		state.connection,
+		owner,
+	).?
+	if !level_known || !sublevel_known {
+		return "could not read focus owner layer"
 	}
-	// Native same-window clicks can raise the owner without changing focus.
-	// Keep its decoration on the next sublevel of the same window level,
-	// rather than relying on a one-time relative order within its own plane.
-	sublevel := focus_ring_sublevel(
-		SLSGetWindowSubLevel(state.connection, owner),
-	)
+	// Keep the ring on the next sublevel of its owner's window level.
+	sublevel := focus_ring_sublevel(owner_sublevel)
 	for surface in surfaces {
 		if SLSSetWindowLevel(state.connection, surface.id, level) != 0 ||
 		   SLSSetWindowSubLevel(state.connection, surface.id, sublevel) != 0 ||

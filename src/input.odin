@@ -203,6 +203,12 @@ stack_touch_tick :: proc(state: ^State) {
 	stack_touch_shared.tracker.pending = 0
 	tracker.horizontal_delta, tracker.horizontal_end = 0, false
 	sync.mutex_unlock(&stack_touch_shared.mutex)
+	if delta != 0 || ended {
+		motion_trace_record(
+			&m.motion_trace,
+			{kind = ended ? "three-finger-end" : "three-finger-pan", space = m.active_space, value = delta},
+		)
+	}
 	if seq != t.sequence {
 		if t.horizontal_active {
 			if old := space_by_id(m, t.horizontal_space); old != nil { old.view.scroll.dragging = false }

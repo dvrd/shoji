@@ -5,6 +5,8 @@
 // Owned data only. No SkyLight calls, runtime attachment or code modification.
 typedef int32_t (*ordering_callback)(void *, const uint32_t *, const int32_t *,
                                     const uint32_t *, uint32_t, bool);
+typedef int32_t (*ordering_raw_callback)(void *, const uint32_t *, const int32_t *,
+                                        const uint32_t *, uint32_t, uint32_t);
 
 struct fixture_context {
     uint64_t magic;
@@ -59,4 +61,45 @@ int32_t shoji_abi_run(ordering_callback callback) {
         return 4;
     }
     return context.calls == 4 ? 0 : 5;
+}
+
+__attribute__((noinline))
+int32_t shoji_abi_raw_original(void *opaque, const uint32_t *ids, const int32_t *ops,
+                               const uint32_t *relative, uint32_t count,
+                               uint32_t flag) {
+    struct fixture_context *context = opaque;
+    if (context == NULL || context->magic != UINT64_C(0x13579bdf2468ace0)) {
+        return -911;
+    }
+    context->calls++;
+    if (count != 1 || ids == NULL || ops == NULL || relative == NULL ||
+        ids[0] != UINT32_MAX || ops[0] != -7 || relative[0] != UINT32_C(0x80000000)) {
+        return -912;
+    }
+    if (flag == 0) {
+        return INT32_C(0x01020304);
+    }
+    if (flag == 1) {
+        return INT32_C(-0x01020304);
+    }
+    if (flag == 2) {
+        return INT32_C(0x05060708);
+    }
+    return -913;
+}
+
+int32_t shoji_abi_raw_run(ordering_raw_callback callback) {
+    if (callback == NULL) {
+        return 1;
+    }
+    struct fixture_context context = {UINT64_C(0x13579bdf2468ace0), 0};
+    const uint32_t ids[] = {UINT32_MAX};
+    const int32_t ops[] = {-7};
+    const uint32_t relative[] = {UINT32_C(0x80000000)};
+    if (callback(&context, ids, ops, relative, 1, 0) != INT32_C(0x01020304) ||
+        callback(&context, ids, ops, relative, 1, 1) != INT32_C(-0x01020304) ||
+        callback(&context, ids, ops, relative, 1, 2) != INT32_C(0x05060708)) {
+        return 2;
+    }
+    return context.calls == 3 ? 0 : 3;
 }
