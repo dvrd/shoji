@@ -53,6 +53,7 @@ foreign cf {
 	CFArrayGetValueAtIndex :: proc(ref: Ref, index: int) -> Ref ---
 	CFArrayCreate :: proc(allocator: Ref, values: [^]Ref, count: int, callbacks: Ref) -> Ref ---
 	CFDictionaryGetValue :: proc(ref, key: Ref) -> Ref ---
+	CFDictionaryCreate :: proc(allocator: Ref, keys, values: [^]Ref, count: int, key_callbacks, value_callbacks: Ref) -> Ref ---
 	CFNumberGetValue :: proc(ref: Ref, type: i32, value: rawptr) -> bool ---
 	CFBooleanGetValue :: proc(ref: Ref) -> bool ---
 	CFUUIDCreateString :: proc(allocator, uuid: Ref) -> Ref ---
@@ -74,6 +75,8 @@ foreign cg {
 @(default_calling_convention = "c")
 foreign ax {
 	AXIsProcessTrusted :: proc() -> bool ---
+	AXIsProcessTrustedWithOptions :: proc(options: Ref) -> bool ---
+	kAXTrustedCheckOptionPrompt: Ref
 	AXUIElementCreateApplication :: proc(pid: i32) -> Ref ---
 	AXUIElementCopyAttributeValue :: proc(element, attribute: Ref, value: ^Ref) -> i32 ---
 	AXUIElementSetAttributeValue :: proc(element, attribute, value: Ref) -> i32 ---

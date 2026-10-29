@@ -6,7 +6,12 @@ for evidence and remaining gaps. Experimental animations default off.
 
 ## Configuration
 
-Before the first local build, run `task signing:setup` in your laptop's terminal.
+Run `task install` to build and install Shoji into `/usr/local/bin`. The
+commands below also describe development builds in the checkout's `bin`
+directory; substitute `/usr/local/bin/shoji` when using the installed copy.
+Set `INSTALL_DIR` on the task to choose a different absolute installation path.
+
+For a manual development build, run `task signing:setup` first.
 This creates a self-signed code-signing certificate in your default user keychain
 and records its fingerprint in `~/.config/shoji/signing.json` (respecting
 `XDG_CONFIG_HOME`). macOS may request Keychain authorization during setup. Trust
@@ -14,7 +19,7 @@ is limited to code signing in your user account; no system or SSL trust is chang
 The private key stays in Keychain; only a public certificate and configuration
 are saved alongside your Shoji config.
 
-Build with `task build`. Grant `bin/shoji` access in System Settings → Privacy &
+Build with `task build`. Grant the executable access in System Settings → Privacy &
 Security → Accessibility once. When switching from an older ad-hoc build, remove
 and re-add the executable once to establish the certificate-based identity.
 Subsequent `task build` updates use the same certificate and identifier, verify
@@ -80,14 +85,10 @@ through `/bin/sh`; use `sh -n ~/.config/shoji/shojirc` to check shell syntax.
 ## Service
 
 Run these commands in your laptop's terminal, from the repository directory.
-Use only one window manager at a time. Installation writes a launchd plist but
-leaves starting the daemon as a separate step:
+Use only one window manager at a time. The first start creates a launchd plist
+automatically; use `service install` to customize an existing configuration:
 
 ```sh
-./bin/shoji service plist --binary "$PWD/bin/shoji" \
-  --config "$HOME/.config/shoji/shojirc" --sa "$PWD/bin/shoji-sa.dylib"
-./bin/shoji service install --binary "$PWD/bin/shoji" \
-  --config "$HOME/.config/shoji/shojirc" --sa "$PWD/bin/shoji-sa.dylib"
 ./bin/shoji service start
 ./bin/shoji service status
 ./bin/shoji -m config layout
@@ -96,7 +97,7 @@ leaves starting the daemon as a separate step:
 ```
 
 `--sa` requires the exact noninteractive sudo permission described in
-[README.md](README.md#dock-scripting-addition). The daemon waits for a verified
+[SIP.md](SIP.md). The daemon waits for a verified
 payload handshake before running the config. Normal service operations do not
 restart Dock.
 
