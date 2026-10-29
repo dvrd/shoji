@@ -122,3 +122,8 @@ Basic window management does not require disabling System Integrity Protection
 (SIP). Native Space operations and some window effects use an optional Dock
 payload and require additional system setup. See [SIP and Dock setup](SIP.md)
 before enabling it.
+
+## Project status
+
+See the [production-readiness checklist](TODO.md) for remaining work and
+validation.
