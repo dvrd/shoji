@@ -10,6 +10,7 @@ vars:
   ODIN_ARM64E_ROOT: '{{.ODIN_LIBRARY_ROOT}}'
   CODESIGN: codesign
   BINARY: bin/shoji
+  INSTALL_DIR: /usr/local/bin
   CPU_FLAGS:
     sh: 'test "$(uname -m)" != arm64 || echo -target-features:pauth'
   LINK_FLAGS: -F/System/Library/PrivateFrameworks
@@ -94,6 +95,42 @@ tasks:
       - './bin/harness validate'
   default:
     cmds: [task build]
+  install:
+    desc: Build and install Shoji and its Dock components
+    preconditions:
+      - sh: 'test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64'
+        msg: Source installation currently requires macOS on Apple Silicon
+      - sh: 'command -v odin >/dev/null && command -v xcrun >/dev/null'
+        msg: Install Odin and Xcode Command Line Tools first
+    cmds:
+      - task: build:dev
+      - task: signing:setup
+      - task: build:inspector
+      - |
+        if [ ! -x bin/odin-arm64e ]; then
+          ./bin/dev build-arm64e '{{.ODIN_LIBRARY_ROOT}}'
+        fi
+      - task: build
+      - |
+        set -eu
+        dest="$SHOJI_INSTALL_DIR"
+        case "$dest" in /*) ;; *) echo "INSTALL_DIR must be an absolute path" >&2; exit 1;; esac
+        if [ -d "$dest" ] && [ -w "$dest" ]; then
+          run_install() { "$@"; }
+        else
+          echo "Administrator access is needed to install into $dest."
+          run_install() { sudo "$@"; }
+        fi
+        run_install mkdir -p "$dest"
+        for name in shoji shoji-loader shoji-sa.dylib; do
+          tmp="$dest/.$name.install.$$"
+          run_install install -m 755 "bin/$name" "$tmp"
+          run_install mv -f "$tmp" "$dest/$name"
+        done
+        echo "Shoji installed in $dest."
+        case ":${PATH}:" in *":$dest:"*) ;; *) echo "Add $dest to your PATH to run shoji by name.";; esac
+    env:
+      SHOJI_INSTALL_DIR: '{{.INSTALL_DIR}}'
   build:
     deps: [addition, loader, dockscan, build:dev]
     desc: Build the native macOS executable
