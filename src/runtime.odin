@@ -652,6 +652,7 @@ workspace_tick :: proc(state: ^State, detect_dock: bool = true) {
 	pending, mission := w.pending, w.desired_mission
 	w.pending = {}
 	sync.mutex_unlock(&w.mutex)
+	if .Wake in pending { mouse_wake(state, now) }
 	if mission != w.mission_active {
 		w.mission_active = mission
 		state.manager.suspended = mission

@@ -123,6 +123,8 @@ Stack_Touch_State :: struct {
 	unregister: Touch_Register,
 	stop: Touch_Stop,
 	attempted: bool,
+	wake_retries: int,
+	retry_at: time.Time,
 	sequence: u64,
 	focus: u32,
 	generation: u64,
@@ -185,15 +187,43 @@ stack_touch_stop :: proc(state: ^State) {
 	t^ = {}
 }
 
-stack_touch_tick :: proc(state: ^State) {
+stack_touch_wake :: proc(state: ^State, now: time.Time = {}) {
+	now := now
+	if (now == time.Time{}) { now = time.now() }
+	// Sleep can leave a registered device silent. Recreate the subscription
+	// after wake, allowing the device a bounded interval to become available.
+	stack_touch_stop(state)
+	if state.manager.mouse.stack_swipe || state.manager.mouse.three_finger_horizontal {
+		state.stack_touch.wake_retries = 10
+		state.stack_touch.retry_at = time.time_add(now, time.Second)
+	}
+}
+
+stack_touch_tick :: proc(
+	state: ^State,
+	now: time.Time = {},
+	start: proc(state: ^State) -> bool = stack_touch_start,
+) {
+	now := now
+	if (now == time.Time{}) { now = time.now() }
 	t := &state.stack_touch; m := &state.manager
 	if !m.mouse.stack_swipe && !m.mouse.three_finger_horizontal {
-		if t.library != nil || t.attempted { stack_touch_stop(state) }
+		if t.library != nil || t.attempted || t.wake_retries != 0 { stack_touch_stop(state) }
 		return
 	}
-	if !t.attempted {
+	if !t.attempted || (t.library == nil && t.wake_retries > 0) {
+		if (t.retry_at != time.Time{}) && time.diff(now, t.retry_at) > 0 { return }
+		retries := t.wake_retries
 		t.attempted = true
-		if !stack_touch_start(state) { t.attempted = true; fmt.eprintln("shoji: three-finger stack gesture unavailable"); return }
+		if !start(state) {
+			t.attempted = true
+			t.wake_retries = max(0, retries - 1)
+			t.retry_at = time.time_add(now, time.Second)
+			if t.wake_retries == 0 { fmt.eprintln("shoji: three-finger stack gesture unavailable") }
+			return
+		}
+		t.wake_retries = 0; t.retry_at = {}
+		if retries > 0 { fmt.eprintln("shoji: trackpad subscription restored after wake") }
 	}
 	if t.library == nil { return }
 	sync.mutex_lock(&stack_touch_shared.mutex)
@@ -392,6 +422,22 @@ mouse_drag_reset :: proc(state: ^State) {
 	mouse.drag = {}; mouse.phase = .Idle; mouse.mode = .Managed
 	mouse.edge = {}
 	mouse.pending = false; mouse.failed = false
+}
+
+mouse_wake :: proc(state: ^State, now: time.Time = {}) {
+	stack_touch_wake(state, now)
+	mouse := &state.mouse
+	// Release events can be lost while asleep. Do not replay a pre-sleep drag,
+	// scroll, Space switch or click when the desktop becomes available again.
+	if s := space_by_id(&state.manager, mouse.scroll.space); s != nil {
+		s.view.scroll.dragging = false
+	}
+	mouse_drag_reset(state)
+	tap, source := mouse.tap, mouse.source
+	resize_frame, hit_test := mouse.resize_frame, mouse.hit_test
+	mouse^ = {tap = tap, source = source, resize_frame = resize_frame, hit_test = hit_test}
+	state.manager.gesture_active = false
+	state.resize_cover_cancel = true
 }
 
 mouse_native_resize_frame :: proc(
