@@ -345,6 +345,12 @@ tasks:
       - mkdir -p bin
       - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-ws-visibility-sampler tools/window-interception/visibility-sampler/main.swift'
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-visibility-sampler'
+  build:capture-probe:
+    desc: Build the disposable guest ScreenCaptureKit frame probe (does not run it)
+    cmds:
+      - mkdir -p bin
+      - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-capture-probe tools/harness/capture-probe/main.swift'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-capture-probe'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:
