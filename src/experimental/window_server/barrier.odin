@@ -13,10 +13,13 @@ foreign system {
 	@(link_name = "thread_resume") barrier_thread_resume :: proc(thread: u32) -> i32 ---
 	@(link_name = "mach_thread_self") barrier_mach_thread_self :: proc() -> u32 ---
 	@(link_name = "mach_port_deallocate") barrier_mach_port_deallocate :: proc(task, name: u32) -> i32 ---
+	@(link_name = "usleep") barrier_usleep :: proc(microseconds: u32) -> i32 ---
 }
 
-BARRIER_MAX_THREADS :: 128
+BARRIER_MAX_THREADS :: 256
 barrier_last_run_state, barrier_last_suspend_count: i32
+barrier_last_count: u32
+barrier_last_failure: u32
 barrier_last_pc, barrier_nearest_pc: u64
 Barrier_Thread_Info :: struct {
 	id, handle, queue: u64,
@@ -129,28 +132,33 @@ enter_execution_barrier_avoiding :: proc(state: ^Execution_Barrier, deallocate: 
 enter_execution_barrier :: proc(state: ^Execution_Barrier, deallocate: Deallocate) -> bool {
 	if state == nil || state.active || deallocate == nil {return false}
 	state^ = {}
+	barrier_last_count = 0
+	barrier_last_failure = 0
 	self := hook_mach_task_self()
 	current := barrier_mach_thread_self()
-	if current == 0 {return false}
+	if current == 0 {barrier_last_failure = 1; return false}
 	current_id, current_ok := barrier_thread_id(current)
 	port_code := barrier_mach_port_deallocate(self, current)
-	if !current_ok || port_code != 0 {return false}
+	if !current_ok || port_code != 0 {barrier_last_failure = 2; return false}
 
 	threads: [^]u32
 	count: u32
-	if barrier_task_threads(self, &threads, &count) != 0 {return false}
+	if barrier_task_threads(self, &threads, &count) != 0 {barrier_last_failure = 3; return false}
+	barrier_last_count = count
 	state.task, state.threads, state.count, state.active = self, threads, count, true
 	state.deallocate = deallocate
 	if count == 0 || count > BARRIER_MAX_THREADS {
 		for index in 0 ..< count {barrier_mach_port_deallocate(self, threads[index])}
 		deallocate(self, u64(uintptr(threads)), u64(count) * size_of(u32))
 		state^ = {}
+		barrier_last_failure = 4
 		return false
 	}
 	current_matches := 0
 	for index in 0 ..< count {
 		id, ok := barrier_thread_id(threads[index])
 		if !ok {
+			barrier_last_failure = 5
 			leave_execution_barrier(state)
 			return false
 		}
@@ -158,22 +166,25 @@ enter_execution_barrier :: proc(state: ^Execution_Barrier, deallocate: Deallocat
 		if id == current_id {current_matches += 1}
 	}
 	if current_matches != 1 {
+		barrier_last_failure = 6
 		leave_execution_barrier(state)
 		return false
 	}
 	for index in 0 ..< count {
 		if state.ids[index] == current_id {continue}
 		if barrier_thread_suspend(threads[index]) != 0 {
+			barrier_last_failure = 7
 			leave_execution_barrier(state)
 			return false
 		}
 		state.suspended[index] = true
 		stopped := false
-		for _ in 0 ..< 1000 {
+		for _ in 0 ..< 200 {
 			if barrier_thread_stopped(threads[index]) {stopped = true; break}
-			intrinsics.cpu_relax()
+			barrier_usleep(100)
 		}
 		if !stopped {
+			barrier_last_failure = 8
 			leave_execution_barrier(state)
 			return false
 		}
@@ -204,6 +215,7 @@ enter_execution_barrier :: proc(state: ^Execution_Barrier, deallocate: Deallocat
 		}
 	}
 	if !valid {
+		barrier_last_failure = 9
 		leave_execution_barrier(state)
 		return false
 	}

@@ -27,10 +27,10 @@ Mach_Protect :: proc "c" (task: u32, address, size: u64, maximum, protection: i3
 
 OBSERVER_EVENTS :: 256
 Observer_Event :: struct {
-	sequence, connection: u64,
+	sequence, connection, before, after: u64,
 	count, flag: u32,
 	result: i32,
-	captured: u32,
+	captured, held: u32,
 	ids: [4]u32,
 	operations: [4]i32,
 	relative: [4]u32,
@@ -39,6 +39,7 @@ Observer_Response :: struct {
 	magic: [8]u8,
 	version, calls: u64,
 	entry, branch_word: u64,
+	timebase_numer, timebase_denom: u32,
 	events: [OBSERVER_EVENTS]Observer_Event,
 }
 Install_Result :: struct {
@@ -50,11 +51,13 @@ Install_Result :: struct {
 	barrier_leave_code, thread_create_code: i64,
 	initial_current, initial_max, final_current, final_max: i64,
 	setup_code, allocation_code, search_count: i64,
-	first_candidate: u64,
+	first_candidate, image_base: u64,
+	entry_bytes: [16]u8,
 	threads: u64,
 }
 
 STATUS_PATH :: "/private/tmp/shoji-ws-observer-status-26A434.bin"
+STARTED_PATH :: "/private/tmp/shoji-ws-observer-started-26A434.bin"
 REQUEST_PATH :: "/private/tmp/shoji-ws-observer-request"
 RESPONSE_PATH :: "/private/tmp/shoji-ws-observer-response-26A434.bin"
 
@@ -65,11 +68,14 @@ foreign system {
 	@(link_name = "write") write_fd :: proc "c" (fd: i32, data: rawptr, size: uint) -> int ---
 	@(link_name = "close") close_fd :: proc "c" (fd: i32) -> i32 ---
 	usleep :: proc(microseconds: u32) -> i32 ---
+	mach_absolute_time :: proc() -> u64 ---
 	mach_vm_region_recurse :: proc(task: u32, address, size: ^u64, depth: ^u32, info: ^u32, count: ^u32) -> i32 ---
 }
 
 observer_original: Ordering_Callback
-observer_calls: u64
+observer_start_calls, observer_calls: u64
+observer_hold_remaining, observer_hold_release: u32
+observer_hold_target: u64
 observer_entry: u64
 observer_branch: u32
 observer_events: [OBSERVER_EVENTS]Observer_Event
@@ -110,14 +116,31 @@ running_in_windowserver :: proc() -> bool {
 }
 
 ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i32, relative: [^]u32, count: u32, flag: u32) -> i32 {
+	before := mach_absolute_time()
+	held := u32(0)
+	if count > 0 && ids != nil && operations != nil && operations[0] == 1 &&
+	   u64(ids[0]) == intrinsics.atomic_load_explicit(&observer_hold_target, .Acquire) &&
+	   intrinsics.atomic_load_explicit(&observer_hold_remaining, .Acquire) == 1 {
+		intrinsics.atomic_store_explicit(&observer_hold_remaining, 0, .Release)
+		held = 1
+		for _ in 0 ..< 3000 {
+			if intrinsics.atomic_load_explicit(&observer_hold_release, .Acquire) != 0 {break}
+			usleep(1_000)
+		}
+		if intrinsics.atomic_load_explicit(&observer_hold_release, .Acquire) == 0 {held = 2}
+	}
 	result := observer_original(connection, ids, operations, relative, count, flag)
+	after := mach_absolute_time()
 	sequence := intrinsics.atomic_add_explicit(&observer_calls, 1, .Relaxed)
 	event := &observer_events[sequence % OBSERVER_EVENTS]
 	event^ = {}
 	event.connection = u64(uintptr(connection))
+	event.before = before
+	event.after = after
 	event.count = count
 	event.flag = flag
 	event.result = result
+	event.held = held
 	if ids != nil && operations != nil && relative != nil {
 		captured := min(count, 4)
 		event.captured = captured
@@ -137,26 +160,46 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 		fd := posix.open(REQUEST_PATH, {.NOFOLLOW, .NONBLOCK})
 		if fd >= 0 {
 			info: posix.stat_t
-			request: [8]u8
+			request: [32]u8
 			valid := posix.fstat(fd, &info) == nil && posix.S_ISREG(info.st_mode) &&
-				info.st_uid == 501 && info.st_size == 5
+				info.st_uid == 501 && info.st_size > 0 && info.st_size <= len(request)
+			n: int
 			if valid {
-				n := posix.read(fd, &request[0], len(request))
-				valid = n == 5 && string(request[:5]) == "dump\n"
+				n = posix.read(fd, &request[0], len(request))
+				valid = n > 0
 			}
 			posix.close(fd)
-			if valid {
+			if valid && n >= 5 && string(request[:5]) == "dump\n" {
 				response: Observer_Response
 				response.magic = {'W', 'S', 'O', 'B', 'S', 'E', 'R', 'V'}
-				response.version = 1
+				response.version = 2
 				response.calls = intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
 				response.entry = observer_entry
 				response.branch_word = u64(observer_branch)
 				response.events = observer_events
 				write_file(RESPONSE_PATH, &response, size_of(response))
+			} else if valid && n >= 8 && string(request[:8]) == "release\n" {
+				intrinsics.atomic_store_explicit(&observer_hold_release, 1, .Release)
+			} else if valid && n >= 6 && string(request[:5]) == "hold " {
+				target: u64
+				digits := 0
+				for index in 5 ..< n {
+					byte := request[index]
+					if byte == '\n' {break}
+					if byte < '0' || byte > '9' {digits = 0; break}
+					if target < max(u64) / 10 {
+						target = target * 10 + u64(byte - '0')
+						digits += 1
+					}
+				}
+				if digits > 0 && target <= u64(max(u32)) {
+					intrinsics.atomic_store_explicit(&observer_hold_target, target, .Release)
+					intrinsics.atomic_store_explicit(&observer_hold_release, 0, .Release)
+					intrinsics.atomic_store_explicit(&observer_hold_remaining, 1, .Release)
+				}
 			}
 		}
-		usleep(50_000)
+		usleep(1_000)
 	}
 }
 
@@ -169,18 +212,21 @@ install_observer :: proc() {
 	defer write_file(STATUS_PATH, &result, size_of(result))
 	if !running_in_windowserver() {return}
 	handle := loader.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)
-	if handle == nil {result.status = 2; return}
+	if handle == nil {result.status = 20; return}
 	server := loader.raw_symbol(handle, "SLXServer")
+	if server == nil {result.status = 21; return}
 	info: Image_Info
-	if server == nil || dladdr(server, &info) == 0 {result.status = 2; return}
+	if dladdr(server, &info) == 0 {result.status = 22; return}
+	result.image_base = u64(uintptr(info.base))
 	location, image_ok := hook.inspect_ordering_image(info.base)
-	if !image_ok {result.status = 2; return}
+	if !image_ok {result.status = 23; return}
 	entry := location.candidate
 	bytes := ([^]u8)(uintptr(entry))
-	if !hook.matches_ordering_entry(location, bytes[:16]) {result.status = 2; return}
 	result.uuid = location.uuid
 	result.slide = location.slide
 	result.candidate = entry
+	for index in 0 ..< 16 {result.entry_bytes[index] = bytes[index]}
+	if !hook.matches_ordering_entry(location, bytes[:16]) {result.status = 24; return}
 	page_size := mach.vm_page_size
 	if page_size == 0 || page_size & (page_size - 1) != 0 {result.status = 3; return}
 	page := entry & ~(page_size - 1)
@@ -235,14 +281,23 @@ install_observer :: proc() {
 	observer_entry = entry
 	observer_branch = plan.entry_jump[0]
 	observer_original = transmute(Ordering_Callback)uintptr(trampoline)
+	intrinsics.atomic_store_explicit(&observer_hold_target, 0, .Release)
+	intrinsics.atomic_store_explicit(&observer_hold_release, 0, .Release)
+	intrinsics.atomic_store_explicit(&observer_hold_remaining, 0, .Release)
 
 	barrier: hook.Execution_Barrier
 	state: hook.Inline_State
 	parked := false
 	for _ in 0 ..< 64 {
-		if !hook.enter_execution_barrier(&barrier, deallocate) {
+		entered := false
+		for _ in 0 ..< 64 {
+			if hook.enter_execution_barrier(&barrier, deallocate) {entered = true; break}
+			usleep(10_000)
+		}
+		if !entered {
 			result.status = 5
-			result.threads = u64(barrier.count)
+			result.threads = u64(hook.barrier_last_count)
+			result.setup_code = i64(hook.barrier_last_failure)
 			return
 		}
 		result.threads = u64(barrier.count)
@@ -272,12 +327,19 @@ install_observer :: proc() {
 			for {intrinsics.cpu_relax()}
 		}
 		for _ in 0 ..< 100_000 {intrinsics.cpu_relax()}
-		if !hook.enter_execution_barrier(&barrier, deallocate) {
+		reentered := false
+		for _ in 0 ..< 64 {
+			if hook.enter_execution_barrier(&barrier, deallocate) {reentered = true; break}
+			usleep(10_000)
+		}
+		if !reentered {
 			if !hook.restore_inline_loop_via_alias(entry, expected, deallocate) {
 				write_file(STATUS_PATH, &result, size_of(result))
 				for {intrinsics.cpu_relax()}
 			}
 			result.status = 5
+			result.threads = u64(hook.barrier_last_count)
+			result.setup_code = i64(hook.barrier_last_failure)
 			return
 		}
 		inside, checked := hook.barrier_has_pc_in_range(&barrier, entry + 4, hook.INLINE_PATCH_BYTES - 4)
@@ -326,7 +388,8 @@ install_observer :: proc() {
 		return
 	}
 	thread: posix.pthread_t
-	thread_result := posix.pthread_create(&thread, nil, control_thread, nil)
+	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(loader.sign_function(u64(uintptr(rawptr(control_thread)))))
+	thread_result := posix.pthread_create(&thread, nil, worker, nil)
 	result.thread_create_code = i64(thread_result)
 	if thread_result != nil {
 		result.status = 10
@@ -335,10 +398,11 @@ install_observer :: proc() {
 	result.status = 0
 }
 
-observer_start :: proc "c" () {
+@(export)
+shoji_ws_observer_start :: proc "c" () {
+	if intrinsics.atomic_add_explicit(&observer_start_calls, 1, .Acquire) != 0 {return}
 	context = runtime.default_context()
+	marker := [16]u8{'W', 'S', 'O', 'B', 'S', 'T', 'A', 'R', 'T', 0, 0, 0, 0, 0, 0, 1}
+	write_file(STARTED_PATH, &marker, size_of(marker))
 	install_observer()
 }
-
-@(link_section = "__DATA,__mod_init_func", linkage = "strong", require)
-observer_init: proc "c" () = observer_start

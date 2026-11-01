@@ -13,13 +13,16 @@ main :: proc() {
 			os.exit(1)
 		}
 	}
-	if len(os.args) != 2 && !(len(os.args) == 4 && os.args[1] == "--windowserver") {
-		fmt.eprintln("usage: shoji-loader PAYLOAD | --self-test | --windowserver PID PAYLOAD")
+	if len(os.args) != 2 && !(len(os.args) == 3 && os.args[1] == "--self-test-windowserver-payload") &&
+	   !(len(os.args) == 4 && os.args[1] == "--windowserver") {
+		fmt.eprintln("usage: shoji-loader PAYLOAD | --self-test | --self-test-windowserver-payload PAYLOAD | --windowserver PID PAYLOAD")
 		os.exit(2)
 	}
 	err: string
 	if len(os.args) == 2 && os.args[1] == "--self-test" {
 		err = loader.self_test()
+	} else if len(os.args) == 3 {
+		err = loader.inject_task_named(loader.mach_task_self(), os.args[2], "WindowServer")
 	} else if len(os.args) == 4 {
 		pid, ok := strconv.parse_i64(os.args[2])
 		if !ok || pid <= 0 || pid > 0x7fffffff {
