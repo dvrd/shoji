@@ -155,6 +155,8 @@ ScreenCaptureKit or equivalent, and the guest has Screen Recording
 permission denied (`screencapture` can't create images either). That claim
 stays open.
 
+*(It didn't stay open for long. Read on.)*
+
 ## Phase 5: hardening, driven by live bugs
 
 Running the gate exposed its own control channel as the weakest link — each
@@ -207,7 +209,98 @@ there.
 
 ---
 
-*All artifacts, install reports, event dumps and visibility traces referenced
-above live under `artifacts/windowserver-vm-probe/` in the Shoji repository.
-The experiment is disposable and guest-only; SIP must never be disabled on a
-user machine for Shoji.*
+## Phase 6: pixels, or it didn't happen
+
+Window-list state is bookkeeping. The question that actually matters: during
+the hold, did the compositor put the window's **pixels** on screen anyway?
+Bookkeeping says what's *supposed* to be visible; the display stream says
+what *was*.
+
+The tool for this is ScreenCaptureKit, whose frames carry
+`SCStreamFrameInfo.displayTime` — WindowServer's own timestamp of when a
+frame hit the display, in the same Mach clock domain as our hook events.
+That makes the experiment cleanly decidable: capture the held window's
+frame stream, and look for any complete frame whose display time falls
+**inside the hold window** (between the hook's `before` and `after` ticks).
+One such frame and the gate is a bookkeeping illusion. Zero, and the hold
+gates reality.
+
+Getting there required three more small humiliations, preserved for
+posterity:
+
+1. **Permissions are per-responsible-process.** The Screen Recording consent
+   we approved attached to Terminal.app, not to our probe binary — SSH runs
+   were denied. Granting the binary directly via `TCC.db` failed *even as
+   root*: the database path is data-vault protected regardless of SIP
+   state. (The fix was boring: run the experiment from the guest Terminal,
+   under Terminal's grant.)
+2. **`CGS_REQUIRE_INIT`.** The probe worked interactively and aborted in
+   scripts. ScreenCaptureKit needs an initialized CoreGraphics application
+   connection; the interactive consent flow had created one implicitly.
+   `NSApplication.shared` first, crash gone.
+3. **Our own dedup outsmarted us.** The hardened observer executes each
+   distinct command once — so the script's second `dump` was silently
+   ignored and we downloaded a *stale* event ring missing the run we cared
+   about. (The fix: toggle through a harmless `release` before the final
+   `dump`. The missing event was recovered from the next run's ring, so no
+   data was lost.)
+
+Then the result, three gated runs, no ambiguity:
+
+| run | hold | complete frames presented during hold | first frame after forward |
+| --- | --- | --- | --- |
+| baseline (unheld) | — | — | +119 ms |
+| gated #1 | 601.5 ms | **0** | +38 ms |
+| gated #2 | 622.3 ms | **0** | +43 ms |
+| gated #3 | 618.6 ms | **0** | +41 ms |
+
+Zero early frames, three for three, on WindowServer's own display-time
+metadata. The ordering hold is a genuine presentation gate — for the
+channel it controls.
+
+## Phase 7: how much of the screen does one hook own?
+
+Which raised the obvious next question: exactly how much is that? We pointed
+Ghidra at the entire SkyLight binary and mapped every visibility-relevant
+function — 2,569 of them — computing which can reach our hooked choke
+point.
+
+The answer: **123 converge, 390 bypass.** Our hook owns everything about
+*z-order within a Space* — ordering front/out, group ordering, transaction
+ordering, even surface-flush-triggered reorders all funnel through it. But
+a window can reach your screen three other ways, none of which touch our
+function:
+
+- **Space switching** — the window doesn't move; its Space becomes current.
+  (`PKGTransactionAddWindowToSpace`, `SetManagedDisplayCurrentSpace`, …)
+- **Surfaces** — the content itself: attach, resize, fade via opacity.
+  (`PKGTransactionBindSurface`, `SetSurfaceOpacity`, `SetSurfaceBounds`, …)
+- **Geometry** — move, resize, transform. (`PKGTransactionSetWindowBounds`,
+  `SetWindowTransform3D`, …)
+
+Notice the pattern in the names: they're all *transaction operations*. macOS
+bundles window changes into transactions — the mechanism that makes a Space
+switch's dozens of window changes atomic — and applies them through one
+machinery: `PKGTransactionCommit`, reachable from the outside through
+exactly four XPC endpoints. The mutators themselves are never called
+directly; the commit machinery dispatches to them indirectly, through a
+mechanism static analysis can't follow. Finding that dispatch table is the
+next investigation, and it decides the architecture of what comes next:
+**one seam** (hook the commit path — sees every channel, but coarse and
+reentrancy-critical) versus **per-family hooks** (one hook per channel —
+more surface area, but each as finely controllable as the one we've
+proven).
+
+That's the honest state of the art: one channel fully gated — call, window
+list, and pixels — with a map of exactly what remains and two candidate
+seams for owning it. The compositor is not a black box anymore; it's a
+territory with a surveyed border, and we know precisely where the fence
+stands.
+
+---
+
+*All artifacts, install reports, event dumps, visibility traces, frame
+captures and the coverage map referenced above live under
+`artifacts/windowserver-vm-probe/` and `artifacts/windowserver-26A434/` in
+the Shoji repository. The experiment is disposable and guest-only; SIP must
+never be disabled on a user machine for Shoji.*
