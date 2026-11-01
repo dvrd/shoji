@@ -61,6 +61,11 @@ Validated in the disposable guest on 2026-10-30 and 2026-10-31:
   writer (now per-event seqlock with a `torn` counter, response version 3);
   response writes truncated in place and a reader copied 0 bytes mid-rewrite
   (now published by rename).
+- cctor13 validation (fresh WindowServer, PID 90073): one `dump` produces one
+  response write; each hold produces exactly one held event (no rearm);
+  released hold 590.4 ms with `held=1`; timeout 3.002 s against the 3.000 s
+  deadline with `held=2`; 10/10 racing response copies complete; `torn=0`;
+  WindowServer healthy with no new crash reports.
 
 Evidence:
 
@@ -74,6 +79,7 @@ Evidence:
 - `artifacts/windowserver-vm-probe/ws-gate-lowlatency-final-20261031-212932/`
 - `artifacts/windowserver-vm-probe/ws-visibility-gated-20261101-131239/`
 - `artifacts/windowserver-vm-probe/ws-gate-hardened-staged-20261101-132853/`
+- `artifacts/windowserver-vm-probe/ws-gate-hardened-result-20261101-140003/`
 
 ## Response format (version 3)
 
