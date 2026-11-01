@@ -39,7 +39,7 @@ Observer_Response :: struct {
 	magic: [8]u8,
 	version, calls: u64,
 	entry, branch_word: u64,
-	timebase_numer, timebase_denom: u32,
+	timebase_numer, timebase_denom, torn: u32,
 	events: [OBSERVER_EVENTS]Observer_Event,
 }
 Install_Result :: struct {
@@ -67,9 +67,15 @@ foreign system {
 	proc_pidpath :: proc(pid: i32, buffer: [^]u8, size: u32) -> i32 ---
 	@(link_name = "write") write_fd :: proc "c" (fd: i32, data: rawptr, size: uint) -> int ---
 	@(link_name = "close") close_fd :: proc "c" (fd: i32) -> i32 ---
+	@(link_name = "rename") rename_file :: proc "c" (from, to: cstring) -> i32 ---
+	@(link_name = "mach_timebase_info") mach_timebase_info :: proc "c" (info: ^Timebase_Info) -> i32 ---
 	usleep :: proc(microseconds: u32) -> i32 ---
 	mach_absolute_time :: proc() -> u64 ---
 	mach_vm_region_recurse :: proc(task: u32, address, size: ^u64, depth: ^u32, info: ^u32, count: ^u32) -> i32 ---
+}
+
+Timebase_Info :: struct {
+	numer, denom: u32,
 }
 
 observer_original: Ordering_Callback
@@ -78,6 +84,7 @@ observer_hold_remaining, observer_hold_release: u32
 observer_hold_target: u64
 observer_entry: u64
 observer_branch: u32
+observer_timebase: Timebase_Info
 observer_events: [OBSERVER_EVENTS]Observer_Event
 
 write_file :: proc(path: cstring, data: rawptr, size: int) {
@@ -91,6 +98,25 @@ write_file :: proc(path: cstring, data: rawptr, size: int) {
 		written += code
 	}
 	close_fd(i32(fd))
+}
+
+// Publish through a temporary sibling so readers never observe a truncated
+// response; the WindowServer process owns both names in the sticky directory.
+write_file_atomic :: proc(path: cstring, data: rawptr, size: int) {
+	temporary: [128]u8
+	n := 0
+	for c in string(path) {
+		temporary[n] = u8(c)
+		n += 1
+	}
+	suffix := ".tmp"
+	for i in 0 ..< len(suffix) {
+		temporary[n] = suffix[i]
+		n += 1
+	}
+	temporary[n] = 0
+	write_file(cstring(&temporary[0]), data, size)
+	rename_file(cstring(&temporary[0]), path)
 }
 
 region_info :: proc(page, page_size: u64) -> (info: Region_Info, ok: bool) {
@@ -118,12 +144,20 @@ running_in_windowserver :: proc() -> bool {
 ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i32, relative: [^]u32, count: u32, flag: u32) -> i32 {
 	before := mach_absolute_time()
 	held := u32(0)
+	// Claim exactly once: a concurrent matching call must not double-hold.
 	if count > 0 && ids != nil && operations != nil && operations[0] == 1 &&
 	   u64(ids[0]) == intrinsics.atomic_load_explicit(&observer_hold_target, .Acquire) &&
-	   intrinsics.atomic_load_explicit(&observer_hold_remaining, .Acquire) == 1 {
-		intrinsics.atomic_store_explicit(&observer_hold_remaining, 0, .Release)
+	   intrinsics.atomic_exchange_explicit(&observer_hold_remaining, 0, .Acq_Rel) == 1 {
 		held = 1
-		for _ in 0 ..< 3000 {
+		// Bound by the Mach clock, not by usleep iterations; the guest
+		// oversleeps (3,000 ms of requested sleeps measured 4.8 s).
+		deadline := before
+		if observer_timebase.denom != 0 {
+			deadline += 3 * 1_000_000_000 * u64(observer_timebase.denom) / u64(observer_timebase.numer)
+		} else {
+			deadline += 72_000_000
+		}
+		for mach_absolute_time() < deadline {
 			if intrinsics.atomic_load_explicit(&observer_hold_release, .Acquire) != 0 {break}
 			usleep(1_000)
 		}
@@ -156,6 +190,12 @@ ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i
 
 control_thread :: proc "c" (_: rawptr) -> rawptr {
 	context = runtime.default_context()
+	// The request file persists after handling and this process cannot unlink
+	// it (sticky directory, owned by the desktop user). Process each distinct
+	// command once instead of re-executing a stale file every poll; a leftover
+	// "hold" file otherwise re-arms the gate after the claim completes.
+	last: [32]u8
+	last_n := -1
 	for {
 		fd := posix.open(REQUEST_PATH, {.NOFOLLOW, .NONBLOCK})
 		if fd >= 0 {
@@ -166,21 +206,54 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 			n: int
 			if valid {
 				n = posix.read(fd, &request[0], len(request))
-				valid = n > 0
+				// Reject in-flight partial writes: every command ends with \n.
+				valid = n > 0 && request[n - 1] == '\n'
 			}
 			posix.close(fd)
-			if valid && n >= 5 && string(request[:5]) == "dump\n" {
+			unchanged := valid && n == last_n
+			if unchanged {
+				for index in 0 ..< n {
+					if request[index] != last[index] {unchanged = false; break}
+				}
+			}
+			if valid && !unchanged {
+				last_n = n
+				for index in 0 ..< n {last[index] = request[index]}
+			}
+			if valid && !unchanged && n >= 5 && string(request[:5]) == "dump\n" {
 				response: Observer_Response
 				response.magic = {'W', 'S', 'O', 'B', 'S', 'E', 'R', 'V'}
-				response.version = 2
+				response.version = 3
 				response.calls = intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
 				response.entry = observer_entry
 				response.branch_word = u64(observer_branch)
-				response.events = observer_events
-				write_file(RESPONSE_PATH, &response, size_of(response))
-			} else if valid && n >= 8 && string(request[:8]) == "release\n" {
+				response.timebase_numer = observer_timebase.numer
+				response.timebase_denom = observer_timebase.denom
+				// Seqlock per event: the writer zeroes the slot, fills it, then
+				// publishes the sequence. Retry on instability; drop and count
+				// events that never settle instead of exporting torn data.
+				for index in 0 ..< OBSERVER_EVENTS {
+					src := &observer_events[index]
+					dst := &response.events[index]
+					consistent := false
+					for _ in 0 ..< 8 {
+						first := intrinsics.atomic_load_explicit(&src.sequence, .Acquire)
+						if first == 0 {dst^ = {}; consistent = true; break}
+						dst^ = src^
+						if intrinsics.atomic_load_explicit(&src.sequence, .Acquire) == first {
+							consistent = true
+							break
+						}
+					}
+					if !consistent {
+						dst^ = {}
+						response.torn += 1
+					}
+				}
+				write_file_atomic(RESPONSE_PATH, &response, size_of(response))
+			} else if valid && !unchanged && n >= 8 && string(request[:8]) == "release\n" {
 				intrinsics.atomic_store_explicit(&observer_hold_release, 1, .Release)
-			} else if valid && n >= 6 && string(request[:5]) == "hold " {
+			} else if valid && !unchanged && n >= 6 && string(request[:5]) == "hold " {
 				target: u64
 				digits := 0
 				for index in 5 ..< n {
@@ -211,6 +284,7 @@ install_observer :: proc() {
 	}
 	defer write_file(STATUS_PATH, &result, size_of(result))
 	if !running_in_windowserver() {return}
+	mach_timebase_info(&observer_timebase)
 	handle := loader.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)
 	if handle == nil {result.status = 20; return}
 	server := loader.raw_symbol(handle, "SLXServer")
