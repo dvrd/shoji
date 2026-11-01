@@ -1,3 +1,4 @@
+import AppKit
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
@@ -39,6 +40,11 @@ else {
 var timebase = mach_timebase_info_data_t()
 mach_absolute_time()
 mach_timebase_info(&timebase)
+
+// Establish the CoreGraphics application connection before any ScreenCaptureKit
+// call; otherwise scripted runs abort with CGS_REQUIRE_INIT.
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
 
 let content: SCShareableContent
 do {
