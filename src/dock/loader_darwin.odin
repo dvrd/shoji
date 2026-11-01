@@ -75,19 +75,60 @@ Bootstrap :: struct {
 	detach:                                   proc "c" (_: uint) -> i32,
 	open:                                     proc "c" (_: cstring, _: i32) -> rawptr,
 	error:                                    proc "c" () -> cstring,
+	info:                                     proc "c" (_: rawptr, _: ^Loaded_Image) -> i32,
+	lookup:                                   proc "c" (_: rawptr, _: cstring) -> rawptr,
 	worker:                                   rawptr,
 	path:                                     cstring,
+	inspect_symbol:                           cstring,
 	handle:                                   rawptr,
+	inspect_symbol_address:                   rawptr,
 	reason:                                   cstring,
+	loaded_path:                              cstring,
+	image_base:                               rawptr,
+	image_info_result:                        i32,
+	invoked:                                  u32,
 	create_result, detach_result:             i32,
 	done, entry_ready, seen, worker_finished: u32,
+}
+Loaded_Image :: struct {
+	path: cstring,
+	base: rawptr,
+	symbol: cstring,
+	address: rawptr,
+}
+@(link_section = "__TEXT,__shoji_boot,regular,pure_instructions", no_instrumentation)
+@(enable_target_feature="pauth")
+remote_call_function :: asm(function, key: u64) [
+	function = %x0,
+	key = %x17,
+	#clobber %x30, #clobber %x1, #clobber %x2, #clobber %x3, #clobber %x4,
+	#clobber %x5, #clobber %x6, #clobber %x7, #clobber %x8, #clobber %x9,
+	#clobber %x10, #clobber %x11, #clobber %x12, #clobber %x13, #clobber %x14,
+	#clobber %x15, #clobber %x16, #clobber %x17, #clobber memory, #volatile,
+] {
+	blraa function, key;
 }
 @(link_section = "__TEXT,__shoji_boot,regular,pure_instructions", no_instrumentation)
 remote_worker :: proc "c" (arg: rawptr) -> rawptr {
 	data := (^Bootstrap)(arg)
 	if data.detach != nil {data.detach_result = data.detach(data.self())}
 	data.handle = data.open(data.path, 2)
+	if data.handle != nil && data.lookup != nil && data.inspect_symbol != nil {
+		data.inspect_symbol_address = data.lookup(data.handle, data.inspect_symbol)
+	}
+	if data.inspect_symbol_address != nil && data.info != nil {
+		image: Loaded_Image
+		data.image_info_result = data.info(data.inspect_symbol_address, &image)
+		if data.image_info_result != 0 {
+			data.loaded_path = image.path
+			data.image_base = image.base
+		}
+	}
 	if data.handle == nil && data.error != nil {data.reason = data.error()}
+	if data.inspect_symbol_address != nil {
+		data.invoked = 1
+		remote_call_function(u64(uintptr(data.inspect_symbol_address)), 0)
+	}
 	intrinsics.atomic_store_explicit(&data.done, 1, .Release)
 	if data.handle == nil {
 		for intrinsics.atomic_load_explicit(&data.seen, .Acquire) == 0 {intrinsics.cpu_relax()}
@@ -213,7 +254,9 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 	if system == nil {return "cannot resolve dlopen"};defer dlclose(system)
 	open := dlsym(system, "dlopen")
 	describe := raw_symbol(system, "dlerror")
-	if create == nil || open == nil || worker_self == nil || detach == nil || describe == nil {
+	image_info := raw_symbol(system, "dladdr")
+	lookup := raw_symbol(system, "dlsym")
+	if create == nil || open == nil || worker_self == nil || detach == nil || describe == nil || image_info == nil || lookup == nil {
 		return "missing bootstrap entry point"
 	}
 	kernel_vm := dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
@@ -231,6 +274,9 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 	stack_size: u64 = 64 * 1024
 	stack_marker: u64 = 0x00000000CAFEBABE
 	data_size := u64(size_of(Bootstrap) + len(path) + 1)
+	inspect_symbol_name := ""
+	if target == "WindowServer" {inspect_symbol_name = "shoji_ws_observer_start"}
+	data_size += u64(len(inspect_symbol_name) + 1)
 	if code := mach_vm_allocate(task, &code_address, u64(size), 1);
 	   code != 0 {return fmt.tprintf("cannot allocate remote code (%d)", code)}
 	// The worker publishes completion before its return epilogue. Keep its code
@@ -269,8 +315,11 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 			_: i32,
 		) -> rawptr)rawptr(uintptr(strip_function(u64(uintptr(open))))),
 		error  = cast(proc "c" () -> cstring)describe,
+		info   = cast(proc "c" (_: rawptr, _: ^Loaded_Image) -> i32)image_info,
+		lookup = cast(proc "c" (_: rawptr, _: cstring) -> rawptr)lookup,
 		worker = rawptr(uintptr(code_address + u64(worker_offset))),
 		path   = cstring(rawptr(uintptr(data_address + size_of(Bootstrap)))),
+		inspect_symbol = cstring(rawptr(uintptr(data_address + size_of(Bootstrap) + u64(len(path) + 1)))),
 	}
 	if code := mach_vm_write(task, data_address, uintptr(&bootstrap), size_of(bootstrap));
 	   code != 0 {return fmt.tprintf("cannot write bootstrap data (%d)", code)}
@@ -281,6 +330,13 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 		uintptr(rawptr(cpath)),
 		u32(len(path) + 1),
 	); code != 0 {return fmt.tprintf("cannot write payload path (%d)", code)}
+	symbol_cpath := strings.clone_to_cstring(inspect_symbol_name, context.temp_allocator)
+	if code := mach_vm_write(
+		task,
+		data_address + size_of(Bootstrap) + u64(len(path) + 1),
+		uintptr(rawptr(symbol_cpath)),
+		u32(len(inspect_symbol_name) + 1),
+	); code != 0 {return fmt.tprintf("cannot write inspection symbol (%d)", code)}
 	thread: u32
 	when ODIN_ARCH == .arm64 {
 		state := ARM_State {
@@ -402,6 +458,14 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 			return fmt.tprintf("remote pthread detach failed (%d)", bootstrap.detach_result)
 		}
 		if bootstrap.handle == nil {return failure_reason}
+		if target == "WindowServer" {
+			loaded_path := ""
+			if bootstrap.loaded_path != nil {
+				loaded_path = remote_c_string(task, uintptr(rawptr(bootstrap.loaded_path)))
+			}
+			fmt.printf("WindowServer payload image: path=%s base=0x%x handle=0x%x symbol=0x%x dladdr=%d invoked=%d\n",
+				loaded_path, uintptr(bootstrap.image_base), uintptr(bootstrap.handle), uintptr(bootstrap.inspect_symbol_address), bootstrap.image_info_result, bootstrap.invoked)
+		}
 		return ""
 	}
 	return fmt.tprintf(
