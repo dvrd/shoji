@@ -66,11 +66,11 @@ Validated in the disposable guest on 2026-10-30 and 2026-10-31:
   released hold 590.4 ms with `held=1`; timeout 3.002 s against the 3.000 s
   deadline with `held=2`; 10/10 racing response copies complete; `torn=0`;
   WindowServer healthy with no new crash reports.
-- Pixel-level verification (ScreenCaptureKit, per-window stream): a 601.5 ms
-  externally released hold presented **zero complete frames** of the held
-  window inside the hold window; the first complete frame landed 37.76 ms
-  after the forward. Baseline (unheld): first complete frame 119 ms after
-  the ordering call. The gate holds actual presentation for the intra-space
+- Pixel-level verification (ScreenCaptureKit, per-window stream, n=3):
+  externally released holds of 601–622 ms presented **zero complete frames**
+  of the held window inside the hold window; the first complete frame
+  landed 38–43 ms after each forward (baseline: 119 ms unheld, virtual-
+  display cadence). The gate holds actual presentation for the intra-space
   z-order channel, per WindowServer's own display-time metadata.
 - Static coverage map (2,569 visibility-relevant functions, `COVERAGE.md`):
   the hook fully covers intra-space z-order visibility, but space
