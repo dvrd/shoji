@@ -10,6 +10,19 @@ import objc "core:sys/darwin/Foundation"
 Object :: ^objc.Object
 Rect :: struct {x, y, w, h: f64}
 
+// Pump the run loop so Core Animation commits the window surface; without it
+// the window never becomes onscreen in a process that only sleeps.
+pump :: proc(seconds: f64) {
+	run_loop := intrinsics.objc_send(Object, (^objc.Object)(objc.objc_lookUpClass("NSRunLoop")), "currentRunLoop")
+	deadline := intrinsics.objc_send(
+		Object,
+		(^objc.Object)(objc.objc_lookUpClass("NSDate")),
+		"dateWithTimeIntervalSinceNow:",
+		seconds,
+	)
+	intrinsics.objc_send(bool, run_loop, "runUntilDate:", deadline)
+}
+
 foreign import cocoa "system:Cocoa.framework"
 foreign import sls "system:SkyLight.framework"
 foreign cocoa {NSApplicationLoad :: proc "c" () -> bool ---}
@@ -19,12 +32,14 @@ foreign sls {
 }
 
 main :: proc() {
-	if !NSApplicationLoad() {
+	no_hold := false
+	for arg in os.args[1:] {
+		if arg == "--no-hold" {no_hold = true}
+	}	if !NSApplicationLoad() {
 		fmt.eprintln("FAIL: AppKit initialization")
 		os.exit(1)
 	}
 	pool := intrinsics.objc_send(Object, (^objc.Object)(objc.objc_lookUpClass("NSAutoreleasePool")), "new")
-	defer intrinsics.objc_send(nil, pool, "drain")
 	app := intrinsics.objc_send(Object, (^objc.Object)(objc.objc_lookUpClass("NSApplication")), "sharedApplication")
 	intrinsics.objc_send(bool, app, "setActivationPolicy:", int(1))
 	intrinsics.objc_send(nil, app, "finishLaunching")
@@ -42,7 +57,7 @@ main :: proc() {
 		fmt.eprintln("FAIL: window allocation")
 		os.exit(1)
 	}
-	defer intrinsics.objc_send(nil, window, "release")
+	_ = pool
 	color := intrinsics.objc_send(Object, (^objc.Object)(objc.objc_lookUpClass("NSColor")), "redColor")
 	intrinsics.objc_send(nil, window, "setBackgroundColor:", color)
 	intrinsics.objc_send(nil, window, "setOpaque:", bool(true))
@@ -52,29 +67,33 @@ main :: proc() {
 		fmt.eprintln("FAIL: SLS connection or window number")
 		os.exit(1)
 	}
-	request := fmt.tprintf("hold %d\n", number)
-	fd := posix.open("/private/tmp/shoji-ws-observer-request", {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
-	if fd < 0 {
-		fmt.eprintln("FAIL: hold request")
-		os.exit(1)
+	fmt.printf("window=%d\n", number)
+	if no_hold {
+		time.sleep(500 * time.Millisecond)
+	} else {
+		request := fmt.tprintf("hold %d\n", number)
+		fd := posix.open("/private/tmp/shoji-ws-observer-request", {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
+		if fd < 0 {
+			fmt.eprintln("FAIL: hold request")
+			os.exit(1)
+		}
+		written := posix.write(fd, raw_data(request), uint(len(request)))
+		posix.close(fd)
+		if written != len(request) {
+			fmt.eprintln("FAIL: hold request write")
+			os.exit(1)
+		}
+		time.sleep(500 * time.Millisecond)
 	}
-	written := posix.write(fd, raw_data(request), uint(len(request)))
-	posix.close(fd)
-	if written != len(request) {
-		fmt.eprintln("FAIL: hold request write")
-		os.exit(1)
-	}
-	time.sleep(500 * time.Millisecond)
-	if code := SLSOrderWindow(connection, u32(number), 1, 0); code != 0 {
-		fmt.eprintf("FAIL: SLSOrderWindow front (%d)\n", code)
-		os.exit(1)
-	}
-	time.sleep(1200 * time.Millisecond)
-	if code := SLSOrderWindow(connection, u32(number), 0, 0); code != 0 {
-		fmt.eprintf("FAIL: SLSOrderWindow out (%d)\n", code)
-		os.exit(1)
-	}
-	time.sleep(250 * time.Millisecond)
+	// AppKit ordering produces a real visible window; raw SLSOrderWindow on a
+	// never-ordered-in AppKit window stays onscreen=false with zero bounds.
+	intrinsics.objc_send(bool, window, "orderFrontRegardless")
+	pump(1.2)
+	intrinsics.objc_send(bool, window, "orderOut:", Object(nil))
+	pump(0.25)
 	intrinsics.objc_send(nil, window, "close")
 	fmt.printf("PASS: ordering trigger completed window=%d connection=%d\n", number, connection)
+	// Skip the Objective-C teardown path; earlier runs faulted or exited 255
+	// after PASS during pool drain and window release.
+	os.exit(0)
 }

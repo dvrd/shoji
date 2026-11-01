@@ -339,6 +339,12 @@ tasks:
       - '{{.ODIN_ARM64E}} build tools/window-interception/ordering-trigger -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-ordering-trigger -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-ordering-trigger
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-ordering-trigger'
+  build:windowserver-visibility-sampler:
+    desc: Build the disposable guest CGWindowList visibility sampler (does not run it)
+    cmds:
+      - mkdir -p bin
+      - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-ws-visibility-sampler tools/window-interception/visibility-sampler/main.swift'
+      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-visibility-sampler'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:
