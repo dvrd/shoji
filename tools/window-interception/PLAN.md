@@ -21,7 +21,7 @@ State at planning time (all evidenced, see TOUR.md):
 | # | Task | Acceptance |
 | --- | --- | --- |
 | A1 | ~~Dispatch analysis of `PKGTransactionCommit`~~ **DONE**: static global table at 0x1e873d430, 140 × 16-byte entries, `blraaz` dispatch, 139/140 ops decoded to `PKGTransactionContext*` handlers (DISPATCH.md). Decision: per-op pointer-swap gates via the table + keep the inline hook for non-transaction ordering | |
-| A2 | Extend hooks to space-switch, surface, geometry channels (order: geometry first — Shoji's core pain). **First channel DONE**: transaction table gate proven live (ops 0x01/0x03/0x06, cctor15) — held=1 765.5 ms, held=2 3,002.4 ms, unarmed traffic clean | Remaining: add geometry/space/surface ops to GATED_OPS + verification map; each with baseline/gated/timeout evidence |
+| A2 | ~~Extend hooks to space-switch, surface, geometry channels~~ **DONE** (cctor16, PID 21804): 14 gated ops across all four channels; whole-table verification (139 handlers) at install; ordering revalidated (held=1 717.2 ms), space channel proven (AddWindowToSpace held=1 732.1 ms, held=2 3,003.7 ms); pass-through system traffic clean; geometry/surface ops installed and observed firing unarmed | |
 | A3 | Per-build port pipeline: script extract → analyze → diff model vs previous build | One command produces a "what changed" report for a new macOS build |
 
 ## Phase B — From experiment to engineering

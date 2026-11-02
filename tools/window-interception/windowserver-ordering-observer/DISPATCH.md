@@ -105,13 +105,15 @@ Consequences for the gate shim:
 
 - Semantics of the per-op `meta` field (logging name/diversity; not needed
   for dispatch, and `blraaz` authenticates with discriminator 0).
-- ~~Runtime corroboration pending~~ **Done (cctor15, PID 97890)**: all six
-  sampled handlers authenticated via `autiza` and matched the static map;
-  ops 0x01/0x03/0x06 swapped for signed stubs; gated hold 765.5 ms
-  (`held=1`), timeout 3,002.4 ms against the 3.000 s deadline (`held=2`),
-  unarmed system traffic forwarded unmodified. One failure preserved:
-  cctor14 crashed WindowServer on a stub literal-offset bug (pad word at
-  the `ldr` target); fixed layout is fixture-tested
+- ~~Runtime corroboration pending~~ **Done (cctor15, PID 97890; cctor16,
+  PID 21804)**: sampled handlers authenticated via `autiza` and matched
+  the static map; cctor16 verifies **all 139 ops** at install and swaps
+  14 entries across ordering/space/surface/geometry channels. Ordering
+  and space channels hold/release-validated (`held=1` ~720 ms, `held=2`
+  ~3,003 ms against the 3.000 s deadline); unarmed system traffic
+  forwarded unmodified. One failure preserved: cctor14 crashed
+  WindowServer on a stub literal-offset bug (pad word at the `ldr`
+  target); fixed layout is fixture-tested
   (`abi-selftest/gate_stub_fixture.c`). Visibility correlation for the
   transaction channel is a follow-up; the txn-ordered trigger window does
   not become visible without AppKit-level ordering.
