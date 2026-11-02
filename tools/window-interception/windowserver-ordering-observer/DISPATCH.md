@@ -63,15 +63,46 @@ the coverage map is here: ordering (0x01–0x02, 0x59–0x5d, 0x68), spaces
   remains the right tool there; the table seam covers the transaction
   channels.
 
+## Context and op stream (A1.5, resolved)
+
+Reconstructed from `PKGTransactionSetWindowAlpha` (op 0x03) and
+`PKGTransactionSetWindowLevel` (op 0x06) plus the reader helper at
+0x187138bf0 (`transaction-setwindowalpha.asm`, `transaction-tlv-reader.asm`):
+
+```
+_PKGTransactionContext (as built on the commit stack frame):
+  +0x00  u32  connection id
+  +0x08  *    connection object
+  +0x10  *    op-stream cursor   (shared with the dispatch loop)
+  +0x18  u64  op-stream remaining bytes
+```
+
+Op stream format: `[op-type byte][arg TLVs…]`. The dispatch loop consumes
+the type byte and advances the shared cursor; each handler then decodes
+its own arguments from the same cursor. Arguments are TLV-encoded
+integers (tag byte: ≤0x0f small inline value, else tag>>4 = byte count,
+little-endian, bounds-checked against remaining) or tag-typed payloads
+(e.g. tag 0x48 → inline float32 for the alpha). Window id is always the
+first argument (one TLV; `SetWindowLevel` reads a second TLV for the
+level).
+
+Consequences for the gate shim:
+
+- The shim needs **no stream surgery**: peek the window id by decoding one
+  TLV at `ctx+0x10` (or save/restore the cursor around the shared reader),
+  decide, and either wait-then-forward or forward immediately. The
+  original handler consumes the stream exactly as if unwrapped.
+- One universal shim covers every op; the op type is known from the table
+  slot the shim was installed into.
+- Op 0x58 is an empty slot (zero entry) — reserved/removed; safe to use as
+  a payload-owned slot if ever needed.
+- Note: there is no `PKGTransactionSetWindowBounds`; plain geometry
+  changes flow through `SetWindowOriginRelativeToWindow` (0x41),
+  `MoveWindowWithGroup` (0x16), `SetWindowShape` (0x0b),
+  `Set/ClearWindowLockedBounds` (0x12/0x13), or non-transaction paths.
+
 ## Residual unknowns
 
-- Exact layout of `PKGTransactionContext` (needed for a gate shim to read
-  op arguments: window ids, bounds). Next static step: reconstruct from
-  handler prologues (`PKGTransactionSetWindowBounds` op …, plus the
-  context stores at the head of PKGTransactionCommit).
-- Whether op args are read from the stream by handlers directly (cursor
-  advances 1 byte/op in the dispatch loop, so handlers must consume their
-  own arguments — confirm against a mutator's body).
 - Semantics of the per-op `meta` field (logging name/diversity; not needed
   for dispatch, and `blraaz` authenticates with discriminator 0).
 - Runtime corroboration pending: table bytes + a decoded op entry must be
