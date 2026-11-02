@@ -29,12 +29,17 @@ foreign cocoa {NSApplicationLoad :: proc "c" () -> bool ---}
 foreign sls {
 	SLSMainConnectionID :: proc "c" () -> i32 ---
 	SLSOrderWindow :: proc "c" (connection: i32, window, order, relative: u32) -> i32 ---
+	SLSTransactionCreate :: proc "c" (cid: i32) -> rawptr ---
+	SLSTransactionOrderWindow :: proc "c" (txn: rawptr, window, order, relative: u32) -> i32 ---
+	SLSTransactionCommit :: proc "c" (txn: rawptr, flags: i32) -> i32 ---
 }
 
 main :: proc() {
 	no_hold := false
+	txn_mode := false
 	for arg in os.args[1:] {
 		if arg == "--no-hold" {no_hold = true}
+		if arg == "--txn" {txn_mode = true}
 	}	if !NSApplicationLoad() {
 		fmt.eprintln("FAIL: AppKit initialization")
 		os.exit(1)
@@ -68,6 +73,39 @@ main :: proc() {
 		os.exit(1)
 	}
 	fmt.printf("window=%d\n", number)
+	if txn_mode {
+		// Transaction path: op 0x01 (PKGTransactionOrderWindow) through the
+		// dispatch table, gated by the "thold" command instead of "hold".
+		request := fmt.tprintf("thold %d\n", number)
+		fd := posix.open("/private/tmp/shoji-ws-observer-request", {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
+		if fd < 0 {
+			fmt.eprintln("FAIL: thold request")
+			os.exit(1)
+		}
+		written := posix.write(fd, raw_data(request), uint(len(request)))
+		posix.close(fd)
+		if written != len(request) {
+			fmt.eprintln("FAIL: thold request write")
+			os.exit(1)
+		}
+		time.sleep(500 * time.Millisecond)
+		txn := SLSTransactionCreate(connection)
+		if txn == nil {
+			fmt.eprintln("FAIL: SLSTransactionCreate")
+			os.exit(1)
+		}
+		SLSTransactionOrderWindow(txn, u32(number), 1, 0)
+		if code := SLSTransactionCommit(txn, 1); code != 0 {
+			fmt.eprintf("FAIL: SLSTransactionCommit (%d)\n", code)
+			os.exit(1)
+		}
+		pump(1.2)
+		intrinsics.objc_send(bool, window, "orderOut:", Object(nil))
+		pump(0.25)
+		intrinsics.objc_send(nil, window, "close")
+		fmt.printf("PASS: transaction trigger completed window=%d connection=%d\n", number, connection)
+		os.exit(0)
+	}
 	if no_hold {
 		time.sleep(500 * time.Millisecond)
 	} else {
