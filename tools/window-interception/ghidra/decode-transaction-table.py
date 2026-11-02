@@ -20,9 +20,8 @@ import struct
 import sys
 
 PATH = sys.argv[1] if len(sys.argv) > 1 else 'artifacts/windowserver-26A434/extracted/SkyLight'
-TABLE_VA = 0x1E873D430
+TABLE_VA = int(sys.argv[2], 16) if len(sys.argv) > 2 else 0x1E873D430
 OP_MAX = 0x8C
-TEXT_BASE = 0x187000000
 
 d = open(PATH, 'rb').read()
 ncmds, = struct.unpack_from('<I', d, 16)
@@ -35,6 +34,10 @@ for _ in range(ncmds):
     elif cmd == 0x2:
         symtab = struct.unpack_from('<IIII', d, off + 8)
     off += cmdsize
+
+# Handler pointers decode as IMAGE_BASE | (signed & 0xFFFFFF); derive the
+# base from the image itself instead of hardcoding a per-build value.
+TEXT_BASE = min(va for va, _, _, _ in segs) & ~0xFFFFFF
 
 def va_to_off(va):
     for sva, vs, fo, fs in segs:

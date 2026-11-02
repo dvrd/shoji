@@ -22,14 +22,14 @@ State at planning time (all evidenced, see TOUR.md):
 | --- | --- | --- |
 | A1 | ~~Dispatch analysis of `PKGTransactionCommit`~~ **DONE**: static global table at 0x1e873d430, 140 × 16-byte entries, `blraaz` dispatch, 139/140 ops decoded to `PKGTransactionContext*` handlers (DISPATCH.md). Decision: per-op pointer-swap gates via the table + keep the inline hook for non-transaction ordering | |
 | A2 | ~~Extend hooks to space-switch, surface, geometry channels~~ **DONE** (cctor16, PID 21804): 14 gated ops across all four channels; whole-table verification (139 handlers) at install; ordering revalidated (held=1 717.2 ms), space channel proven (AddWindowToSpace held=1 732.1 ms, held=2 3,003.7 ms); pass-through system traffic clean; geometry/surface ops installed and observed firing unarmed | |
-| A3 | Per-build port pipeline: script extract → analyze → diff model vs previous build | One command produces a "what changed" report for a new macOS build |
+| A3 | ~~Per-build port pipeline~~ **DONE**: `port-build.sh` (carve → identity → entry bytes → table base → op map → model.json, no Ghidra needed) + `diff-build.py` (PORT CLEAN/NEEDED report); self-diff idempotent on 26A434 | |
 
 ## Phase B — From experiment to engineering
 
 | # | Task | Acceptance |
 | --- | --- | --- |
 | B1 | Real IPC replacing the /private/tmp file channel: Mach/XPC, authenticated, versioned, one-shot | Only Shoji's process can issue commands; protocol versioned |
-| B2 | Reentrancy/lock audit of the held call: which WindowServer locks are held during a hold, what stalls, worst case | Written audit; hold redesigned or bounded accordingly |
+| B2 | ~~Reentrancy/lock audit~~ **DONE** (LOCKS.md): concurrency probe proves holds are globally serializing (independent client's op executes ~0.3 ms after hold expiry); design unchanged, holds must be frame-scale not second-scale in production — serialization is the atomicity feature C1 needs | |
 | B3 | Crash-safe lifecycle: watchdog, install-time kill switch (boot arg/env), refuse-and-degrade on unknown builds | Kill switch demonstrated; refusal path tested |
 | B4 | Consent + UX for the WindowServer payload, paralleling the Dock payload story | Documented install/approval flow |
 
