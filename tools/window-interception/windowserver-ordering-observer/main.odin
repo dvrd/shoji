@@ -95,21 +95,14 @@ observer_events: [OBSERVER_EVENTS]Observer_Event
 TGATE_STATUS_PATH :: "/private/tmp/shoji-ws-observer-tgate-26A434.bin"
 TABLE_UNSLID :: 0x1e873d430
 TABLE_OP_MAX :: 0x8c
-GATED_OPS :: [3]u64{0x01, 0x03, 0x06}
+GATED_OPS :: [14]u64{0x01, 0x03, 0x06, 0x0b, 0x18, 0x19, 0x21, 0x22, 0x2a, 0x33, 0x34, 0x35, 0x36, 0x41}
 GATE_EVENT_FLAG :: 0x54474154 // 'TGAT'
 
 Gate_Expected_Op :: struct {
 	op:     u64,
 	unslid: u64,
 }
-gate_expected_ops := [?]Gate_Expected_Op{
-	{0x01, 0x187451cbc},
-	{0x02, 0x187451dc8},
-	{0x03, 0x187451ed0},
-	{0x06, 0x1874522b4},
-	{0x33, 0x187455b64},
-	{0x36, 0x187456004},
-}
+// gate_expected_ops (all 139 named ops) lives in gate_expected.odin.
 
 Tgate_Status :: struct {
 	magic:                                        [8]u8,

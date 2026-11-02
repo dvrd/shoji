@@ -325,7 +325,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/windowserver-ordering-observer -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor15.dylib"'
+      - '{{.ODIN_ARM64E}} build tools/window-interception/windowserver-ordering-observer -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor16.dylib"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-observer.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-observer.dylib'
   build:windowserver-ordering-trigger:
