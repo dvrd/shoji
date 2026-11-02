@@ -105,6 +105,13 @@ Consequences for the gate shim:
 
 - Semantics of the per-op `meta` field (logging name/diversity; not needed
   for dispatch, and `blraaz` authenticates with discriminator 0).
-- Runtime corroboration pending: table bytes + a decoded op entry must be
-  verified in the live WindowServer before any patch, per the standing
-  gate discipline.
+- ~~Runtime corroboration pending~~ **Done (cctor15, PID 97890)**: all six
+  sampled handlers authenticated via `autiza` and matched the static map;
+  ops 0x01/0x03/0x06 swapped for signed stubs; gated hold 765.5 ms
+  (`held=1`), timeout 3,002.4 ms against the 3.000 s deadline (`held=2`),
+  unarmed system traffic forwarded unmodified. One failure preserved:
+  cctor14 crashed WindowServer on a stub literal-offset bug (pad word at
+  the `ldr` target); fixed layout is fixture-tested
+  (`abi-selftest/gate_stub_fixture.c`). Visibility correlation for the
+  transaction channel is a follow-up; the txn-ordered trigger window does
+  not become visible without AppKit-level ordering.
