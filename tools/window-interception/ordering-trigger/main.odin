@@ -29,17 +29,22 @@ foreign cocoa {NSApplicationLoad :: proc "c" () -> bool ---}
 foreign sls {
 	SLSMainConnectionID :: proc "c" () -> i32 ---
 	SLSOrderWindow :: proc "c" (connection: i32, window, order, relative: u32) -> i32 ---
+	SLSGetActiveSpace :: proc "c" (cid: i32) -> u64 ---
 	SLSTransactionCreate :: proc "c" (cid: i32) -> rawptr ---
 	SLSTransactionOrderWindow :: proc "c" (txn: rawptr, window, order, relative: u32) -> i32 ---
+	SLSTransactionAddWindowToSpace :: proc "c" (txn: rawptr, window: u32, space: u64) -> i32 ---
+	SLSTransactionRemoveWindowFromSpace :: proc "c" (txn: rawptr, window: u32, space: u64) -> i32 ---
 	SLSTransactionCommit :: proc "c" (txn: rawptr, flags: i32) -> i32 ---
 }
 
 main :: proc() {
 	no_hold := false
 	txn_mode := false
+	txn_space := false
 	for arg in os.args[1:] {
 		if arg == "--no-hold" {no_hold = true}
 		if arg == "--txn" {txn_mode = true}
+		if arg == "--txn-space" {txn_mode = true; txn_space = true}
 	}	if !NSApplicationLoad() {
 		fmt.eprintln("FAIL: AppKit initialization")
 		os.exit(1)
@@ -96,7 +101,17 @@ main :: proc() {
 			fmt.eprintln("FAIL: SLSTransactionCreate")
 			os.exit(1)
 		}
-		SLSTransactionOrderWindow(txn, u32(number), 1, 0)
+		if txn_space {
+			space := SLSGetActiveSpace(connection)
+			if space == 0 {
+				fmt.eprintln("FAIL: SLSGetActiveSpace")
+				os.exit(1)
+			}
+			// Space channel: op 0x18 (PKGTransactionAddWindowToSpace).
+			SLSTransactionAddWindowToSpace(txn, u32(number), space)
+		} else {
+			SLSTransactionOrderWindow(txn, u32(number), 1, 0)
+		}
 		// Return value is not an error code (reads as garbage); success is
 		// judged from observer events, not this register.
 		_ = SLSTransactionCommit(txn, 1)
