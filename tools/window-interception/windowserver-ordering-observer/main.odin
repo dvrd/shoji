@@ -111,12 +111,142 @@ Tgate_Status :: struct {
 	verify_failed_op, expected_raw, observed_raw: u64,
 	entries_written, threads, stubs:              u64,
 	protect_code:                                 i64,
+	mach_port, owner_pid:                         u64,
+	mach_code:                                    i64,
 }
 
 gate_originals: [TABLE_OP_MAX + 1]u64
 gate_stubs: u64
 gate_hold_target: u64
 gate_hold_remaining, gate_hold_release: u32
+
+// Mach gate service (B1). The service port is registered with the bootstrap
+// server; commands are accepted only from the registered owner process,
+// identified by audit-token pid + pidversion (first HELLO wins).
+gate_mach_port: u32
+gate_mach_register_code: i32
+gate_owner_pid, gate_owner_pidversion: u32
+gate_last_status: Tgate_Status
+
+gate_register_service :: proc(task: u32) {
+	if code := hook.gate_mach_port_allocate(task, hook.MACH_PORT_RIGHT_RECEIVE, &gate_mach_port); code != 0 {
+		gate_mach_register_code = code
+		return
+	}
+	bootstrap := loader.dlopen("/usr/lib/system/libsystem_bootstrap.dylib", 2)
+	if bootstrap == nil {
+		gate_mach_register_code = -1
+		return
+	}
+	bp_ptr := (^u32)(loader.raw_symbol(bootstrap, "bootstrap_port"))
+	if bp_ptr == nil {
+		gate_mach_register_code = -2
+		return
+	}
+	gate_mach_register_code = hook.gate_bootstrap_register(bp_ptr^, hook.GATE_SERVICE_NAME, gate_mach_port)
+}
+
+// Reply to a received request: the client's send-once reply right sits in
+// the received header's local_port slot.
+gate_reply :: proc(buffer: ^[128]u8, command: u32, status: i32, data0, data1: u64) {
+	reply_right := (^u32)(uintptr(buffer) + 12)^
+	if reply_right == 0 {return}
+	(^u32)(uintptr(buffer) + 0)^ = hook.MACH_MSG_TYPE_MOVE_SEND_ONCE // bits
+	(^u32)(uintptr(buffer) + 4)^ = hook.GATE_MSG_SIZE
+	(^u32)(uintptr(buffer) + 8)^ = reply_right
+	(^u32)(uintptr(buffer) + 12)^ = 0
+	(^u32)(uintptr(buffer) + 16)^ = 0
+	(^u32)(uintptr(buffer) + hook.GATE_OFF_MAGIC)^ = hook.GATE_REPLY_MAGIC
+	(^u32)(uintptr(buffer) + hook.GATE_OFF_VERSION)^ = hook.GATE_VERSION
+	(^u32)(uintptr(buffer) + hook.GATE_OFF_COMMAND)^ = command
+	(^i32)(uintptr(buffer) + hook.GATE_OFF_COMMAND + 4)^ = status
+	(^u64)(uintptr(buffer) + hook.GATE_OFF_ARG0)^ = data0
+	(^u64)(uintptr(buffer) + hook.GATE_OFF_ARG1)^ = data1
+	hook.gate_mach_msg(buffer, hook.MACH_MSG_SEND, hook.GATE_MSG_SIZE, 0, 0, 0, 0)
+}
+
+gate_handle_message :: proc(buffer: ^[128]u8) {
+	base := uintptr(buffer)
+	magic := (^u32)(base + hook.GATE_OFF_MAGIC)^
+	version := (^u32)(base + hook.GATE_OFF_VERSION)^
+	command := (^u32)(base + hook.GATE_OFF_COMMAND)^
+	arg0 := (^u64)(base + hook.GATE_OFF_ARG0)^
+	arg1 := (^u64)(base + hook.GATE_OFF_ARG1)^
+	if magic != hook.GATE_MAGIC || version != hook.GATE_VERSION {
+		gate_reply(buffer, command, 1, 0, 0)
+		return
+	}
+	token := (^hook.Audit_Token)(base + hook.GATE_MSG_SIZE)
+	pid := hook.gate_audit_pid(token)
+	pidversion := hook.gate_audit_pidversion(token)
+	if command == u32(hook.Gate_Command.Hello) {
+		if gate_owner_pid == 0 {
+			gate_owner_pid = pid
+			gate_owner_pidversion = pidversion
+		}
+		status := i32(0)
+		if gate_owner_pid != pid {status = 3}
+		gate_reply(buffer, command, status, u64(gate_owner_pid), u64(arg0))
+		return
+	}
+	if gate_owner_pid == 0 || pid != gate_owner_pid || pidversion != gate_owner_pidversion {
+		gate_reply(buffer, command, 4, u64(gate_owner_pid), 0)
+		return
+	}
+	switch hook.Gate_Command(command) {
+	case .Arm:
+		if arg1 & 1 != 0 {
+			intrinsics.atomic_store_explicit(&observer_hold_target, arg0, .Release)
+			intrinsics.atomic_store_explicit(&observer_hold_release, 0, .Release)
+			intrinsics.atomic_store_explicit(&observer_hold_remaining, 1, .Release)
+		}
+		if arg1 & 2 != 0 {
+			intrinsics.atomic_store_explicit(&gate_hold_target, arg0, .Release)
+			intrinsics.atomic_store_explicit(&gate_hold_release, 0, .Release)
+			intrinsics.atomic_store_explicit(&gate_hold_remaining, 1, .Release)
+		}
+		gate_reply(buffer, command, 0, arg0, arg1)
+	case .Release:
+		intrinsics.atomic_store_explicit(&observer_hold_release, 1, .Release)
+		intrinsics.atomic_store_explicit(&gate_hold_release, 1, .Release)
+		gate_reply(buffer, command, 0, 0, 0)
+	case .Status:
+		calls := intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
+		gate_reply(buffer, command, 0, calls, u64(gate_owner_pid))
+	case .Dump:
+		write_dump()
+		gate_reply(buffer, command, 0, intrinsics.atomic_load_explicit(&observer_calls, .Acquire), 0)
+	case .Hello:
+		gate_reply(buffer, command, 5, 0, 0)
+	}
+}
+
+write_dump :: proc() {
+	response: Observer_Response
+	response.magic = {'W', 'S', 'O', 'B', 'S', 'E', 'R', 'V'}
+	response.version = 3
+	response.calls = intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
+	response.entry = observer_entry
+	response.branch_word = u64(observer_branch)
+	response.timebase_numer = observer_timebase.numer
+	response.timebase_denom = observer_timebase.denom
+	for index in 0 ..< OBSERVER_EVENTS {
+		src := &observer_events[index]
+		dst := &response.events[index]
+		consistent := false
+		for _ in 0 ..< 8 {
+			first := intrinsics.atomic_load_explicit(&src.sequence, .Acquire)
+			if first == 0 {dst^ = {}; consistent = true; break}
+			dst^ = src^
+			if intrinsics.atomic_load_explicit(&src.sequence, .Acquire) == first {consistent = true; break}
+		}
+		if !consistent {
+			dst^ = {}
+			response.torn += 1
+		}
+	}
+	write_file_atomic(RESPONSE_PATH, &response, size_of(response))
+}
 
 // Call a PAC-signed handler (key A, discriminator 0) with the context in x0.
 gate_call_handler :: asm(handler: u64, ctx: rawptr) -> (result: u64) [
@@ -221,9 +351,10 @@ gate_write_stub :: proc(slot: u64, op, impl: u64) {
 install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32, deallocate: hook.Deallocate, protect: Mach_Protect, page_size: u64) {
 	result := Tgate_Status {
 		magic = {'W', 'S', 'O', 'B', 'T', 'G', 'A', 'T'},
-		version = 1,
+		version = 2,
 		status = 1,
 	}
+	defer gate_last_status = result
 	defer write_file(TGATE_STATUS_PATH, &result, size_of(result))
 	result.table_unslid = TABLE_UNSLID
 	result.slide = slide
@@ -401,10 +532,22 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 	// The request file persists after handling and this process cannot unlink
 	// it (sticky directory, owned by the desktop user). Process each distinct
 	// command once instead of re-executing a stale file every poll; a leftover
-	// "hold" file otherwise re-arms the gate after the claim completes.
+	// "hold" file otherwise re-arms the gate after the claim completes. The
+	// Mach service (B1) is the primary channel; the file channel remains as a
+	// fallback for the existing experiment scripts.
 	last: [32]u8
 	last_n := -1
+	buffer: [128]u8
 	for {
+		if gate_mach_port != 0 {
+			options := u32(hook.MACH_MSG_RECEIVE) |
+				u32(hook.MACH_MSG_TRAILER_FORMAT_0 << 28) |
+				u32(hook.MACH_RCV_TRAILER_AUDIT << 24)
+			code := hook.gate_mach_msg(&buffer[0], options, 0, len(buffer), gate_mach_port, 10, 0)
+			if code == 0 {
+				gate_handle_message(&buffer)
+			}
+		}
 		fd := posix.open(REQUEST_PATH, {.NOFOLLOW, .NONBLOCK})
 		if fd >= 0 {
 			info: posix.stat_t
@@ -429,36 +572,7 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 				for index in 0 ..< n {last[index] = request[index]}
 			}
 			if valid && !unchanged && n >= 5 && string(request[:5]) == "dump\n" {
-				response: Observer_Response
-				response.magic = {'W', 'S', 'O', 'B', 'S', 'E', 'R', 'V'}
-				response.version = 3
-				response.calls = intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
-				response.entry = observer_entry
-				response.branch_word = u64(observer_branch)
-				response.timebase_numer = observer_timebase.numer
-				response.timebase_denom = observer_timebase.denom
-				// Seqlock per event: the writer zeroes the slot, fills it, then
-				// publishes the sequence. Retry on instability; drop and count
-				// events that never settle instead of exporting torn data.
-				for index in 0 ..< OBSERVER_EVENTS {
-					src := &observer_events[index]
-					dst := &response.events[index]
-					consistent := false
-					for _ in 0 ..< 8 {
-						first := intrinsics.atomic_load_explicit(&src.sequence, .Acquire)
-						if first == 0 {dst^ = {}; consistent = true; break}
-						dst^ = src^
-						if intrinsics.atomic_load_explicit(&src.sequence, .Acquire) == first {
-							consistent = true
-							break
-						}
-					}
-					if !consistent {
-						dst^ = {}
-						response.torn += 1
-					}
-				}
-				write_file_atomic(RESPONSE_PATH, &response, size_of(response))
+				write_dump()
 			} else if valid && !unchanged && n >= 8 && string(request[:8]) == "release\n" {
 				intrinsics.atomic_store_explicit(&observer_hold_release, 1, .Release)
 				intrinsics.atomic_store_explicit(&gate_hold_release, 1, .Release)
@@ -498,7 +612,7 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 				}
 			}
 		}
-		usleep(1_000)
+		if gate_mach_port == 0 {usleep(1_000)}
 	}
 }
 
@@ -688,6 +802,10 @@ install_observer :: proc() {
 		return
 	}
 	install_transaction_gate(task, location.slide, allocate, deallocate, protect, page_size)
+	gate_register_service(task)
+	gate_last_status.mach_port = u64(gate_mach_port)
+	gate_last_status.mach_code = i64(gate_mach_register_code)
+	write_file(TGATE_STATUS_PATH, &gate_last_status, size_of(gate_last_status))
 	thread: posix.pthread_t
 	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(loader.sign_function(u64(uintptr(rawptr(control_thread)))))
 	thread_result := posix.pthread_create(&thread, nil, worker, nil)
