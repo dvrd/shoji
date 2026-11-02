@@ -113,7 +113,12 @@ Tgate_Status :: struct {
 	protect_code:                                 i64,
 	mach_port, owner_pid:                         u64,
 	mach_code:                                    i64,
+	bootstrap_port, handshake_sent:               u64,
 }
+
+// Unslid address of _WSCurrentSessionBootstrapPort in 26A434 SkyLight; the
+// bootstrap_port global is not the session port inside WindowServer.
+WS_SESSION_BP_UNSLID :: 0x1872b4afc
 
 gate_originals: [TABLE_OP_MAX + 1]u64
 gate_stubs: u64
@@ -132,7 +137,7 @@ gate_bootstrap_port: u32
 gate_service_send: u32
 gate_handshake_sent: u32
 
-gate_register_service :: proc(task: u32) {
+gate_register_service :: proc(task: u32, slide: u64) {
 	// Reversed rendezvous: launchd on macOS 27 denies bootstrap_register to
 	// WindowServer (1100 BOOTSTRAP_NOT_PRIVILEGED), so the client registers
 	// GATE_RENDEZVOUS_NAME and the payload hands over a send right through a
@@ -146,17 +151,16 @@ gate_register_service :: proc(task: u32) {
 		return
 	}
 	gate_service_send = gate_mach_port
-	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
-	if kernel == nil {
-		gate_mach_register_code = -1
-		return
-	}
-	bp_ptr := (^u32)(loader.raw_symbol(kernel, "bootstrap_port"))
-	if bp_ptr == nil {
+	// WindowServer's bootstrap_port global is not the user-session bootstrap;
+	// SkyLight resolves it via _WSCurrentSessionBootstrapPort (session object
+	// chain, +0x64 port field). Call it through the same image we hooked.
+	session_bp := transmute(proc "c" () -> u32)uintptr(WS_SESSION_BP_UNSLID + slide)
+	port := session_bp()
+	if port == 0 {
 		gate_mach_register_code = -2
 		return
 	}
-	gate_bootstrap_port = bp_ptr^
+	gate_bootstrap_port = port
 	gate_mach_register_code = 0
 }
 
@@ -248,7 +252,8 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 		gate_reply(buffer, command, 0, 0, 0)
 	case .Status:
 		calls := intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
-		gate_reply(buffer, command, 0, calls, u64(gate_owner_pid))
+		state := u64(gate_handshake_sent) << 32 | u64(gate_owner_pid)
+		gate_reply(buffer, command, 0, calls, state)
 	case .Dump:
 		write_dump()
 		gate_reply(buffer, command, 0, intrinsics.atomic_load_explicit(&observer_calls, .Acquire), 0)
@@ -840,9 +845,10 @@ install_observer :: proc() {
 		return
 	}
 	install_transaction_gate(task, location.slide, allocate, deallocate, protect, page_size)
-	gate_register_service(task)
+	gate_register_service(task, location.slide)
 	gate_last_status.mach_port = u64(gate_mach_port)
 	gate_last_status.mach_code = i64(gate_mach_register_code)
+	gate_last_status.bootstrap_port = u64(gate_bootstrap_port)
 	write_file(TGATE_STATUS_PATH, &gate_last_status, size_of(gate_last_status))
 	thread: posix.pthread_t
 	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(loader.sign_function(u64(uintptr(rawptr(control_thread)))))
