@@ -97,10 +97,9 @@ main :: proc() {
 			os.exit(1)
 		}
 		SLSTransactionOrderWindow(txn, u32(number), 1, 0)
-		if code := SLSTransactionCommit(txn, 1); code != 0 {
-			fmt.eprintf("FAIL: SLSTransactionCommit (%d)\n", code)
-			os.exit(1)
-		}
+		// Return value is not an error code (reads as garbage); success is
+		// judged from observer events, not this register.
+		_ = SLSTransactionCommit(txn, 1)
 		pump(1.2)
 		intrinsics.objc_send(bool, window, "orderOut:", Object(nil))
 		pump(0.25)

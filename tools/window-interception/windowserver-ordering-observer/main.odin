@@ -213,14 +213,16 @@ gate_shim_impl :: proc "c" (ctx: rawptr, op: u64) -> u64 {
 }
 
 // Per-op entry stubs: set w1 = op id, then branch to the universal shim.
-// Layout per 24-byte slot: movz w1, #op; ldr x16, #8; br x16; pad; .quad impl
+// Layout per 20-byte slot: movz w1, #op; ldr x16, #8; br x16; .quad impl.
+// The ldr sits at +4, so its literal pool entry is at +12 (PC+8), not +16:
+// a pad there previously made the stub branch to impl_low32<<32 and crashed
+// WindowServer (PID 97568, 2026-11-01 19:30).
 gate_write_stub :: proc(slot: u64, op, impl: u64) {
 	words := ([^]u32)(uintptr(slot))
 	words[0] = 0x52800001 | u32(op << 5) // movz w1, #op
-	words[1] = 0x58000050 // ldr x16, #8 (literal, from this instruction)
+	words[1] = 0x58000050 // ldr x16, #8 → slot+12
 	words[2] = 0xD61F0200 // br x16
-	words[3] = 0
-	(^u64)(uintptr(slot) + 16)^ = impl
+	(^u64)(uintptr(slot) + 12)^ = impl
 }
 
 install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32, deallocate: hook.Deallocate, protect: Mach_Protect, page_size: u64) {
