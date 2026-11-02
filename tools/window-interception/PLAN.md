@@ -20,7 +20,7 @@ State at planning time (all evidenced, see TOUR.md):
 
 | # | Task | Acceptance |
 | --- | --- | --- |
-| A1 | **Dispatch analysis of `PKGTransactionCommit`**: find how commit invokes mutators (op table / vtable / jump table), locate the table, verify mutator addresses | Table location + mechanism recorded; decision: one-seam vs per-family hooks |
+| A1 | ~~Dispatch analysis of `PKGTransactionCommit`~~ **DONE**: static global table at 0x1e873d430, 140 × 16-byte entries, `blraaz` dispatch, 139/140 ops decoded to `PKGTransactionContext*` handlers (DISPATCH.md). Decision: per-op pointer-swap gates via the table + keep the inline hook for non-transaction ordering | |
 | A2 | Extend hooks to space-switch, surface, geometry channels (order: geometry first — Shoji's core pain) | Each channel: Ghidra model, fixture, barrier install, held/unheld evidence like the ordering gate |
 | A3 | Per-build port pipeline: script extract → analyze → diff model vs previous build | One command produces a "what changed" report for a new macOS build |
 

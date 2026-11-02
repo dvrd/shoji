@@ -64,14 +64,13 @@ directly.
   (intra-space z-order). This matches the live evidence: our held window
   stayed invisible because its ordering call was held.
 - A presentation gate with broad coverage must also cover **space switches**,
-  **surface bind/opacity/bounds**, and **window bounds/transform** — either
-  by hooking each mutator family (fine-grained, many hooks) or by
-  intercepting the **commit path** (one seam, all transactions; coarser and
-  reentrancy-critical).
-- Next static step before choosing: disassemble `PKGTransactionCommit` to
-  identify the dispatch mechanism (vtable/op-table) and confirm whether a
-  single seam can observe all mutators, or whether per-family hooks are
-  required. Indirect flows remain unknown until then.
+  **surface bind/opacity/bounds**, and **window bounds/transform**.
+- Resolved (see `DISPATCH.md`): dispatch is a static global table at
+  0x1e873d430, 140 × 16-byte entries indexed by op type, handlers called
+  via `blraaz`. All handlers share the `(PKGTransactionContext*)`
+  signature, so a generic per-op gate shim can wrap any subset — a pointer
+  swap per op instead of inline patching. Ordering outside transactions
+  (`__XOrderWindow`) still needs the existing inline hook.
 - The pixel-level question (does the compositor present frames around the
   ordering hold?) is being answered separately with ScreenCaptureKit
   (`tools/harness/capture-probe`), pending guest Screen Recording consent.
