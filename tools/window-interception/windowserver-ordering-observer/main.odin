@@ -578,6 +578,7 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 		if gate_mach_port != 0 {
 			gate_try_handshake()
 			options := u32(hook.MACH_MSG_RECEIVE) |
+				u32(hook.MACH_RCV_TIMEOUT) |
 				u32(hook.MACH_MSG_TRAILER_FORMAT_0 << 28) |
 				u32(hook.MACH_RCV_TRAILER_AUDIT << 24)
 			code := hook.gate_mach_msg(&buffer[0], options, 0, len(buffer), gate_mach_port, 10, 0)

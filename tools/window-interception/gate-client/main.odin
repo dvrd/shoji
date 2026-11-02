@@ -81,7 +81,7 @@ main :: proc() {
 		os.exit(1)
 	}
 	handshake: [128]u8
-	hcode := hook.gate_mach_msg(&handshake[0], hook.MACH_MSG_RECEIVE, 0, len(handshake), rendezvous, 3000, 0)
+	hcode := hook.gate_mach_msg(&handshake[0], hook.MACH_MSG_RECEIVE | hook.MACH_RCV_TIMEOUT, 0, len(handshake), rendezvous, 3000, 0)
 	hook.gate_mach_port_deallocate(task, rendezvous)
 	if hcode != 0 {
 		fmt.eprintf("FAIL: handshake receive (%#x); is the observer payload installed?\n", u32(hcode))
@@ -115,7 +115,7 @@ main :: proc() {
 	put64(&msg, hook.GATE_OFF_ARG0, arg0)
 	put64(&msg, hook.GATE_OFF_ARG1, arg1)
 
-	options := u32(hook.MACH_MSG_SEND) | u32(hook.MACH_MSG_RECEIVE)
+	options := u32(hook.MACH_MSG_SEND) | u32(hook.MACH_MSG_RECEIVE) | u32(hook.MACH_RCV_TIMEOUT)
 	code := hook.gate_mach_msg(&msg[0], options, hook.GATE_MSG_SIZE, len(msg), reply, 1000, 0)
 	if code != 0 {
 		fmt.eprintf("FAIL: mach_msg (%#x)\n", u32(code))
