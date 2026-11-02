@@ -39,9 +39,12 @@ shows.
   ColorSpace/Resolution/LayerBackingOptions`, `PKGTransactionOrderSurface`,
   `_CGXActivateSurfaces`, `_CGXCompleteSurfaces`. Content presentation lives
   here; opacity and surface bounds change with no ordering call.
-- **Window geometry** — `PKGTransactionSetWindowBounds`, `…LockedBounds`,
-  `SetWindowTransform`, `SetWindowTransform3D`, `SetWindowBoundsPath`.
-  Moving/resizing never reorders.
+- **Window geometry** — `SetWindowOriginRelativeToWindow`,
+  `Set/ClearWindowLockedBounds`, `SetWindowTransform`,
+  `SetWindowTransform3D`, `SetWindowBoundsPath`, `SetWindowShape`.
+  Moving/resizing never reorders. (An earlier draft named a single
+  `PKGTransactionSetWindowBounds` op; none exists on this build — see
+  `DISPATCH.md` for the authoritative op map.)
 
 Plus direct visibility bookkeeping: `PKGTransactionSetGlobalVisibleWindowList`,
 `CGXPackagesNoteWindowIsVisible`, `…AddVisibleWindowCount`.
