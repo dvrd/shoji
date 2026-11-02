@@ -133,12 +133,15 @@ gate_register_service :: proc(task: u32) {
 		gate_mach_register_code = code
 		return
 	}
-	bootstrap := loader.dlopen("/usr/lib/system/libsystem_bootstrap.dylib", 2)
-	if bootstrap == nil {
+	// bootstrap_register/look_up are exported by libxpc on macOS 27; the
+	// bootstrap_port global lives in libsystem_kernel. libsystem_bootstrap
+	// no longer exists as an image in this cache.
+	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	if kernel == nil {
 		gate_mach_register_code = -1
 		return
 	}
-	bp_ptr := (^u32)(loader.raw_symbol(bootstrap, "bootstrap_port"))
+	bp_ptr := (^u32)(loader.raw_symbol(kernel, "bootstrap_port"))
 	if bp_ptr == nil {
 		gate_mach_register_code = -2
 		return
