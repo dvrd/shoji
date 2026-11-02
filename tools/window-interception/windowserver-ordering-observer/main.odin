@@ -128,14 +128,24 @@ gate_mach_register_code: i32
 gate_owner_pid, gate_owner_pidversion: u32
 gate_last_status: Tgate_Status
 
+gate_bootstrap_port: u32
+gate_service_send: u32
+gate_handshake_sent: u32
+
 gate_register_service :: proc(task: u32) {
+	// Reversed rendezvous: launchd on macOS 27 denies bootstrap_register to
+	// WindowServer (1100 BOOTSTRAP_NOT_PRIVILEGED), so the client registers
+	// GATE_RENDEZVOUS_NAME and the payload hands over a send right through a
+	// port-descriptor handshake. See mach.odin.
 	if code := hook.gate_mach_port_allocate(task, hook.MACH_PORT_RIGHT_RECEIVE, &gate_mach_port); code != 0 {
 		gate_mach_register_code = code
 		return
 	}
-	// bootstrap_register/look_up are exported by libxpc on macOS 27; the
-	// bootstrap_port global lives in libsystem_kernel. libsystem_bootstrap
-	// no longer exists as an image in this cache.
+	if code := hook.gate_mach_port_insert_right(task, gate_mach_port, gate_mach_port, hook.MACH_MSG_TYPE_MAKE_SEND); code != 0 {
+		gate_mach_register_code = code
+		return
+	}
+	gate_service_send = gate_mach_port
 	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {
 		gate_mach_register_code = -1
@@ -146,7 +156,30 @@ gate_register_service :: proc(task: u32) {
 		gate_mach_register_code = -2
 		return
 	}
-	gate_mach_register_code = hook.gate_bootstrap_register(bp_ptr^, hook.GATE_SERVICE_NAME, gate_mach_port)
+	gate_bootstrap_port = bp_ptr^
+	gate_mach_register_code = 0
+}
+
+// Poll for the client-registered rendezvous and hand over the send right.
+gate_try_handshake :: proc() {
+	if gate_bootstrap_port == 0 || intrinsics.atomic_load_explicit(&gate_handshake_sent, .Acquire) != 0 {return}
+	client: u32
+	if hook.gate_bootstrap_look_up(gate_bootstrap_port, hook.GATE_RENDEZVOUS_NAME, &client) != 0 {return}
+	message: [128]u8
+	base := uintptr(&message[0])
+	(^u32)(base + 0)^ = hook.MACH_MSGH_BITS_COMPLEX | hook.MACH_MSG_TYPE_COPY_SEND
+	(^u32)(base + 4)^ = hook.GATE_HEADER_SIZE + size_of(hook.Gate_Port_Descriptor)
+	(^u32)(base + 8)^ = client
+	(^u32)(base + 12)^ = 0
+	(^u32)(base + 16)^ = 0
+	(^u32)(base + 20)^ = 7
+	descriptor := (^hook.Gate_Port_Descriptor)(base + hook.GATE_HEADER_SIZE)
+	descriptor.name = gate_service_send
+	descriptor.disposition = hook.MACH_MSG_TYPE_COPY_SEND
+	descriptor.type = hook.MACH_MSG_PORT_DESCRIPTOR
+	if hook.gate_mach_msg(&message[0], hook.MACH_MSG_SEND, hook.GATE_HEADER_SIZE + size_of(hook.Gate_Port_Descriptor), 0, 0, 0, 0) == 0 {
+		intrinsics.atomic_store_explicit(&gate_handshake_sent, 1, .Release)
+	}
 }
 
 // Reply to a received request: the client's send-once reply right sits in
@@ -543,6 +576,7 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 	buffer: [128]u8
 	for {
 		if gate_mach_port != 0 {
+			gate_try_handshake()
 			options := u32(hook.MACH_MSG_RECEIVE) |
 				u32(hook.MACH_MSG_TRAILER_FORMAT_0 << 28) |
 				u32(hook.MACH_RCV_TRAILER_AUDIT << 24)

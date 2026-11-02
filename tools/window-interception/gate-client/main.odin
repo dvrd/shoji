@@ -68,12 +68,31 @@ main :: proc() {
 		fmt.eprintln("FAIL: dlsym bootstrap_port")
 		os.exit(1)
 	}
-	service: u32
-	if code := hook.gate_bootstrap_look_up(bp_ptr^, hook.GATE_SERVICE_NAME, &service); code != 0 {
-		fmt.eprintf("FAIL: service lookup %s (%d)\n", hook.GATE_SERVICE_NAME, code)
+	task := client_mach_task_self()
+	// Reversed rendezvous: register the rendezvous service, then wait for the
+	// payload to hand over a send right to its gate port via a descriptor.
+	rendezvous: u32
+	if code := hook.gate_mach_port_allocate(task, hook.MACH_PORT_RIGHT_RECEIVE, &rendezvous); code != 0 {
+		fmt.eprintf("FAIL: rendezvous allocate (%d)\n", code)
 		os.exit(1)
 	}
-	task := client_mach_task_self()
+	if code := hook.gate_bootstrap_register(bp_ptr^, hook.GATE_RENDEZVOUS_NAME, rendezvous); code != 0 {
+		fmt.eprintf("FAIL: rendezvous register (%d); another client holding it?\n", code)
+		os.exit(1)
+	}
+	handshake: [128]u8
+	hcode := hook.gate_mach_msg(&handshake[0], hook.MACH_MSG_RECEIVE, 0, len(handshake), rendezvous, 3000, 0)
+	hook.gate_mach_port_deallocate(task, rendezvous)
+	if hcode != 0 {
+		fmt.eprintf("FAIL: handshake receive (%#x); is the observer payload installed?\n", u32(hcode))
+		os.exit(1)
+	}
+	descriptor := (^hook.Gate_Port_Descriptor)(uintptr(&handshake[0]) + hook.GATE_HEADER_SIZE)
+	service := descriptor.name
+	if service == 0 {
+		fmt.eprintln("FAIL: handshake carried no send right")
+		os.exit(1)
+	}
 	reply: u32
 	if code := hook.gate_mach_port_allocate(task, hook.MACH_PORT_RIGHT_RECEIVE, &reply); code != 0 {
 		fmt.eprintf("FAIL: reply port allocate (%d)\n", code)

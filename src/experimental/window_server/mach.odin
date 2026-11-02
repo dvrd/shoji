@@ -43,6 +43,23 @@ MACH_PORT_RIGHT_SEND_ONCE :: 4
 MACH_RCV_TIMED_OUT :: 0x10004003
 MACH_MSG_TRAILER_FORMAT_0 :: 0
 MACH_RCV_TRAILER_AUDIT :: 3
+MACH_MSGH_BITS_COMPLEX :: 0x80000000
+MACH_MSG_TYPE_MAKE_SEND :: 20
+MACH_MSG_PORT_DESCRIPTOR :: 0
+
+// mach_msg_port_descriptor_t: name, pad1, pad2(u16), disposition(u8), type(u8)
+Gate_Port_Descriptor :: struct #packed {
+	name:        u32,
+	pad1:        u32,
+	pad2:        u16,
+	disposition: u8,
+	type:        u8,
+}
+
+// Reversed rendezvous (macOS 27 launchd denies bootstrap_register to
+// WindowServer): the client registers this service; the payload looks it up
+// and hands over a send right to its gate port via a port descriptor.
+GATE_RENDEZVOUS_NAME :: "com.shoji.gate.rendezvous"
 
 @(default_calling_convention = "c")
 foreign system {
