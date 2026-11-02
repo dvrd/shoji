@@ -76,17 +76,19 @@ main :: proc() {
 	if txn_mode {
 		// Transaction path: op 0x01 (PKGTransactionOrderWindow) through the
 		// dispatch table, gated by the "thold" command instead of "hold".
-		request := fmt.tprintf("thold %d\n", number)
-		fd := posix.open("/private/tmp/shoji-ws-observer-request", {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
-		if fd < 0 {
-			fmt.eprintln("FAIL: thold request")
-			os.exit(1)
-		}
-		written := posix.write(fd, raw_data(request), uint(len(request)))
-		posix.close(fd)
-		if written != len(request) {
-			fmt.eprintln("FAIL: thold request write")
-			os.exit(1)
+		if !no_hold {
+			request := fmt.tprintf("thold %d\n", number)
+			fd := posix.open("/private/tmp/shoji-ws-observer-request", {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
+			if fd < 0 {
+				fmt.eprintln("FAIL: thold request")
+				os.exit(1)
+			}
+			written := posix.write(fd, raw_data(request), uint(len(request)))
+			posix.close(fd)
+			if written != len(request) {
+				fmt.eprintln("FAIL: thold request write")
+				os.exit(1)
+			}
 		}
 		time.sleep(500 * time.Millisecond)
 		txn := SLSTransactionCreate(connection)
