@@ -56,12 +56,14 @@ main :: proc() {
 		os.exit(2)
 	}
 
-	bootstrap := dlopen("/usr/lib/system/libsystem_bootstrap.dylib", 2)
-	if bootstrap == nil {
-		fmt.eprintln("FAIL: dlopen libsystem_bootstrap")
+	// bootstrap_register/look_up are exported by libxpc on macOS 27; the
+	// bootstrap_port global lives in libsystem_kernel.
+	kernel := dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	if kernel == nil {
+		fmt.eprintln("FAIL: dlopen libsystem_kernel")
 		os.exit(1)
 	}
-	bp_ptr := (^u32)(dlsym(bootstrap, "bootstrap_port"))
+	bp_ptr := (^u32)(dlsym(kernel, "bootstrap_port"))
 	if bp_ptr == nil {
 		fmt.eprintln("FAIL: dlsym bootstrap_port")
 		os.exit(1)
