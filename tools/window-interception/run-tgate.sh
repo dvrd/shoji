@@ -1,17 +1,18 @@
 #!/bin/sh
 # Transaction-gate experiment on the disposable guest.
-# usage: run-tgate.sh TAG [--no-hold | --timeout]
+# usage: run-tgate.sh TAG [--no-hold | --timeout] [--txn | --txn-space]
 G=/Users/Shared/shoji-ws-observer.Qwiazd
 TAG=$1
 MODE=$2
+TRIG=${3:---txn}
 OUT=/tmp/shoji-tgate-$TAG
-echo "run_tag=$TAG mode=${MODE:-hold}"
+echo "run_tag=$TAG mode=${MODE:-hold} trig=$TRIG"
 echo "guest_start=$(date +%s.%N)"
 echo "dump" > /private/tmp/shoji-ws-observer-request
 sleep 0.2
 case "$MODE" in
-  --no-hold) "$G/shoji-ws-ordering-trigger" --txn --no-hold > "$OUT.trigger" 2>&1 & ;;
-  *)         "$G/shoji-ws-ordering-trigger" --txn > "$OUT.trigger" 2>&1 & ;;
+  --no-hold) "$G/shoji-ws-ordering-trigger" $TRIG --no-hold > "$OUT.trigger" 2>&1 & ;;
+  *)         "$G/shoji-ws-ordering-trigger" $TRIG > "$OUT.trigger" 2>&1 & ;;
 esac
 TPID=$!
 WID=""
