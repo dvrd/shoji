@@ -59,7 +59,7 @@ errors. A forwarded total need not be divisible by four: a worker can be
 suspended in the middle of a native run and complete only its remaining calls
 after installation. The run also passed 16 single-thread round trips and the
 default ABI mode. WindowServer remained PID 169. Commands, outputs, hashes and
-exit statuses are in `artifacts/windowserver-vm-probe/abi-trampoline-20261028-v14/`.
+exit statuses are in `artifacts/vm-probe/abi-trampoline-20261028-v14/`.
 The binary SHA-256 was
 `943958ecdaa686f867e6339b32d045b413bcfefdc3510ebcfd6353bde1831ce0`.
 Earlier `abi-trampoline-20261028-*` directories retain connection failures,

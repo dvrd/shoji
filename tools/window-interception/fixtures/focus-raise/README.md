@@ -39,7 +39,7 @@ foreground or key window. These runs cannot evaluate the activation API in an
 unlocked session, or establish that GUI launch context was the cause.
 
 The corrected preflight reports locked=true and rejects activation with exit 3.
-Evidence: `artifacts/windowserver-vm-probe/focus-raise-20261104/locked-session.txt`.
+Evidence: `artifacts/vm-probe/focus-raise-20261104/locked-session.txt`.
 WindowServer remained PID 50224; the latest guest crash report remained the
 previous 09:28 report. No resident payload replacement was performed for C2.
 
@@ -55,7 +55,7 @@ previous 09:28 report. No resident payload replacement was performed for C2.
    experimental gate.~~ **Done 2026-11-05** (`Watch`=12/`WatchStatus`=13,
    `Receipt_Slot`): once-only, cancel via `Watch 0`, stale generation
    refused, callback forwards without sleeping. Live evidence:
-   `artifacts/windowserver-vm-probe/receipt-20261105/` (all five checks pass
+   `artifacts/vm-probe/receipt-20261105/` (all five checks pass
    against this fixture).
 4. Repeat alternating targets and cancellation/replay cases. Correlate ordering
    completion, activation and keyboard timestamps. No AX readback polling.
@@ -83,7 +83,7 @@ another window of the already-active fixture. It must not be wired into C2 as
 a working focus implementation. Keyboard input was sent through VirtualBuddy
 using computer-use controls, not synthesized inside the guest.
 
-Evidence: `artifacts/windowserver-vm-probe/focus-raise-20261104/unlocked-baseline.txt`.
+Evidence: `artifacts/vm-probe/focus-raise-20261104/unlocked-baseline.txt`.
 The file contains receiver events and snapshots; the native API status was
 observed separately in the probe output. WindowServer remained PID 50224.
 Remaining steps 2–4 above are still open.

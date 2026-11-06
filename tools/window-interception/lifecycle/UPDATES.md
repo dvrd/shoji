@@ -60,7 +60,7 @@ Porting a new build:
 3. Update the build constants (`target.odin`, `WS_SUPPORTED_BUILD`, the
    status/ring file suffix) and run `task test` and the isolated ABI selftests.
 4. VM acceptance on the new build: `c4-live.swift install`, then `trust`, `run`
-   and `daemon`. Save the evidence under `artifacts/windowserver-vm-probe/`.
+   and `daemon`. Save the evidence under `artifacts/vm-probe/`.
 5. Mark the build supported only after step 4 passes. Otherwise it stays
    refused, and users keep native behavior.
 

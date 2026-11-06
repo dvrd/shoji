@@ -27,12 +27,12 @@ interrupted import has left an incomplete project:
 ```sh
 JAVA_HOME="$PWD/.toolchain/jdk-21.0.13+9/Contents/Home" \
   .toolchain/ghidra_12.1.4_PUBLIC/support/analyzeHeadless \
-  "$PWD/artifacts/windowserver-26A434/ghidra" SkyLightOrderingNative \
-  -import "$PWD/artifacts/windowserver-26A434/extracted/SkyLight" \
+  "$PWD/artifacts/macos_versions/26A434/ghidra" SkyLightOrderingNative \
+  -import "$PWD/artifacts/macos_versions/26A434/extracted/SkyLight" \
   -scriptPath "$PWD/tools/window-interception/rea/ghidra" \
-  -postScript ExportOrdering.java "$PWD/artifacts/windowserver-26A434/ghidra/ordering.txt" \
-  -log "$PWD/artifacts/windowserver-26A434/ghidra/analysis-native.log" \
-  -scriptlog "$PWD/artifacts/windowserver-26A434/ghidra/script-native.log" \
+  -postScript ExportOrdering.java "$PWD/artifacts/macos_versions/26A434/ghidra/ordering.txt" \
+  -log "$PWD/artifacts/macos_versions/26A434/ghidra/analysis-native.log" \
+  -scriptlog "$PWD/artifacts/macos_versions/26A434/ghidra/script-native.log" \
   -max-cpu 4
 ```
 
@@ -61,9 +61,9 @@ unresolved. Every result retains commands, exit statuses and raw output.
 
 ```sh
 swift tools/window-interception/rea/ghidra/resolve-stubs.swift \
-  artifacts/windowserver-26A434/dyld/dyld_shared_cache_arm64e \
-  artifacts/windowserver-26A434/ghidra/unresolved-addresses.json \
-  artifacts/windowserver-26A434/ghidra/resolved-stubs.json --limit 8
+  artifacts/macos_versions/26A434/dyld/dyld_shared_cache_arm64e \
+  artifacts/macos_versions/26A434/ghidra/unresolved-addresses.json \
+  artifacts/macos_versions/26A434/ghidra/resolved-stubs.json --limit 8
 ```
 
 Resolving a stub identifies its destination; it does not itself import that
@@ -117,13 +117,13 @@ The first mapped run used a copy of the original saved project,
 ```sh
 JAVA_HOME="$PWD/.toolchain/jdk-21.0.13+9/Contents/Home" \
   .toolchain/ghidra_12.1.4_PUBLIC/support/analyzeHeadless \
-  "$PWD/artifacts/windowserver-26A434/ghidra" SkyLightOrderingMapped \
+  "$PWD/artifacts/macos_versions/26A434/ghidra" SkyLightOrderingMapped \
   -process SkyLight -noanalysis \
   -scriptPath "$PWD/tools/window-interception/rea/ghidra" \
-  -postScript MapCacheStubs.java "$PWD/artifacts/windowserver-26A434/ghidra/cache-stub-manifest.tsv" \
-  -postScript ExportOrdering.java "$PWD/artifacts/windowserver-26A434/ghidra/ordering-mapped.txt" \
-  -log "$PWD/artifacts/windowserver-26A434/ghidra/analysis-mapped.log" \
-  -scriptlog "$PWD/artifacts/windowserver-26A434/ghidra/script-mapped.log" -max-cpu 4
+  -postScript MapCacheStubs.java "$PWD/artifacts/macos_versions/26A434/ghidra/cache-stub-manifest.tsv" \
+  -postScript ExportOrdering.java "$PWD/artifacts/macos_versions/26A434/ghidra/ordering-mapped.txt" \
+  -log "$PWD/artifacts/macos_versions/26A434/ghidra/analysis-mapped.log" \
+  -scriptlog "$PWD/artifacts/macos_versions/26A434/ghidra/script-mapped.log" -max-cpu 4
 ```
 
 The mapping script is intentionally not rerunnable on already-mapped ranges.
@@ -258,14 +258,14 @@ leaving `SkyLightOrderingC` and all earlier exports unchanged:
 ```sh
 JAVA_HOME="$PWD/.toolchain/jdk-21.0.13+9/Contents/Home" \
   .toolchain/ghidra_12.1.4_PUBLIC/support/analyzeHeadless \
-  "$PWD/artifacts/windowserver-26A434/ghidra" SkyLightOrderingLogBuffer \
+  "$PWD/artifacts/macos_versions/26A434/ghidra" SkyLightOrderingLogBuffer \
   -process SkyLight -noanalysis \
   -scriptPath "$PWD/tools/window-interception/rea/ghidra" \
   -postScript SetOrderingPrototypes.java \
   -postScript RefineOrderingState.java \
-  -postScript ExportOrdering.java "$PWD/artifacts/windowserver-26A434/ghidra/ordering-log-buffer.txt" \
-  -log "$PWD/artifacts/windowserver-26A434/ghidra/analysis-log-buffer.log" \
-  -scriptlog "$PWD/artifacts/windowserver-26A434/ghidra/script-log-buffer.log" -max-cpu 4
+  -postScript ExportOrdering.java "$PWD/artifacts/macos_versions/26A434/ghidra/ordering-log-buffer.txt" \
+  -log "$PWD/artifacts/macos_versions/26A434/ghidra/analysis-log-buffer.log" \
+  -scriptlog "$PWD/artifacts/macos_versions/26A434/ghidra/script-log-buffer.log" -max-cpu 4
 ```
 
 The completed `ordering-log-buffer.txt` contains all 49 functions, no

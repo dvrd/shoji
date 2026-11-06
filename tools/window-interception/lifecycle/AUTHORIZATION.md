@@ -19,8 +19,8 @@ The running owner was not replaced or stopped during this negative test.
 
 Evidence files:
 
-- `artifacts/windowserver-vm-probe/auth-20261104/install-and-health.txt`
-- `artifacts/windowserver-vm-probe/auth-20261104/unauthorized-client.txt`
+- `artifacts/vm-probe/auth-20261104/install-and-health.txt`
+- `artifacts/vm-probe/auth-20261104/unauthorized-client.txt`
 
 Before installation, the environment kill switch returned exit 3 and left
 WindowServer at PID 50224; the explicit installation that followed caused the
@@ -34,7 +34,7 @@ installed; writing `dump`/`hold` to the old request path produces no effect,
 and `Dump` flows only through the gate. Negative identity (status 4, no
 owner leak), claimant exclusion (concurrent status 3), owner-death
 (non-recovery by design), and symlink refusal were all verified live.
-Evidence: `artifacts/windowserver-vm-probe/mach-only-20261104/`.
+Evidence: `artifacts/vm-probe/mach-only-20261104/`.
 
 ~~Owner-death recovery is not implemented.~~ **Resolved 2026-11-05 (C4):**
 a verified-identity HELLO reclaims the gate only when `kill(pid, 0)` reports

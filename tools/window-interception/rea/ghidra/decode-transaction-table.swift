@@ -15,7 +15,7 @@
 import Foundation
 
 let argv = Array(CommandLine.arguments.dropFirst())
-let path = argv.first ?? "artifacts/windowserver-26A434/extracted/SkyLight"
+let path = argv.first ?? "artifacts/macos_versions/26A434/extracted/SkyLight"
 let tableVA: UInt64 = argv.count > 1 ? (UInt64(argv[1].replacingOccurrences(of: "0x", with: ""), radix: 16) ?? 0) : 0x1E873D430
 let opMax: UInt64 = 0x8C
 

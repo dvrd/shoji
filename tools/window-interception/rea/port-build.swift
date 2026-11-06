@@ -31,7 +31,7 @@ func rx(_ s: String, _ pat: String, _ group: Int = 1, options: NSRegularExpressi
 }
 
 let root = sh("git", ["rev-parse", "--show-toplevel"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
-let out = "\(root)/artifacts/windowserver-\(tag)"
+let out = "\(root)/artifacts/macos_versions/\(tag)"
 let scriptDir = (CommandLine.arguments[0] as NSString).deletingLastPathComponent
 try? fm.createDirectory(atPath: out + "/extracted", withIntermediateDirectories: true)
 try? fm.createDirectory(atPath: out + "/model", withIntermediateDirectories: true)

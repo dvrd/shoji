@@ -64,7 +64,7 @@ MACH_PORT_TYPE_SEND :: 0x00010000
 
 // Reversed rendezvous is dead on macOS 27: WindowServer is denied both
 // bootstrap_register and bootstrap_look_up (1100 BOOTSTRAP_NOT_PRIVILEGED,
-// proven live 2026-11-03; see artifacts/windowserver-vm-probe/
+// proven live 2026-11-03; see artifacts/vm-probe/
 // lookup-trace-20261103/). The working rendezvous is a task-port handoff:
 // a root helper copies a send right out of WindowServer's task
 // (mach_port_extract_right COPY_SEND on the gate port published in the
