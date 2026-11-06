@@ -9,8 +9,7 @@ revalidating the release candidate.
 
 The current daily-use validation target is macOS 15.6 (24G84) on Apple Silicon.
 Some owned-window and Space checks have passed there; they do not establish
-complete production readiness. See [validation history](VALIDATION.md),
-[port status](PORTING.md), and [macOS 27 investigation](MACOS_27.md) for
+complete production readiness. See [port status](PORTING.md) for
 context. Some historical notes contain stale paths or point to local, untracked
 evidence; verify claims against the current source and preserve shareable release
 evidence before closing an item.

@@ -57,12 +57,23 @@ client :: proc(args: []string) -> int {
 		return 1
 	}
 	shutdown(fd, 1)
+	return client_receive_response(fd)
+}
+
+client_receive_response :: proc(fd: i32) -> int {
+	// Native desktop actions can exceed the transport's two-second idle limit.
+	// Bound the entire reply instead of resetting a timeout for each fragment.
+	deadline := time.time_add(time.now(), 15 * time.Second)
 	first := true
 	failed := false
 	buffer: [8192]u8
 	for {
-		n := recv(fd, &buffer[0], len(buffer), 0)
-		if n < 0 && __error()^ == 4 {
+		if !wait_socket(fd, 1, deadline) {
+			fmt.eprintln("shoji: cannot read daemon response before deadline")
+			return 1
+		}
+		n := recv(fd, &buffer[0], len(buffer), 0x80) // MSG_DONTWAIT
+		if n < 0 && (__error()^ == 4 || __error()^ == 35) {
 			continue
 		}
 		if n < 0 {

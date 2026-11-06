@@ -187,6 +187,7 @@ desktop_commands_tick :: proc(
 	collect: proc(_: ^State) = refresh,
 ) {
 	desktop_refresh_tick(state, last, now, collect)
+	close_focus_tick(state, time.now())
 	command_server_tick(server, &state.manager)
 }
 
@@ -275,6 +276,13 @@ run :: proc(
 	   err != "" {
 		fmt.eprintln("shoji:", err); return 1
 	}
+	if validation_pid == 0 && ws_adapter_env_enabled() {
+		ws_adapter_open(&state.ws, true)
+		fmt.eprintln("shoji:", ws_adapter_describe(&state.ws))
+		if state.ws.state == .Serving {state.manager.layout_batch = ws_layout_batch}
+		state.manager.ws_debug = ws_debug
+	}
+	defer ws_adapter_close(&state.ws)
 	refresh(&state)
 	state.opening_tracking = true
 	config := strings.clone(config_path == "" ? default_config() : config_path)
@@ -379,6 +387,16 @@ run :: proc(
 			frame_size_feedback_tick(&state, time.now())
 			opening_tick(&state)
 			feedback_tick(&state)
+			if window, outcome, waited, resolved := ws_focus_tick(&state.ws, time.now()); resolved {
+				motion_trace_record(
+					&state.manager.motion_trace,
+					{
+						kind = outcome == .Fired ? "ws-focus-receipt-fired" : "ws-focus-receipt-timeout",
+						window = window,
+						duration_ms = time.duration_milliseconds(waited),
+					},
+				)
+			}
 			status: i32
 			for {
 				pid := posix.waitpid(-1, &status, {.NOHANG})
@@ -891,7 +909,7 @@ refresh :: proc(state: ^State) {
 	for id in gone {
 		app := state.applications[m.windows[id].pid]
 		window_reference_remove(state, id, app.observer)
-		remove_window(m, id)
+		remove_observed_window(state, id)
 	}
 	terminated := make([dynamic]i32, 0, 8, context.temp_allocator)
 	for pid in state.applications {
@@ -909,6 +927,96 @@ refresh :: proc(state: ^State) {
 	state.dirty = false
 	state.opening_collecting = false
 	opening_tick(state)
+}
+
+Close_Focus_Recovery :: struct {
+	space: u64,
+	deadline, next_attempt: time.Time,
+}
+
+remove_observed_window :: proc(state: ^State, id: u32) {
+	m := &state.manager
+	if w := m.windows[id]; w != nil && m.focused == id && !state.read_only {
+		if s := space_by_id(m, w.space); s != nil && s.visible && s.view.layout == .Scroll {
+			now := time.now()
+			state.close_focus = {
+				space = s.id, deadline = time.time_add(now, 2 * time.Second),
+				next_attempt = time.time_add(now, 50 * time.Millisecond),
+			}
+		}
+	}
+	remove_window(&state.manager, id)
+}
+
+close_focus_candidate :: proc(m: ^Manager, s: ^Space) -> u32 {
+	v := &s.view; viewport := v.scroll.viewport
+	best: u32; best_area: f64; best_preferred: bool
+	for n := first(v.root); n != nil; n = next(n) {
+		for i in 0 ..< n.count {
+			id := n.windows[i]; w := m.windows[id]
+			if w == nil || !layout_admitted(w) || w.space != s.id ||
+			   (n.column_tabbed && id != n.order[0]) { continue }
+			r := scroll_window_frame(v, n, id, false)
+			width := min(r.x + r.w, viewport.x + viewport.w) - max(r.x, viewport.x)
+			height := min(r.y + r.h, viewport.y + viewport.h) - max(r.y, viewport.y)
+			if width <= 0 || height <= 0 { continue }
+			area := width * height; preferred := id == v.scroll.focused
+			if best == 0 || (preferred && !best_preferred) ||
+			   (preferred == best_preferred && area > best_area) {
+				best, best_area, best_preferred = id, area, preferred
+			}
+		}
+	}
+	return best
+}
+
+close_focus_tick :: proc(state: ^State, now: time.Time = {}) {
+	p := &state.close_focus; m := &state.manager
+	if p.space == 0 { return }
+	now := now
+	if (now == time.Time{}) { now = time.now() }
+	// Let native focus settle first. A later focus or Space change wins over
+	// this fallback, including when several windows disappear in one refresh.
+	if state.read_only || m.active_space != p.space || m.windows[m.focused] != nil ||
+	   time.diff(now, p.deadline) <= 0 { p^ = {}; return }
+	if m.suspended || m.gesture_active || state.mouse.drag.window != 0 ||
+	   time.diff(now, p.next_attempt) > 0 { return }
+	s := space_by_id(m, p.space)
+	if s == nil || !s.visible || s.view.layout != .Scroll { p^ = {}; return }
+	target := close_focus_candidate(m, s)
+	if target == 0 { return }
+	p.next_attempt = time.time_add(now, 100 * time.Millisecond)
+	response := execute(m, {"window", fmt.tprintf("%d", target), "--focus"})
+	if response.failed { state.dirty = true; return }
+	motion_trace_record(&m.motion_trace, {kind = "close-focus-recovered", window = target, space = s.id})
+	p^ = {}
+}
+
+focus_owner :: proc(m: ^Manager, pid: i32, ancestry: []u32) -> u32 {
+	id := len(ancestry) > 0 ? ancestry[0] : 0
+	for candidate in ancestry {
+		if w := m.windows[candidate]; w != nil && w.pid == pid { id = candidate }
+	}
+	return id
+}
+
+native_focus_owner :: proc(state: ^State, pid: i32, focused: Ref) -> u32 {
+	// Sheets can own keyboard focus without appearing in AXWindows. Follow
+	// their parent chain to the tracked document that owns the layout slot.
+	ids: [16]u32; count := 0
+	element := focused; owned := false
+	defer { if owned && element != nil { CFRelease(element) } }
+	for _ in 0 ..< len(ids) {
+		if element == nil { break }
+		id: u32
+		if _AXUIElementGetWindow(element, &id) == 0 && id != 0 {
+			ids[count] = id; count += 1
+		}
+		parent := attribute(element, "AXParent")
+		if owned { CFRelease(element) }
+		element, owned = parent, true
+	}
+	return focus_owner(&state.manager, pid, ids[:count])
 }
 
 // Show a newly discovered focus before the remaining refresh work can block.
@@ -936,8 +1044,7 @@ refresh_effects :: proc(state: ^State) {
 	if app, ok := state.applications[pid]; ok {
 		focused := attribute(app.element, "AXFocusedWindow")
 		if focused != nil {
-			id: u32
-			_AXUIElementGetWindow(focused, &id)
+			id := native_focus_owner(state, pid, focused)
 			CFRelease(focused)
 			if w := m.windows[id];
 			   w != nil &&
@@ -1624,7 +1731,7 @@ opening_destroyed :: proc(state: ^State, element: Ref) {
 	s := space_by_id(&state.manager, w.space)
 	app := state.applications[w.pid]
 	window_reference_remove(state, id, app.observer)
-	remove_window(&state.manager, id)
+	remove_observed_window(state, id)
 	if err := opening_release(state, id); err != "" {
 		fmt.eprintln("shoji: closed opening:", err)
 	}

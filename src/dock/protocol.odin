@@ -24,6 +24,10 @@ Opcode :: enum u8 {
 	Window_List_To_Space,
 	Window_To_Space,
 	Space_Create_Tracked,
+	// Target Space, window, source Space. Uses the transaction table (ops
+	// 0x18/0x19) so the experimental WindowServer gate can stage placement;
+	// SLSMoveWindowsToManagedSpace bypasses that table (managed-move-20261105).
+	Window_To_Space_Transaction,
 }
 Capability :: enum u32 {
 	Dock_Spaces,
@@ -36,6 +40,7 @@ Capability :: enum u32 {
 	Transaction_Diagnostics,
 	Tracked_Space_Create,
 	Window_Layer_Keys,
+	Space_Transaction,
 }
 Capabilities :: bit_set[Capability;u32]
 Status :: enum u8 {
@@ -108,7 +113,7 @@ expected_size :: proc(op: Opcode) -> int {
 		return 5
 	case .Window_Focus:
 		return 4
-	case .Window_Scale:
+	case .Window_Scale, .Window_To_Space_Transaction:
 		return 20
 	case .Proxy_In, .Proxy_Out, .Window_Order_In, .Window_List_To_Space:
 		return -1
@@ -116,7 +121,7 @@ expected_size :: proc(op: Opcode) -> int {
 	return -2
 }
 validate :: proc(op: Opcode, data: []u8) -> bool {
-	if u8(op) < 1 || u8(op) > u8(Opcode.Space_Create_Tracked) {return false}
+	if u8(op) < 1 || u8(op) > u8(Opcode.Window_To_Space_Transaction) {return false}
 	expected := expected_size(op)
 	if expected >= 0 {return len(data) == expected}
 	r := reader(data)

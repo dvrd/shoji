@@ -185,7 +185,6 @@ tasks:
       - ./bin/harness-fixture focus-ring-check
   check:
     desc: Type-check all source and tests
-    deps: [raven]
     cmds:
       - '{{.ODIN}} check src -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check src/dock_payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
@@ -202,35 +201,30 @@ tasks:
       - '{{.ODIN}} check tools/harness/fixtures/cancellation -vet-unused-imports -vet-unused-variables -warnings-as-errors'
   dockscan:
     desc: Build the standalone Apple silicon Dock compatibility diagnostic
-    deps: [raven]
     cmds:
       - mkdir -p bin
       - '{{.ODIN}} build tools/shoji-dock -out:bin/shoji-dock.new -o:speed -warnings-as-errors'
       - mv -f bin/shoji-dock.new bin/shoji-dock
   test:dockscan:
     desc: Test offline Dock parsing, scanning, comparison, and patch proposals
-    deps: [raven]
     cmds:
       - mkdir -p bin
       - '{{.ODIN}} test tools/shoji-dock/scanner -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -out:bin/shoji-dock-tests -debug -warnings-as-errors'
-  raven:
-    desc: Build the pinned LZRAVEN decoder for the Dock diagnostic
-    sources:
-      - tools/shoji-dock/vendor/liblzraven/src/*
-      - tools/shoji-dock/vendor/liblzraven/include/*
-    generates: [bin/libshoji-raven.a]
+  raven:regen:
+    desc: Regenerate the committed libshoji-raven.a from the pinned upstream commit (fetch, build, discard source)
+    vars:
+      RAVEN_REPO: https://github.com/anat0m1a/liblzraven
+      RAVEN_COMMIT: 700b88c4b2e1b1d96e499d172dfa0b8e5d9134ab
+      RAVEN_OUT: tools/shoji-dock/vendor/liblzraven/libshoji-raven.a
     cmds:
-      - mkdir -p bin/raven
-      - for source in model block stream bcj; do cc -std=c11 -O2 -Wall -Wextra -Werror -Itools/shoji-dock/vendor/liblzraven/include -Itools/shoji-dock/vendor/liblzraven/src -c tools/shoji-dock/vendor/liblzraven/src/$source.c -o bin/raven/$source.o || exit; done
-      - ar rcs bin/libshoji-raven.a bin/raven/model.o bin/raven/block.o bin/raven/stream.o bin/raven/bcj.o
-  test:raven:
-    desc: Run upstream LZRAVEN decoder vectors and rejection tests
-    deps: [raven]
-    cmds:
-      - cc -std=c11 -O2 -Wall -Wextra -Werror -Itools/shoji-dock/vendor/liblzraven/include tools/shoji-dock/vendor/liblzraven/tests/c/test_decode.c bin/libshoji-raven.a -o bin/raven/test-decode
-      - cc -std=c11 -O2 -Wall -Wextra -Werror -Itools/shoji-dock/vendor/liblzraven/include tools/shoji-dock/vendor/liblzraven/tests/c/test_reject.c bin/libshoji-raven.a -o bin/raven/test-reject
-      - cd tools/shoji-dock/vendor/liblzraven && ../../../../bin/raven/test-decode
-      - cd tools/shoji-dock/vendor/liblzraven && ../../../../bin/raven/test-reject
+      - rm -rf .raven-src
+      - git clone --quiet {{.RAVEN_REPO}} .raven-src
+      - git -C .raven-src checkout --quiet {{.RAVEN_COMMIT}}
+      - mkdir -p .raven-src/obj
+      - for s in model block stream bcj; do cc -std=c11 -O2 -Wall -Wextra -Werror -I.raven-src/include -I.raven-src/src -c .raven-src/src/$s.c -o .raven-src/obj/$s.o || exit; done
+      - ar rcs {{.RAVEN_OUT}} .raven-src/obj/model.o .raven-src/obj/block.o .raven-src/obj/stream.o .raven-src/obj/bcj.o
+      - rm -rf .raven-src
+      - echo "Regenerated {{.RAVEN_OUT}} from {{.RAVEN_COMMIT}}"
   test:
     desc: Run deterministic tests without controlling desktop windows
     cmds:
@@ -291,7 +285,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/hook-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-hook-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build tools/window-interception/rea/hook-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-hook-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-hook-selftest
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-hook-selftest'
   build:windowserver-abi-selftest:
@@ -302,8 +296,8 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '/usr/bin/clang -arch arm64e -std=c11 -O2 -Wall -Wextra -Werror -c tools/window-interception/abi-selftest/native.c -o bin/shoji-ws-abi-native.o'
-      - '{{.ODIN_ARM64E}} build tools/window-interception/abi-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-abi-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '/usr/bin/clang -arch arm64e -std=c11 -O2 -Wall -Wextra -Werror -c tools/window-interception/rea/abi-selftest/native.c -o bin/shoji-ws-abi-native.o'
+      - '{{.ODIN_ARM64E}} build tools/window-interception/rea/abi-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-abi-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-abi-selftest
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-abi-selftest'
   build:windowserver-permission-probe:
@@ -318,14 +312,22 @@ tasks:
       - ./bin/inspector normalize-arm64e bin/shoji-ws-permission-probe.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-permission-probe.dylib'
   build:windowserver-ordering-observer:
-    deps: [build:inspector]
+    deps: [build:gate-client]
     desc: Build the disposable exact-build ordering observer (does not load it)
     env:
       ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/windowserver-ordering-observer -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor21.dylib"'
+      - |
+        client_hash=$(codesign -dvvv bin/shoji-gate-client 2>&1 | sed -n 's/^CDHash=//p')
+        case "$client_hash" in ''|*[!0-9a-f]*) exit 1 ;; esac
+        test "${#client_hash}" = 40
+        # Only the experiment client is pinned at build time. Shoji is trusted
+        # through the root-owned clients file (lifecycle/trust-client.swift), so
+        # rebuilding Shoji never requires a new payload.
+        allow=$client_hash
+        {{.ODIN_ARM64E}} build tools/window-interception/windowserver-ordering-observer "-define:SHOJI_GATE_CLIENT_CDHASH=$allow" -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor22.dylib"
       - ./bin/inspector normalize-arm64e bin/shoji-ws-observer.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-observer.dylib'
   build:windowserver-ordering-trigger:
@@ -336,14 +338,14 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/ordering-trigger -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-ordering-trigger -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build tools/window-interception/fixtures/ordering-trigger -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-ordering-trigger -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-ordering-trigger
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-ordering-trigger'
   build:windowserver-visibility-sampler:
     desc: Build the disposable guest CGWindowList visibility sampler (does not run it)
     cmds:
       - mkdir -p bin
-      - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-ws-visibility-sampler tools/window-interception/visibility-sampler/main.swift'
+      - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-ws-visibility-sampler tools/window-interception/fixtures/visibility-sampler/main.swift'
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-visibility-sampler'
   build:gate-client:
     deps: [build:inspector]
@@ -356,12 +358,49 @@ tasks:
       - '{{.ODIN_ARM64E}} build tools/window-interception/gate-client -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-gate-client -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-gate-client
       - '{{.CODESIGN}} --force --sign - bin/shoji-gate-client'
+  build:gate-handoff:
+    deps: [build:inspector]
+    desc: Build the disposable guest root gate handoff helper (does not run it)
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN_ARM64E}} build tools/window-interception/gate-handoff -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-gate-handoff -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - ./bin/inspector normalize-arm64e bin/shoji-gate-handoff
+      - '{{.CODESIGN}} --force --sign - bin/shoji-gate-handoff'
   build:capture-probe:
     desc: Build the disposable guest ScreenCaptureKit frame probe (does not run it)
     cmds:
       - mkdir -p bin
       - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-capture-probe tools/harness/capture-probe/main.swift'
       - '{{.CODESIGN}} --force --sign - bin/shoji-capture-probe'
+  build:layout-frame:
+    desc: Build the disposable C1 fixture and frame pixel capture (does not run it)
+    cmds:
+      - mkdir -p bin
+      - 'xcrun swiftc -O -module-cache-path /tmp/shoji-c1-module-cache -target arm64-apple-macos14 -F/System/Library/PrivateFrameworks -framework SkyLight -o bin/shoji-layout-frame tools/window-interception/fixtures/layout-frame/main.swift'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.layout-frame bin/shoji-layout-frame'
+      - mkdir -p 'bin/Shoji Layout Capture.app/Contents/MacOS'
+      - cp tools/window-interception/fixtures/layout-frame/Info.plist 'bin/Shoji Layout Capture.app/Contents/Info.plist'
+      - cp bin/shoji-layout-frame 'bin/Shoji Layout Capture.app/Contents/MacOS/shoji-layout-frame'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.layout-frame "bin/Shoji Layout Capture.app"'
+  build:layout-fixture:
+    desc: Build the C1 window fixture without changing the authorized capturer
+    cmds:
+      - mkdir -p bin
+      - 'xcrun swiftc -O -module-cache-path /tmp/shoji-c1-module-cache -target arm64-apple-macos14 -F/System/Library/PrivateFrameworks -framework SkyLight -o bin/shoji-layout-fixture tools/window-interception/fixtures/layout-frame/fixture.swift'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.layout-fixture bin/shoji-layout-fixture'
+  build:focus-fixture:
+    desc: Build the disposable C2 focus/raise fixture (does not run it)
+    cmds:
+      - mkdir -p bin
+      - 'xcrun swiftc -O -module-cache-path /tmp/shoji-c2-module-cache -target arm64-apple-macos14 -F/System/Library/PrivateFrameworks -framework SkyLight -o bin/shoji-focus-fixture tools/window-interception/fixtures/focus-raise/main.swift'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.focus-fixture bin/shoji-focus-fixture'
+      - mkdir -p 'bin/Shoji Focus Lab.app/Contents/MacOS'
+      - cp tools/window-interception/fixtures/focus-raise/Info.plist 'bin/Shoji Focus Lab.app/Contents/Info.plist'
+      - cp bin/shoji-focus-fixture 'bin/Shoji Focus Lab.app/Contents/MacOS/shoji-focus-fixture'
+      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.focus-fixture "bin/Shoji Focus Lab.app"'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:

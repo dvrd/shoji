@@ -207,3 +207,35 @@ frame_writes_continue_when_enhanced_ui_reports_an_error_after_applying :: proc(t
 		delete(r.names)
 	}
 }
+
+@(test)
+server_placed_frame_still_writes_position :: proc(t: ^testing.T) {
+	// WindowServer already shows the target after a gated move; the app does
+	// not know. Untouched, the write is skipped; flagged, AXPosition is sent.
+	shown := mac.Rect{0, 30, 1120, 1123}
+	for placed in ([]bool{false, true}) {
+		r: Frame_Recorder
+		defer delete(r.names)
+		err := mac.apply_accessibility_frame(
+			nil, nil, shown, {&r, frame_enhanced, frame_set},
+			mac.frame_write_previous(shown, placed),
+		)
+		testing.expect_value(t, err, "")
+		testing.expect_value(t, len(r.names), placed ? 1 : 0)
+		if placed && len(r.names) == 1 {testing.expect_value(t, r.names[0], "AXPosition")}
+	}
+	// A resize after placement writes the full frame (position included).
+	r: Frame_Recorder
+	defer delete(r.names)
+	_ = mac.apply_accessibility_frame(
+		nil, nil, {0, 30, 2240, 1123}, {&r, frame_enhanced, frame_set},
+		mac.frame_write_previous(shown, true),
+	)
+	testing.expect(t, slice_has(r.names[:], "AXPosition"))
+	testing.expect_value(t, mac.frame_write_previous(nil, true), nil)
+}
+
+slice_has :: proc(names: []string, name: string) -> bool {
+	for n in names {if n == name {return true}}
+	return false
+}

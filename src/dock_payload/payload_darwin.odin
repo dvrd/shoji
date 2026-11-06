@@ -53,6 +53,8 @@ foreign sls {
 	SLSTransactionCommit :: proc(transaction: m.Ref, synchronous: i32) ---
 	SLSTransactionOrderWindowGroup :: proc(transaction: m.Ref, wid: u32, order: i32, relative: u32) ---
 	SLSTransactionSetWindowSystemAlpha :: proc(transaction: m.Ref, wid: u32, alpha: f32) ---
+	SLSTransactionAddWindowToSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
+	SLSTransactionRemoveWindowFromSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
 }
 @(default_calling_convention = "c")
 foreign sys {
@@ -371,6 +373,19 @@ window_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, diagnostic: ^dockl
 		SLSMoveWindowsToManagedSpace(g.cid, array, sid)
 		return .OK
 	}
+	if op == .Window_To_Space_Transaction {
+		target := docklib.unpack(r, u64);id := docklib.unpack(r, u32);source := docklib.unpack(r, u64)
+		if target == 0 || id == 0 || source == target {return .Invalid_Message}
+		transaction := SLSTransactionCreate(g.cid)
+		if transaction == nil {docklib.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
+		defer m.CFRelease(transaction)
+		SLSTransactionAddWindowToSpace(transaction, id, target)
+		if source != 0 {SLSTransactionRemoveWindowFromSpace(transaction, id, source)}
+		// Synchronous: the WindowServer gate applies staged placement inside
+		// this commit, so the caller can read placement status on return.
+		SLSTransactionCommit(transaction, 1)
+		return .OK
+	}
 	if op == .Proxy_In || op == .Proxy_Out || op == .Window_Order_In {
 		count := docklib.unpack(r, i32)
 		// Register every window before any transaction can hide it, including
@@ -538,7 +553,7 @@ main_request :: proc "c" (user: rawptr) {
 initialize_payload :: proc "c" (unused: rawptr) {
 	context = runtime.default_context()
 	pool := m.pool_push();defer m.pool_pop(pool)
-	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys};if g.add != nil {g.caps += {.Tracked_Space_Create}}
+	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys, .Space_Transaction};if g.add != nil {g.caps += {.Tracked_Space_Create}}
 	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]docklib.Entry)
 }
 listen_fd: i32 = -1

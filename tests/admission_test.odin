@@ -92,6 +92,39 @@ preparation_wait :: proc(m: ^e.Manager, w: ^e.Window, seed: e.Rect) -> (e.Rect, 
 	return seed, false, ""
 }
 
+preparation_native_edge_clamp :: proc(m: ^e.Manager, w: ^e.Window, seed: e.Rect) -> (e.Rect, bool, string) {
+	s := e.space_by_id(m, w.space)
+	accepted := seed
+	// AppKit keeps a visible edge even when an AX move requests a position
+	// beyond the display. The 26A434 fixture retained forty pixels.
+	r := s.view.scroll.viewport
+	accepted.x = min(accepted.x, r.x + r.w - 40)
+	return accepted, true, ""
+}
+
+@(test)
+background_scroll_window_admits_when_native_position_is_parked_at_display_edge :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	e.execute(&m, {"space", "--layout", "scroll"})
+	e.execute(&m, {"window", "1", "--column-width", "abs:800"})
+	e.execute(&m, {"window", "2", "--column-width", "abs:800"})
+	e.execute(&m, {"window", "2", "--focus"})
+	w := e.discover_window(&m, {id = 30, role = "AXWindow", subrole = "AXStandardWindow", space = 100, frame = {100, 100, 440, 288}})
+	admitted, err := e.admit_window(&m, w, {prepare = preparation_native_edge_clamp})
+	testing.expect_value(t, err, "")
+	testing.expect(t, admitted)
+	testing.expect_value(t, w.opening.phase, e.Opening_Phase.Opening)
+	testing.expect_value(t, m.focused, u32(2))
+	s := e.space_by_id(&m, 100)
+	testing.expect(t, e.find(s.view.root, w.id) != nil)
+	// Native parking must not replace the column's logical strip coordinates.
+	testing.expect(t, w.scroll_frame.from.x > s.view.scroll.viewport.w)
+	testing.expect_value(t, e.finish_opening(&m, w), "")
+	testing.expect(t, !e.execute(&m, {"window", "30", "--focus"}).failed)
+	testing.expect_value(t, m.focused, u32(30))
+}
+
 @(test)
 preparing_windows_stay_outside_layout_rebuilds :: proc(t: ^testing.T) {
 	m: e.Manager;r: Recorder;fixture(&m, &r)

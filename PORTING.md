@@ -7,8 +7,7 @@ run must not be interpreted as feature parity.
 Reference: asmvik/yabai `dd845723416f5fe92af49fad5ebab00369e07edd`.
 
 The active validation target is **macOS 15.6 (24G84), arm64**. Other releases are
-outside this validation milestone. See [VALIDATION.md](VALIDATION.md) for the
-acceptance checklist, evidence commands, and remaining blockers.
+outside this validation milestone.
 Dock injection is all-Odin. On arm64, `shoji --load-sa` spawns `bin/shoji-loader`, an Odin arm64e companion built with the compiler patch in `tools/odin-arm64e.patch` (header normalized to arm64e ABI v0 before ad-hoc signing); the kernel refuses remote thread creation in the arm64e Dock from a plain arm64 process, so the companion is required — upstream yabai likewise uses a separate arm64e loader. Intel Shoji injects in-process. The former MIT-licensed Objective-C loader (`loader_arm64e.m`) was removed after the Odin loader passed live Dock injection on 2026-10-05 on macOS 15.6 / Apple M1 Max. See [the arm64e notes](tools/ARM64E.md).
 
 ## Implemented

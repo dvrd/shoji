@@ -1,8 +1,7 @@
 # Shoji setup
 
 The current validation target is macOS 15.6 (24G84), Apple Silicon. Basic window
-management and Space operations have passed live checks; see [VALIDATION.md](VALIDATION.md)
-for evidence and remaining gaps. Experimental animations default off.
+management and Space operations have passed live checks. Experimental animations default off.
 
 ## Configuration
 

@@ -10,7 +10,7 @@ import "core:mem"
 import "core:sys/posix"
 import "core:time"
 
-foreign import raven "../../../bin/libshoji-raven.a"
+foreign import raven "../vendor/liblzraven/libshoji-raven.a"
 foreign import progress_libc "system:c"
 
 // Apple installer acquisition

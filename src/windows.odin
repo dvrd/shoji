@@ -8,6 +8,18 @@ import "core:strings"
 // Manager state and reconciliation
 // ------------------------------------------------------------------------
 
+Scroll_Return :: struct {
+	space: u64,
+	previous, next: u32,
+	column_index, row: int,
+	peers: [MAX_STACK]u32,
+	peer_count: int,
+	width: f64,
+	size: Scroll_Size,
+	preset: Maybe(int),
+	full, tabbed: bool,
+}
+
 Window :: struct {
 	generation: u64,
 	frame_valid: Maybe(bool),
@@ -26,11 +38,16 @@ Window :: struct {
 	rules_pending, grabbed: bool,
 	rule_error: string,
 	windowed_frame: Maybe(Rect),
+	scroll_return: Maybe(Scroll_Return),
 	// Relative to the usable tile area; retained only during a lone-tile drag.
 	solo_tile_frame: Maybe(Rect),
 	can_move: bool,
 	can_resize: Maybe(bool),
 	application_accessory: bool,
+	// A gated WindowServer move (C1 batch, C4 landing) already shows the new
+	// position, but the owning app was not told; the next frame write must
+	// send AXPosition even though WindowServer's bounds match the target.
+	server_placed: bool,
 	manage_override: Maybe(bool),
 	id: u32,
 	pid: i32,
@@ -105,6 +122,12 @@ Action :: struct {
 }
 
 Backend :: proc(user: rawptr, action: Action) -> string
+Layout_Move :: struct {
+	window: u32,
+	x, y:   f64,
+}
+LAYOUT_BATCH_LIMIT :: 8
+Layout_Batch :: #type proc(user: rawptr, moves: []Layout_Move) -> bool
 Manager :: struct {
 	window_generation: u64,
 	resize_fade: bool,
@@ -171,6 +194,11 @@ Manager :: struct {
 	},
 	backend: Backend,
 	backend_user: rawptr,
+	// Experimental frame-atomic position batch (C1). Called with backend_user;
+	// true only when every move was applied. Nil → per-window frames.
+	layout_batch: Layout_Batch,
+	// Daemon-only WindowServer diagnostics (`debug ws`); nil elsewhere.
+	ws_debug: proc(user: rawptr, dump: bool) -> string,
 	rules: [dynamic]Rule,
 	signals: [dynamic]Signal,
 }
@@ -386,15 +414,78 @@ sync_window_membership :: proc(
 	}
 	if current := space_by_id(m, w.space);
 	   current != nil &&
+	   !current.fullscreen &&
 	   layout_admitted(w) &&
 	   current.view.layout != .Float &&
 	   find(current.view.root, w.id) == nil {
 		w.scroll_frame = {}
-		if !add(&current.view, w.id, m.focused) {
+		restored := scroll_return_restore(w, current)
+		if !restored && !add(&current.view, w.id, m.focused) {
 			return "destination tiling tree is full"
 		}
 	}
 	return ""
+}
+
+scroll_return_remember :: proc(w: ^Window, space: ^Space, node: ^Node) {
+	if space.view.layout != .Scroll || w.scroll_return != nil { return }
+	r := Scroll_Return {
+		space = space.id, width = node.column_width, size = node.column_size,
+		preset = node.column_preset, full = node.column_full, tabbed = node.column_tabbed,
+	}
+	for n := first(space.view.root); n != nil && n != node; n = next(n) { r.column_index += 1 }
+	if n := previous(node); n != nil && n.count > 0 { r.previous = n.windows[0] }
+	if n := next(node); n != nil && n.count > 0 { r.next = n.windows[0] }
+	for i in 0 ..< node.count {
+		if node.windows[i] == w.id { r.row = i; continue }
+		r.peers[r.peer_count] = node.windows[i]; r.peer_count += 1
+	}
+	w.scroll_return = r
+}
+
+scroll_return_restore :: proc(w: ^Window, space: ^Space) -> bool {
+	r, saved := w.scroll_return.?
+	if !saved { return false }
+	if r.space != space.id || space.view.layout != .Scroll {
+		w.scroll_return = nil; return false
+	}
+	v := &space.view
+	for id in r.peers[:r.peer_count] {
+		n := find(v.root, id)
+		if n == nil || n.count == MAX_STACK { continue }
+		if !stack_push(n, w.id) { continue }
+		// stack_push inserts after the active row; restore the saved row order.
+		at := 0
+		for n.windows[at] != w.id { at += 1 }
+		row := min(r.row, n.count - 1)
+		for at > row { n.windows[at] = n.windows[at - 1]; at -= 1 }
+		for at < row { n.windows[at] = n.windows[at + 1]; at += 1 }
+		n.windows[row] = w.id
+		w.scroll_return = nil; return true
+	}
+	anchor := find(v.root, r.previous)
+	before := false
+	if anchor == nil { anchor = find(v.root, r.next); before = anchor != nil }
+	if anchor == nil {
+		anchor = first(v.root)
+		index := 0
+		for index < r.column_index && next(anchor) != nil { anchor = next(anchor); index += 1 }
+		before = anchor != nil && anchor.count > 0 && index == r.column_index
+	}
+	if anchor == nil { return false }
+	anchor_id := anchor.windows[0]
+	insert_first, insert_stack, insertion := anchor.insert_first, anchor.insert_stack, v.insertion
+	anchor.insert_first, anchor.insert_stack = before, false
+	ok := add(v, w.id, anchor_id)
+	if old := find(v.root, anchor_id); old != nil { old.insert_first, old.insert_stack = insert_first, insert_stack }
+	v.insertion = insertion
+	if !ok { return false }
+	n := find(v.root, w.id)
+	n.column_width, n.column_resolved = r.width, r.width
+	n.column_size, n.column_preset = r.size, r.preset
+	n.column_full, n.column_tabbed = r.full, r.tabbed
+	w.scroll_return = nil
+	return true
 }
 
 // Remove stale membership before adding newly visible windows. A tab switch
@@ -406,9 +497,33 @@ reconcile_window_memberships :: proc(m: ^Manager) -> string {
 			for i in 0 ..< node.count {
 				id := node.windows[i]
 				window := m.windows[id]
+				if window != nil {
+					destination := space_by_id(m, window.space)
+					if !layout_admitted(window) ||
+					   (destination != nil && destination.fullscreen) {
+						scroll_return_remember(window, space, node)
+					}
+				}
 				if window == nil ||
+				   space.fullscreen ||
 				   !layout_admitted(window) ||
 				   window.space != space.id {
+					if window != nil && m.motion_trace.active {
+						reason: i32
+						if window.fullscreen { reason |= 1 }
+						if window.hidden { reason |= 2 }
+						if window.minimized { reason |= 4 }
+						if !(window.ordered_in.? or_else true) { reason |= 8 }
+						if window.floating { reason |= 16 }
+						if window.sticky { reason |= 32 }
+						if !(window.root_window.? or_else true) { reason |= 64 }
+						if !layout_admitted(window) { reason |= 128 }
+						if window.space != space.id { reason |= 256 }
+						motion_trace_record(&m.motion_trace, {
+							kind = "scroll-membership-remove", window = id, space = space.id,
+							value = f64(window.space), status = reason,
+						})
+					}
 					append(&remove_ids, id)
 				}
 			}
@@ -454,6 +569,34 @@ perform :: proc(m: ^Manager, a: Action) -> string {
 		a.duration = a.direct ? 0 : m.animation_duration
 	}
 	return m.backend(m.backend_user, a)
+}
+
+Deferred_Frame :: struct {
+	window: ^Window,
+	frame:  Rect,
+}
+
+// C1: a tiled relayout made only of moves (sizes unchanged), unanimated and
+// small enough for the gate's plan, lands in one WindowServer frame before
+// the per-window writes. Any other shape skips the batch.
+layout_batch_eligible :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resize: bool) -> bool {
+	if m.layout_batch == nil || live_resize || m.animation_duration > 0 ||
+	   len(deferred) == 0 || len(deferred) > LAYOUT_BATCH_LIMIT {
+		return false
+	}
+	for d in deferred {
+		if math.abs(d.window.frame.w - d.frame.w) >= 1.5 || math.abs(d.window.frame.h - d.frame.h) >= 1.5 {
+			return false
+		}
+	}
+	return true
+}
+
+layout_batch_apply :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resize: bool) -> bool {
+	if !layout_batch_eligible(m, deferred, live_resize) {return false}
+	moves := make([]Layout_Move, len(deferred), context.temp_allocator)
+	for d, i in deferred {moves[i] = {d.window.id, d.frame.x, d.frame.y}}
+	return m.layout_batch(m.backend_user, moves)
 }
 
 flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
@@ -515,6 +658,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			scroll_geometry_prepare(m, s)
 		}
 	}
+	deferred := make([dynamic]Deferred_Frame, 0, 16, context.temp_allocator)
 	for n := first(s.view.root); n != nil; n = next(n) {
 		for i in 0 ..< n.count {
 			w := m.windows[n.windows[i]]
@@ -566,6 +710,10 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			if w.id == m.native_resize_window {
 				w.frame = r; continue
 			}
+			if s.view.layout != .Scroll {
+				append(&deferred, Deferred_Frame{w, r})
+				continue
+			}
 			if err := perform(
 				m,
 				Action {
@@ -592,6 +740,22 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			}
 			n.column_raised = n.order[0]
 		}
+	}
+	// The batch is a visual pre-apply: WindowServer moves every window in one
+	// frame, but owning apps are not told (c1c2-foreign-20261105). The normal
+	// per-window writes below then resync each app at the position it already
+	// shows, so they cause no visible movement.
+	if layout_batch_apply(m, deferred[:], live_resize) {
+		for d in deferred {d.window.server_placed = true}
+	}
+	for d in deferred {
+		if err := perform(
+			m,
+			Action{kind = .Frame, window = d.window.id, frame = d.frame, live_resize = live_resize},
+		); err != "" {
+			return err
+		}
+		d.window.frame = d.frame
 	}
 	for _, w in m.windows {
 		if w.space == s.id {
@@ -1089,13 +1253,21 @@ admit_window :: proc(
 			aligned.y = target.y + target.h - accepted.h
 		}
 	}
-	if !scroll_rect_near(aligned, accepted, 1) {
+	placement := aligned
+	parked := v.layout == .Scroll && scroll_park_frame(&v, aligned).x != aligned.x
+	if parked {
+		// AppKit clamps wholly off-screen AX moves to a visible edge. Keep
+		// that stable native position while retaining the strip's world frame.
+		placement.x = accepted.x
+	}
+	if !scroll_rect_near(placement, accepted, 1) {
 		_, _, err := prepare(m, w, aligned)
 		o.wait = .Readiness; return false, err
 	}
 	w.frame = accepted; o.seed = accepted
 	if v.layout == .Scroll {
 		world := accepted
+		if parked { world.x = aligned.x }
 		world.x +=
 			v.scroll.motion.initialized \
 				? v.scroll.motion.position \
@@ -1823,10 +1995,14 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		   !can_add(&target.view) {
 			return failure("target stack is full")
 		}
+		// Tile in the destination first so the move can carry its landing
+		// position (WindowServer adapter, C4); undone if the move fails.
+		landing, staged := space_landing(w, s, target)
 		if err := perform(
 			m,
-			Action{kind = .Space, window = w.id, space = target.id},
+			Action{kind = .Space, window = w.id, space = target.id, frame = landing},
 		); err != "" {
+			if staged {remove(&target.view, w.id)}
 			return failure(err)
 		}
 		if s != nil {
@@ -1837,7 +2013,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		if w.opening.phase == .Excluded && managed(w) {
 			w.opening.phase = .Admitted
 		}
-		if layout_admitted(w) {
+		if layout_admitted(w) && !staged {
 			add(&target.view, w.id)
 		}
 		if err := flush(m, target); err != "" {
@@ -1976,6 +2152,20 @@ resize_window :: proc(
 
 // Scratchpad
 // ------------------------------------------------------------------------
+
+// Destination tile position for a window moving to a BSP/Stack Space. The
+// window is inserted into the destination tree (staged) so the frame is the
+// one flush will apply. Scroll and Float destinations carry no landing.
+space_landing :: proc(w: ^Window, source, target: ^Space) -> (landing: Rect, staged: bool) {
+	if target == nil || target == source || !layout_admitted(w) ||
+	   (target.view.layout != .BSP && target.view.layout != .Stack) {
+		return
+	}
+	if !add(&target.view, w.id) {return}
+	view_update(&target.view)
+	if n := find(target.view.root, w.id); n != nil {landing = frame_for(n)}
+	return landing, true
+}
 
 scratchpad_by_label :: proc(m: ^Manager, label: string) -> ^Window {
 	if label == "" {
