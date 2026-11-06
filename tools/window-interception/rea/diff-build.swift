@@ -1,6 +1,6 @@
 #!/usr/bin/env swift
 // Diff two per-build port models (A3). Compares
-// artifacts/windowserver-<tag>/model/model.json pairs and prints a porting
+// artifacts/macos_versions/<tag>/model/model.json pairs and prints a porting
 // report: identity, hooked function, dispatch table base, and the op map.
 // Op-name movement is the porting signal; raw address changes are expected on
 // every build. usage: diff-build.swift REF_TAG NEW_TAG
@@ -16,7 +16,7 @@ func git(_ args: [String]) -> String {
 }
 let root = git(["rev-parse", "--show-toplevel"])
 func load(_ tag: String) -> [String: Any] {
-    let path = "\(root)/artifacts/windowserver-\(tag)/model/model.json"
+    let path = "\(root)/artifacts/macos_versions/\(tag)/model/model.json"
     guard let d = FileManager.default.contents(atPath: path),
           let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
         FileHandle.standardError.write(Data("cannot read \(path)\n".utf8)); exit(1)

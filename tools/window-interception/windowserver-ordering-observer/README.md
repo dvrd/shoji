@@ -97,17 +97,17 @@ Validated in the disposable guest on 2026-10-30 and 2026-10-31:
 
 Evidence:
 
-- `artifacts/windowserver-vm-probe/ws-existing-hook-events-20261030-175037/`
-- `artifacts/windowserver-vm-probe/ws-sls-delta-20261030-175458/delta.json`
-- `artifacts/windowserver-vm-probe/ws-timed-delta-live-20261030-184210/delta.json`
-- `artifacts/windowserver-vm-probe/ws-hold-visibility-sample-20261031-111348/`
-- `artifacts/windowserver-vm-probe/ws-gate-release-final-20261031-143821/`
-- `artifacts/windowserver-vm-probe/ws-gate-timeout-20261031-143838/`
-- `artifacts/windowserver-vm-probe/ws-gate-wait-staged-20261031-192837/`
-- `artifacts/windowserver-vm-probe/ws-gate-lowlatency-final-20261031-212932/`
-- `artifacts/windowserver-vm-probe/ws-visibility-gated-20261101-131239/`
-- `artifacts/windowserver-vm-probe/ws-gate-hardened-staged-20261101-132853/`
-- `artifacts/windowserver-vm-probe/ws-gate-hardened-result-20261101-140003/`
+- `artifacts/vm-probe/ws-existing-hook-events-20261030-175037/`
+- `artifacts/vm-probe/ws-sls-delta-20261030-175458/delta.json`
+- `artifacts/vm-probe/ws-timed-delta-live-20261030-184210/delta.json`
+- `artifacts/vm-probe/ws-hold-visibility-sample-20261031-111348/`
+- `artifacts/vm-probe/ws-gate-release-final-20261031-143821/`
+- `artifacts/vm-probe/ws-gate-timeout-20261031-143838/`
+- `artifacts/vm-probe/ws-gate-wait-staged-20261031-192837/`
+- `artifacts/vm-probe/ws-gate-lowlatency-final-20261031-212932/`
+- `artifacts/vm-probe/ws-visibility-gated-20261101-131239/`
+- `artifacts/vm-probe/ws-gate-hardened-staged-20261101-132853/`
+- `artifacts/vm-probe/ws-gate-hardened-result-20261101-140003/`
 
 ## Response format (version 3)
 
