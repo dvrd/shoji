@@ -10,7 +10,7 @@ physical thickness, rounded bevels, top-left highlights, a restrained shadow,
 and a transparent outer background. No text or additional background tile.
 
 Run `task build:app` to build and package `bin/Shoji.app`. To package the existing
-signed executable without rebuilding, run `python3 tools/macos/bundle.py`.
+signed executable without rebuilding, run `task build:app` (or `swift tools/macos/bundle.swift`).
 The bundle uses the persistent local signing identity and the existing
 `tech.shoji.window-manager` identifier. It is a background app with no Dock tile.
 
