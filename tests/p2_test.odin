@@ -263,6 +263,35 @@ command_server_services_complete_client_while_other_client_trickles_header :: pr
 Slow_Writer :: struct {
 	fd: i32,
 }
+
+Delayed_Command_Response :: struct {
+	fd: i32,
+	finished: bool,
+}
+write_delayed_command_response :: proc "c" (user: rawptr) -> rawptr {
+	context = runtime.default_context()
+	writer := (^Delayed_Command_Response)(user)
+	mac.write_all(writer.fd, []u8{'[', ']'})
+	time.sleep(2300 * time.Millisecond)
+	writer.finished = mac.write_all(writer.fd, []u8{'\n'})
+	mac.shutdown(writer.fd, 1)
+	return nil
+}
+
+@(test)
+command_client_waits_for_valid_delayed_reply_fragments :: proc(t: ^testing.T) {
+	fds: [2]i32
+	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) { return }
+	defer mac.close(fds[0]); defer mac.close(fds[1])
+	mac.prepare_socket(fds[0]); mac.prepare_socket(fds[1])
+	writer := Delayed_Command_Response{fd = fds[1]}
+	thread: posix.pthread_t
+	if !testing.expect(t, posix.pthread_create(&thread, nil, write_delayed_command_response, &writer) == nil) { return }
+	code := mac.client_receive_response(fds[0])
+	posix.pthread_join(thread)
+	testing.expect_value(t, code, 0)
+	testing.expect(t, writer.finished)
+}
 write_slow_bytes :: proc "c" (user: rawptr) -> rawptr {
 	context = runtime.default_context()
 	fd := (^Slow_Writer)(user).fd;byte: u8 = 0

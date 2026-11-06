@@ -119,6 +119,21 @@ addition_check :: proc() -> (wire.Capabilities, string) {
 	return addition_exchange(&packet, true)
 }
 
+// Gated Space move (C4): Window_To_Space_Transaction commits synchronously
+// through the transaction table so the WindowServer gate can apply a staged
+// landing. Matches Ws_Space_Send; refuses payloads without the capability.
+addition_space_transaction :: proc(_: rawptr, target: u64, wid: u32, source: u64) -> string {
+	caps, err := addition_check()
+	if err != "" {return err}
+	if .Space_Transaction not_in caps {return "Dock payload lacks transactional Space moves"}
+	packet := wire.begin(.Window_To_Space_Transaction)
+	wire.pack(&packet, target)
+	wire.pack(&packet, wid)
+	wire.pack(&packet, source)
+	_, err = addition_exchange(&packet)
+	return err
+}
+
 addition_action :: proc(action: Action) -> string {
 	caps, err := addition_check(); if err != "" {
 		return err

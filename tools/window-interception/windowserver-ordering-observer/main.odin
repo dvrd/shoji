@@ -58,7 +58,6 @@ Install_Result :: struct {
 
 STATUS_PATH :: "/private/tmp/shoji-ws-observer-status-26A434.bin"
 STARTED_PATH :: "/private/tmp/shoji-ws-observer-started-26A434.bin"
-REQUEST_PATH :: "/private/tmp/shoji-ws-observer-request"
 RESPONSE_PATH :: "/private/tmp/shoji-ws-observer-response-26A434.bin"
 
 @(default_calling_convention = "c")
@@ -80,8 +79,6 @@ Timebase_Info :: struct {
 
 observer_original: Ordering_Callback
 observer_start_calls, observer_calls: u64
-observer_hold_remaining, observer_hold_release: u32
-observer_hold_target: u64
 observer_entry: u64
 observer_branch: u32
 observer_timebase: Timebase_Info
@@ -116,14 +113,23 @@ Tgate_Status :: struct {
 	bootstrap_port, handshake_sent:               u64,
 }
 
-// Unslid address of _WSCurrentSessionBootstrapPort in 26A434 SkyLight; the
+// Unslid address of _WSCurrentSessionBootstrapPort in 26A434 SkyLight.
+// No arguments. Loads the session object and returns the mach_port_t at
+// +0x64. A missing session, or an unset port word, returns 0. The
 // bootstrap_port global is not the session port inside WindowServer.
 WS_SESSION_BP_UNSLID :: 0x1872b4afc
 
 gate_originals: [TABLE_OP_MAX + 1]u64
 gate_stubs: u64
-gate_hold_target: u64
-gate_hold_remaining, gate_hold_release: u32
+
+// Hold state machine (B2): one bounded slot for both hold scopes. Armed
+// only through the control thread (gate Arm or the file fallback); claims
+// happen on WindowServer threads in the two forwarding callbacks.
+hold: hook.Hold_Slot
+
+// Ordering receipt (C2): once-only completion signal for a watched window's
+// order-in, recorded by the forwarding callback without sleeping.
+watch: hook.Receipt_Slot
 
 // Mach gate service (B1). The service port is registered with the bootstrap
 // server; commands are accepted only from the registered owner process,
@@ -131,11 +137,42 @@ gate_hold_remaining, gate_hold_release: u32
 gate_mach_port: u32
 gate_mach_register_code: i32
 gate_owner_pid, gate_owner_pidversion: u32
+GATE_CLIENT_CDHASH :: #config(SHOJI_GATE_CLIENT_CDHASH, "")
+GATE_CLIENTS_DIR :: "/Library/GPUBundles/ShojiWindowServerProbe"
+GATE_CLIENTS_PATH :: GATE_CLIENTS_DIR + "/clients"
+gate_clients: [hook.GATE_CLIENTS_LIMIT]u8
+gate_clients_len: int
+
+// Reread on every HELLO (gate thread only), so a root installer's update
+// takes effect without restarting WindowServer. Any doubt → no runtime list.
+gate_clients_reload :: proc() {
+	gate_clients_len = 0
+	dir: posix.stat_t
+	if posix.lstat(GATE_CLIENTS_DIR, &dir) != .OK {return}
+	fd := posix.open(GATE_CLIENTS_PATH, {.NOFOLLOW, .CLOEXEC})
+	if fd < 0 {return}
+	defer posix.close(fd)
+	file: posix.stat_t
+	if posix.fstat(fd, &file) != .OK {return}
+	if !hook.gate_allowlist_trusted(
+		u32(file.st_uid), u32(transmute(u16)file.st_mode), i64(file.st_size),
+		u32(dir.st_uid), u32(transmute(u16)dir.st_mode),
+	) {return}
+	n := posix.read(fd, &gate_clients[0], len(gate_clients))
+	if i64(n) == i64(file.st_size) {gate_clients_len = int(n)}
+}
 gate_last_status: Tgate_Status
 
 gate_bootstrap_port: u32
 gate_service_send: u32
 gate_handshake_sent: u32
+gate_slide: u64
+gate_slide_known: u32
+
+session_bootstrap_port :: proc(slide: u64) -> u32 {
+	session_bp := transmute(proc "c" () -> u32)uintptr(WS_SESSION_BP_UNSLID + slide)
+	return session_bp()
+}
 
 gate_register_service :: proc(task: u32, slide: u64) {
 	// Reversed rendezvous: launchd on macOS 27 denies bootstrap_register to
@@ -151,11 +188,13 @@ gate_register_service :: proc(task: u32, slide: u64) {
 		return
 	}
 	gate_service_send = gate_mach_port
-	// WindowServer's bootstrap_port global is not the user-session bootstrap;
-	// SkyLight resolves it via _WSCurrentSessionBootstrapPort (session object
-	// chain, +0x64 port field). Call it through the same image we hooked.
-	session_bp := transmute(proc "c" () -> u32)uintptr(WS_SESSION_BP_UNSLID + slide)
-	port := session_bp()
+	// WindowServer's bootstrap_port global is not the user-session bootstrap.
+	// SkyLight resolves it via _WSCurrentSessionBootstrapPort. The port can
+	// still be 0 if this runs before the GUI session is attached; the control
+	// thread retries until it appears.
+	gate_slide = slide
+	intrinsics.atomic_store_explicit(&gate_slide_known, 1, .Release)
+	port := session_bootstrap_port(slide)
 	if port == 0 {
 		gate_mach_register_code = -2
 		return
@@ -164,92 +203,161 @@ gate_register_service :: proc(task: u32, slide: u64) {
 	gate_mach_register_code = 0
 }
 
-// Poll for the client-registered rendezvous and hand over the send right.
+// Poll for a client-registered rendezvous and hand over a send right.
+// handshake_sent stays set once any handover works, but does not block the
+// next client: each CLI invocation registers the name, takes one right, and
+// destroys the rendezvous port. Authorization is the audit token, not
+// possession of this send right.
 gate_try_handshake :: proc() {
-	if gate_bootstrap_port == 0 || intrinsics.atomic_load_explicit(&gate_handshake_sent, .Acquire) != 0 {return}
+	if gate_bootstrap_port == 0 {return}
 	client: u32
 	if hook.gate_bootstrap_look_up(gate_bootstrap_port, hook.GATE_RENDEZVOUS_NAME, &client) != 0 {return}
-	message: [128]u8
-	base := uintptr(&message[0])
-	(^u32)(base + 0)^ = hook.MACH_MSGH_BITS_COMPLEX | hook.MACH_MSG_TYPE_COPY_SEND
-	(^u32)(base + 4)^ = hook.GATE_HEADER_SIZE + size_of(hook.Gate_Port_Descriptor)
-	(^u32)(base + 8)^ = client
-	(^u32)(base + 12)^ = 0
-	(^u32)(base + 16)^ = 0
-	(^u32)(base + 20)^ = 7
-	descriptor := (^hook.Gate_Port_Descriptor)(base + hook.GATE_HEADER_SIZE)
-	descriptor.name = gate_service_send
-	descriptor.disposition = hook.MACH_MSG_TYPE_COPY_SEND
-	descriptor.type = hook.MACH_MSG_PORT_DESCRIPTOR
-	if hook.gate_mach_msg(&message[0], hook.MACH_MSG_SEND, hook.GATE_HEADER_SIZE + size_of(hook.Gate_Port_Descriptor), 0, 0, 0, 0) == 0 {
+	defer hook.gate_mach_port_deallocate(loader.mach_task_self(), client)
+	message: struct #align(16) {bytes: [128]u8}
+	n, ok := hook.gate_pack_handshake(message.bytes[:], client, gate_service_send)
+	if !ok {return}
+	if hook.gate_mach_msg(&message.bytes[0], hook.MACH_MSG_SEND, u32(n), 0, 0, 0, 0) == 0 {
 		intrinsics.atomic_store_explicit(&gate_handshake_sent, 1, .Release)
 	}
 }
 
-// Reply to a received request: the client's send-once reply right sits in
-// the received header's local_port slot.
+// Reply to a received request. The kernel leaves the send-once right in
+// msgh_remote_port; msgh_local_port is the gate's own receive right.
 gate_reply :: proc(buffer: ^[128]u8, command: u32, status: i32, data0, data1: u64) {
-	reply_right := (^u32)(uintptr(buffer) + 12)^
-	if reply_right == 0 {return}
-	(^u32)(uintptr(buffer) + 0)^ = hook.MACH_MSG_TYPE_MOVE_SEND_ONCE // bits
-	(^u32)(uintptr(buffer) + 4)^ = hook.GATE_MSG_SIZE
-	(^u32)(uintptr(buffer) + 8)^ = reply_right
-	(^u32)(uintptr(buffer) + 12)^ = 0
-	(^u32)(uintptr(buffer) + 16)^ = 0
-	(^u32)(uintptr(buffer) + hook.GATE_OFF_MAGIC)^ = hook.GATE_REPLY_MAGIC
-	(^u32)(uintptr(buffer) + hook.GATE_OFF_VERSION)^ = hook.GATE_VERSION
-	(^u32)(uintptr(buffer) + hook.GATE_OFF_COMMAND)^ = command
-	(^i32)(uintptr(buffer) + hook.GATE_OFF_COMMAND + 4)^ = status
-	(^u64)(uintptr(buffer) + hook.GATE_OFF_ARG0)^ = data0
-	(^u64)(uintptr(buffer) + hook.GATE_OFF_ARG1)^ = data1
-	hook.gate_mach_msg(buffer, hook.MACH_MSG_SEND, hook.GATE_MSG_SIZE, 0, 0, 0, 0)
+	reply_right, right_ok := hook.gate_received_reply_right(buffer[:])
+	if !right_ok {return}
+	n, ok := hook.gate_pack_reply(buffer[:], reply_right, command, status, data0, data1)
+	if !ok {return}
+	hook.gate_mach_msg(buffer, hook.MACH_MSG_SEND, u32(n), 0, 0, 0, 0)
 }
 
 gate_handle_message :: proc(buffer: ^[128]u8) {
-	base := uintptr(buffer)
-	magic := (^u32)(base + hook.GATE_OFF_MAGIC)^
-	version := (^u32)(base + hook.GATE_OFF_VERSION)^
-	command := (^u32)(base + hook.GATE_OFF_COMMAND)^
-	arg0 := (^u64)(base + hook.GATE_OFF_ARG0)^
-	arg1 := (^u64)(base + hook.GATE_OFF_ARG1)^
-	if magic != hook.GATE_MAGIC || version != hook.GATE_VERSION {
-		gate_reply(buffer, command, 1, 0, 0)
+	request, request_ok := hook.gate_unpack_request(buffer[:])
+	if !request_ok {
+		gate_reply(buffer, 0, 1, 0, 0)
 		return
 	}
-	token := (^hook.Audit_Token)(base + hook.GATE_MSG_SIZE)
-	pid := hook.gate_audit_pid(token)
-	pidversion := hook.gate_audit_pidversion(token)
-	if command == u32(hook.Gate_Command.Hello) {
-		if gate_owner_pid == 0 {
-			gate_owner_pid = pid
-			gate_owner_pidversion = pidversion
-		}
-		status := i32(0)
-		if gate_owner_pid != pid {status = 3}
-		gate_reply(buffer, command, status, u64(gate_owner_pid), u64(arg0))
+	token, audit_ok := hook.gate_audit_token(buffer[:])
+	pid := hook.gate_audit_pid(&token)
+	pidversion := hook.gate_audit_pidversion(&token)
+	if request.magic != hook.GATE_MAGIC {
+		gate_reply(buffer, request.command, 1, 0, 0)
 		return
 	}
-	if gate_owner_pid == 0 || pid != gate_owner_pid || pidversion != gate_owner_pidversion {
-		gate_reply(buffer, command, 4, u64(gate_owner_pid), 0)
+	if request.command == u32(hook.Gate_Command.Hello) {gate_clients_reload()}
+	if !audit_ok || !hook.gate_client_identity(&token, GATE_CLIENT_CDHASH, string(gate_clients[:gate_clients_len])) {
+		gate_reply(buffer, request.command, 4, 0, 0)
 		return
 	}
+	// Owner-death reclaim: a verified-identity HELLO may take over only when
+	// the registered owner is confirmed gone (ESRCH). The new owner starts
+	// with no armed hold or watch inherited from the dead one.
+	if request.command == u32(hook.Gate_Command.Hello) && gate_owner_pid != 0 &&
+	   hook.gate_should_reclaim(gate_owner_pid, gate_owner_pidversion, pid, pidversion, gate_owner_alive(gate_owner_pid)) {
+		gate_owner_pid, gate_owner_pidversion = 0, 0
+		gate_cancel_staged()
+		hook.receipt_cancel(&watch)
+	}
+	status := hook.gate_decide(&gate_owner_pid, &gate_owner_pidversion, audit_ok, pid, pidversion, request.version, request.command)
+	if status != 0 {
+		gate_reply(buffer, request.command, status, u64(gate_owner_pid), request.arg0)
+		return
+	}
+	command := request.command
+	arg0 := request.arg0
+	arg1 := request.arg1
 	switch hook.Gate_Command(command) {
+	case .LayoutBegin, .LayoutAdd, .LayoutArm:
+		if target, generation, busy := hook.hold_busy(&hold); busy {
+			gate_reply(buffer, command, 6, target, u64(generation))
+			return
+		}
+		#partial switch hook.Gate_Command(command) {
+		case .LayoutBegin:
+			hook.layout_begin(&layout_plan)
+			gate_reply(buffer, command, 0, 0, 0)
+		case .LayoutAdd:
+			x, y := hook.placement_unpack(arg1)
+			if !hook.layout_add(&layout_plan, arg0, x, y) {gate_reply(buffer, command, 1, 0, 0); return}
+			gate_reply(buffer, command, 0, u64(layout_plan.count), arg0)
+		case .LayoutArm:
+			if observer_timebase.numer == 0 || observer_timebase.denom == 0 {gate_reply(buffer, command, 8, 0, 0); return}
+			if !hook.layout_seal(&layout_plan, arg0, arg1) {gate_reply(buffer, command, 1, 0, 0); return}
+			layout_budget_us = arg1
+			layout_generation = hold.generation + 1
+			if layout_generation == 0 {layout_generation = 1}
+			intrinsics.atomic_store_explicit(&layout_complete, 0, .Release)
+			generation, _ := hook.hold_arm(&hold, arg0, hook.HOLD_SCOPE_INLINE)
+			gate_reply(buffer, command, 0, arg0, u64(generation))
+		}
+	case .LayoutStatus:
+		if layout_generation == 0 {gate_reply(buffer, command, 8, 0, 0)} else if intrinsics.atomic_load_explicit(&layout_complete, .Acquire) == 0 {
+			gate_reply(buffer, command, 6, u64(layout_generation), 0)
+		} else {
+			gate_reply(buffer, command, layout_result, u64(layout_generation), u64(layout_elapsed_us) << 32 | u64(layout_applied))
+		}
+	case .ArmPlace:
+		x, y := hook.placement_unpack(arg1)
+		if !hook.placement_coordinates_valid(arg0, i64(x), i64(y)) {
+			gate_reply(buffer, command, 1, 0, 0)
+			return
+		}
+		if target, generation, busy := hook.hold_busy(&hold); busy {
+			gate_reply(buffer, command, 6, target, u64(generation))
+			return
+		}
+		placement_x, placement_y = x, y
+		placement_generation = hold.generation + 1
+		if placement_generation == 0 {placement_generation = 1}
+		intrinsics.atomic_store_explicit(&placement_space_only, 0, .Release)
+		intrinsics.atomic_store_explicit(&placement_auto, 0, .Release)
+		intrinsics.atomic_store_explicit(&placement_complete, 0, .Release)
+		generation, _ := hook.hold_arm(&hold, arg0, hook.HOLD_SCOPE_INLINE)
+		gate_reply(buffer, command, 0, arg0, u64(generation))
+	case .SpacePlace, .SpaceApply:
+		// Same staged placement, claimed by the transaction-table channel
+		// (space ops). The shim applies it with the context's connection;
+		// SpaceApply applies on claim instead of waiting for Release.
+		x, y := hook.placement_unpack(arg1)
+		if !hook.placement_coordinates_valid(arg0, i64(x), i64(y)) {
+			gate_reply(buffer, command, 1, 0, 0)
+			return
+		}
+		if target, generation, busy := hook.hold_busy(&hold); busy {
+			gate_reply(buffer, command, 6, target, u64(generation))
+			return
+		}
+		placement_x, placement_y = x, y
+		placement_generation = hold.generation + 1
+		if placement_generation == 0 {placement_generation = 1}
+		intrinsics.atomic_store_explicit(&placement_space_only, 1, .Release)
+		intrinsics.atomic_store_explicit(&placement_auto, command == u32(hook.Gate_Command.SpaceApply) ? 1 : 0, .Release)
+		intrinsics.atomic_store_explicit(&placement_complete, 0, .Release)
+		generation, _ := hook.hold_arm(&hold, arg0, hook.HOLD_SCOPE_TABLE)
+		gate_reply(buffer, command, 0, arg0, u64(generation))
+	case .PlacementStatus:
+		if placement_generation == 0 {
+			gate_reply(buffer, command, 8, 0, 0)
+		} else if intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 {
+			gate_reply(buffer, command, 6, u64(placement_generation), 0)
+		} else {
+			gate_reply(buffer, command, placement_result, u64(placement_generation), placement_actual)
+		}
 	case .Arm:
-		if arg1 & 1 != 0 {
-			intrinsics.atomic_store_explicit(&observer_hold_target, arg0, .Release)
-			intrinsics.atomic_store_explicit(&observer_hold_release, 0, .Release)
-			intrinsics.atomic_store_explicit(&observer_hold_remaining, 1, .Release)
+		if arg1 & 3 == 0 {
+			// Scope 0 arms neither hold; ownership probe only.
+			gate_reply(buffer, command, 0, arg0, arg1)
+			return
 		}
-		if arg1 & 2 != 0 {
-			intrinsics.atomic_store_explicit(&gate_hold_target, arg0, .Release)
-			intrinsics.atomic_store_explicit(&gate_hold_release, 0, .Release)
-			intrinsics.atomic_store_explicit(&gate_hold_remaining, 1, .Release)
+		if target, generation, busy := hook.hold_busy(&hold); busy {
+			gate_reply(buffer, command, 6, target, u64(generation))
+			return
 		}
-		gate_reply(buffer, command, 0, arg0, arg1)
+		generation, _ := hook.hold_arm(&hold, arg0, u32(arg1))
+		gate_reply(buffer, command, 0, arg0, u64(generation))
 	case .Release:
-		intrinsics.atomic_store_explicit(&observer_hold_release, 1, .Release)
-		intrinsics.atomic_store_explicit(&gate_hold_release, 1, .Release)
-		gate_reply(buffer, command, 0, 0, 0)
+		target, release_status := gate_release(u32(arg0))
+		gate_reply(buffer, command, release_status, target, u64(hold.generation))
 	case .Status:
 		calls := intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
 		state := u64(gate_handshake_sent) << 32 | u64(gate_owner_pid)
@@ -257,9 +365,52 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 	case .Dump:
 		write_dump()
 		gate_reply(buffer, command, 0, intrinsics.atomic_load_explicit(&observer_calls, .Acquire), 0)
+	case .Watch:
+		if arg0 == 0 {
+			hook.receipt_cancel(&watch)
+			gate_reply(buffer, command, 0, 0, u64(watch.generation))
+			return
+		}
+		generation, armed := hook.receipt_arm(&watch, arg0)
+		if !armed {
+			// A pending watch is busy; cancel it explicitly with Watch 0.
+			gate_reply(buffer, command, 6, u64(watch.target), u64(generation))
+			return
+		}
+		gate_reply(buffer, command, 0, arg0, u64(generation))
+	case .WatchStatus:
+		receipt_status, receipt_result, receipt_ticks := hook.receipt_take(&watch, u32(arg0))
+		gate_reply(buffer, command, receipt_status, u64(u32(receipt_result)), receipt_ticks)
 	case .Hello:
-		gate_reply(buffer, command, 5, 0, 0)
+		gate_reply(buffer, command, 0, u64(gate_owner_pid), arg0)
 	}
+}
+
+// Release by generation (0 = unconditional). An unclaimed placement or
+// layout completes as cancelled (8) so its status never stays pending.
+gate_release :: proc(generation: u32) -> (target: u64, status: i32) {
+	target, status = hook.hold_release(&hold, generation)
+	if _, _, busy := hook.hold_busy(&hold); !busy && status == 0 && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 {
+		finish_placement(8, 0)
+	}
+	if _, _, busy := hook.hold_busy(&hold); !busy && status == 0 && layout_generation == hold.generation && intrinsics.atomic_load_explicit(&layout_complete, .Acquire) == 0 {
+		layout_result = 8
+		layout_applied, layout_elapsed_us = 0, 0
+		intrinsics.atomic_store_explicit(&layout_complete, 1, .Release)
+	}
+	return
+}
+
+gate_cancel_staged :: proc() {
+	gate_release(0)
+}
+
+// kill(pid, 0): ESRCH is the only "gone" answer. EPERM (exists, other user)
+// and PID reuse both read as alive, so reclaim errs toward refusing.
+gate_owner_alive :: proc(pid: u32) -> bool {
+	if pid == 0 || pid > 0x7fffffff {return false}
+	if posix.kill(posix.pid_t(pid), posix.Signal(0)) == .OK {return true}
+	return posix.errno() != .ESRCH
 }
 
 write_dump :: proc() {
@@ -343,21 +494,41 @@ gate_shim_impl :: proc "c" (ctx: rawptr, op: u64) -> u64 {
 	before := mach_absolute_time()
 	held := u32(0)
 	wid, wid_ok := tlv_peek(ctx)
-	if wid_ok && op <= TABLE_OP_MAX &&
-	   u64(wid) == intrinsics.atomic_load_explicit(&gate_hold_target, .Acquire) &&
-	   intrinsics.atomic_exchange_explicit(&gate_hold_remaining, 0, .Acq_Rel) == 1 {
+	space_armed := intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 &&
+		intrinsics.atomic_load_explicit(&placement_space_only, .Acquire) != 0
+	claimable := !space_armed || (op >= SPACE_OP_MIN && op <= SPACE_OP_MAX)
+	claimed := wid_ok && op <= TABLE_OP_MAX && claimable && hook.hold_try_claim(&hold, u64(wid), false)
+	if claimed && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_auto, .Acquire) != 0 {
+		// SpaceApply: frame-scale; the owner's own commit is blocked on us.
+		// held=3 matches the C1 automatic layout callback.
+		held = 3
+		connection := (^rawptr)(uintptr(ctx) + 0x8)^
+		apply_server_placement(connection, u32(wid))
+	} else if claimed {
 		held = 1
 		deadline := gate_deadline(before)
 		for mach_absolute_time() < deadline {
-			if intrinsics.atomic_load_explicit(&gate_hold_release, .Acquire) != 0 {break}
+			if hook.hold_released(&hold, false) {break}
 			usleep(1_000)
 		}
-		if intrinsics.atomic_load_explicit(&gate_hold_release, .Acquire) == 0 {held = 2}
+		if !hook.hold_released(&hold, false) {held = 2}
+		if placement_generation == hold.generation {
+			if held == 1 {
+				// DISPATCH.md: the transaction context holds its connection
+				// object at +0x08 (the +0x10/+0x18 stream offsets are already
+				// live-verified through tlv_peek). Nil fails placement closed.
+				connection := (^rawptr)(uintptr(ctx) + 0x8)^
+				apply_server_placement(connection, u32(wid))
+			} else {
+				finish_placement(9, 0)
+			}
+		}
 	}
 	result := u64(0)
 	if op <= TABLE_OP_MAX && gate_originals[op] != 0 {
 		result = gate_call_handler(gate_originals[op], ctx)
 	}
+	if held != 0 {hook.hold_finish(&hold)}
 	after := mach_absolute_time()
 	sequence := intrinsics.atomic_add_explicit(&observer_calls, 1, .Relaxed)
 	event := &observer_events[sequence % OBSERVER_EVENTS]
@@ -526,25 +697,39 @@ ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i
 	held := u32(0)
 	// Claim exactly once: a concurrent matching call must not double-hold.
 	if count > 0 && ids != nil && operations != nil && operations[0] == 1 &&
-	   u64(ids[0]) == intrinsics.atomic_load_explicit(&observer_hold_target, .Acquire) &&
-	   intrinsics.atomic_exchange_explicit(&observer_hold_remaining, 0, .Acq_Rel) == 1 {
-		held = 1
-		// Bound by the Mach clock, not by usleep iterations; the guest
-		// oversleeps (3,000 ms of requested sleeps measured 4.8 s).
-		deadline := before
-		if observer_timebase.denom != 0 {
-			deadline += 3 * 1_000_000_000 * u64(observer_timebase.denom) / u64(observer_timebase.numer)
+	   hook.hold_try_claim(&hold, u64(ids[0]), true) {
+		if layout_generation == hold.generation {
+			// held=3 is an automatic bounded layout callback, distinct from
+			// external release (1) and fail-open timeout (2).
+			held = 3
+			apply_server_layout(connection)
 		} else {
-			deadline += 72_000_000
+			held = 1
+			// Bound by the Mach clock, not by usleep iterations; the guest
+			// oversleeps (3,000 ms of requested sleeps measured 4.8 s).
+			deadline := before
+			if observer_timebase.denom != 0 {
+				deadline += 3 * 1_000_000_000 * u64(observer_timebase.denom) / u64(observer_timebase.numer)
+			} else {
+				deadline += 72_000_000
+			}
+			for mach_absolute_time() < deadline {
+				if hook.hold_released(&hold, true) {break}
+				usleep(1_000)
+			}
+			if !hook.hold_released(&hold, true) {held = 2}
+			if placement_generation == hold.generation {
+				if held == 1 {apply_server_placement(connection, ids[0])} else {finish_placement(9, 0)}
+			}
 		}
-		for mach_absolute_time() < deadline {
-			if intrinsics.atomic_load_explicit(&observer_hold_release, .Acquire) != 0 {break}
-			usleep(1_000)
-		}
-		if intrinsics.atomic_load_explicit(&observer_hold_release, .Acquire) == 0 {held = 2}
 	}
 	result := observer_original(connection, ids, operations, relative, count, flag)
+	if held != 0 {hook.hold_finish(&hold)}
 	after := mach_absolute_time()
+	// The receipt fires on the forwarded order-in, never delaying it.
+	if count > 0 && ids != nil && operations != nil && operations[0] == 1 {
+		hook.receipt_fire(&watch, u64(ids[0]), result, after)
+	}
 	sequence := intrinsics.atomic_add_explicit(&observer_calls, 1, .Relaxed)
 	event := &observer_events[sequence % OBSERVER_EVENTS]
 	event^ = {}
@@ -570,89 +755,24 @@ ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i
 
 control_thread :: proc "c" (_: rawptr) -> rawptr {
 	context = runtime.default_context()
-	// The request file persists after handling and this process cannot unlink
-	// it (sticky directory, owned by the desktop user). Process each distinct
-	// command once instead of re-executing a stale file every poll; a leftover
-	// "hold" file otherwise re-arms the gate after the claim completes. The
-	// Mach service (B1) is the primary channel; the file channel remains as a
-	// fallback for the existing experiment scripts.
-	last: [32]u8
-	last_n := -1
-	buffer: [128]u8
+	// Control enters only through authenticated Mach messages. The retired
+	// file channel must not bypass the signed-client identity policy.
+	buffer: struct #align(16) {bytes: [128]u8}
 	for {
 		if gate_mach_port != 0 {
+			if gate_bootstrap_port == 0 && intrinsics.atomic_load_explicit(&gate_slide_known, .Acquire) != 0 {
+				if port := session_bootstrap_port(gate_slide); port != 0 {
+					gate_bootstrap_port = port
+					gate_mach_register_code = 0
+					gate_last_status.bootstrap_port = u64(port)
+					gate_last_status.mach_code = 0
+					write_file(TGATE_STATUS_PATH, &gate_last_status, size_of(gate_last_status))
+				}
+			}
 			gate_try_handshake()
-			options := u32(hook.MACH_MSG_RECEIVE) |
-				u32(hook.MACH_RCV_TIMEOUT) |
-				u32(hook.MACH_MSG_TRAILER_FORMAT_0 << 28) |
-				u32(hook.MACH_RCV_TRAILER_AUDIT << 24)
-			code := hook.gate_mach_msg(&buffer[0], options, 0, len(buffer), gate_mach_port, 10, 0)
+			code := hook.gate_mach_msg(&buffer.bytes[0], hook.gate_receive_audit_options(), 0, len(buffer.bytes), gate_mach_port, 10, 0)
 			if code == 0 {
-				gate_handle_message(&buffer)
-			}
-		}
-		fd := posix.open(REQUEST_PATH, {.NOFOLLOW, .NONBLOCK})
-		if fd >= 0 {
-			info: posix.stat_t
-			request: [32]u8
-			valid := posix.fstat(fd, &info) == nil && posix.S_ISREG(info.st_mode) &&
-				info.st_uid == 501 && info.st_size > 0 && info.st_size <= len(request)
-			n: int
-			if valid {
-				n = posix.read(fd, &request[0], len(request))
-				// Reject in-flight partial writes: every command ends with \n.
-				valid = n > 0 && request[n - 1] == '\n'
-			}
-			posix.close(fd)
-			unchanged := valid && n == last_n
-			if unchanged {
-				for index in 0 ..< n {
-					if request[index] != last[index] {unchanged = false; break}
-				}
-			}
-			if valid && !unchanged {
-				last_n = n
-				for index in 0 ..< n {last[index] = request[index]}
-			}
-			if valid && !unchanged && n >= 5 && string(request[:5]) == "dump\n" {
-				write_dump()
-			} else if valid && !unchanged && n >= 8 && string(request[:8]) == "release\n" {
-				intrinsics.atomic_store_explicit(&observer_hold_release, 1, .Release)
-				intrinsics.atomic_store_explicit(&gate_hold_release, 1, .Release)
-			} else if valid && !unchanged && n >= 6 && string(request[:5]) == "hold " {
-				target: u64
-				digits := 0
-				for index in 5 ..< n {
-					byte := request[index]
-					if byte == '\n' {break}
-					if byte < '0' || byte > '9' {digits = 0; break}
-					if target < max(u64) / 10 {
-						target = target * 10 + u64(byte - '0')
-						digits += 1
-					}
-				}
-				if digits > 0 && target <= u64(max(u32)) {
-					intrinsics.atomic_store_explicit(&observer_hold_target, target, .Release)
-					intrinsics.atomic_store_explicit(&observer_hold_release, 0, .Release)
-					intrinsics.atomic_store_explicit(&observer_hold_remaining, 1, .Release)
-				}
-			} else if valid && !unchanged && n >= 7 && string(request[:6]) == "thold " {
-				target: u64
-				digits := 0
-				for index in 6 ..< n {
-					byte := request[index]
-					if byte == '\n' {break}
-					if byte < '0' || byte > '9' {digits = 0; break}
-					if target < max(u64) / 10 {
-						target = target * 10 + u64(byte - '0')
-						digits += 1
-					}
-				}
-				if digits > 0 && target <= u64(max(u32)) {
-					intrinsics.atomic_store_explicit(&gate_hold_target, target, .Release)
-					intrinsics.atomic_store_explicit(&gate_hold_release, 0, .Release)
-					intrinsics.atomic_store_explicit(&gate_hold_remaining, 1, .Release)
-				}
+				gate_handle_message(&buffer.bytes)
 			}
 		}
 		if gate_mach_port == 0 {usleep(1_000)}
@@ -684,6 +804,7 @@ install_observer :: proc() {
 	result.candidate = entry
 	for index in 0 ..< 16 {result.entry_bytes[index] = bytes[index]}
 	if !hook.matches_ordering_entry(location, bytes[:16]) {result.status = 24; return}
+	if !verify_placement_helpers(location.slide) {result.status = 25; return}
 	page_size := mach.vm_page_size
 	if page_size == 0 || page_size & (page_size - 1) != 0 {result.status = 3; return}
 	page := entry & ~(page_size - 1)
@@ -738,9 +859,8 @@ install_observer :: proc() {
 	observer_entry = entry
 	observer_branch = plan.entry_jump[0]
 	observer_original = transmute(Ordering_Callback)uintptr(trampoline)
-	intrinsics.atomic_store_explicit(&observer_hold_target, 0, .Release)
-	intrinsics.atomic_store_explicit(&observer_hold_release, 0, .Release)
-	intrinsics.atomic_store_explicit(&observer_hold_remaining, 0, .Release)
+	hold = {}
+	watch = {}
 
 	barrier: hook.Execution_Barrier
 	state: hook.Inline_State

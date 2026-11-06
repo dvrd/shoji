@@ -37,7 +37,6 @@ jobs:
           task test:amd64
           task test:harness
           task test:dockscan
-          task test:raven
           task test:motion
       - name: Build arm64e compiler
         run: |

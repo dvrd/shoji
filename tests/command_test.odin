@@ -551,3 +551,143 @@ window_family_and_area_selectors_follow_tree_structure :: proc(t: ^testing.T) {
 	m.focused = 0
 	testing.expect_value(t, e.select_window(&m, "largest").id, u32(1))
 }
+
+@(test)
+window_space_move_carries_destination_tile_landing :: proc(t: ^testing.T) {
+	m: e.Manager
+	r: Recorder
+	fixture(&m, &r)
+	defer e.manager_destroy(&m)
+	defer delete(r.actions)
+	other := e.add_space(&m, 200, 10, 2, {0, 0, 1000, 800})
+	other.view.layout = .BSP
+	e.add_window(&m, e.Window{id = 3, pid = 44, app = "Notes", role = "AXWindow", subrole = "AXStandardWindow", space = 200, display = 10})
+	clear(&r.actions)
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--space", "2"}).failed)
+	landing: e.Rect
+	for a in r.actions {if a.kind == .Space && a.window == 1 {landing = a.frame}}
+	testing.expect(t, landing.w > 0 && landing.h > 0)
+	n := e.find(other.view.root, 1)
+	testing.expect(t, n != nil)
+	if n != nil {testing.expect_value(t, e.frame_for(n), landing)}
+	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) == nil)
+}
+
+@(test)
+window_space_move_failure_unstages_destination :: proc(t: ^testing.T) {
+	m: e.Manager
+	r: Recorder
+	fixture(&m, &r)
+	defer e.manager_destroy(&m)
+	defer delete(r.actions)
+	other := e.add_space(&m, 200, 10, 2, {0, 0, 1000, 800})
+	other.view.layout = .BSP
+	e.add_window(&m, e.Window{id = 3, pid = 44, app = "Notes", role = "AXWindow", subrole = "AXStandardWindow", space = 200, display = 10})
+	r.fail = true
+	testing.expect(t, e.execute(&m, []string{"window", "1", "--space", "2"}).failed)
+	testing.expect(t, e.find(other.view.root, 1) == nil)
+	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) != nil)
+	testing.expect_value(t, m.windows[1].space, 100)
+}
+
+@(test)
+window_space_move_to_float_space_has_no_landing :: proc(t: ^testing.T) {
+	m: e.Manager
+	r: Recorder
+	fixture(&m, &r)
+	defer e.manager_destroy(&m)
+	defer delete(r.actions)
+	other := e.add_space(&m, 200, 10, 2, {0, 0, 1000, 800})
+	other.view.layout = .Float
+	clear(&r.actions)
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--space", "2"}).failed)
+	for a in r.actions {if a.kind == .Space {testing.expect_value(t, a.frame, e.Rect{})}}
+}
+
+Batch_Recorder :: struct {
+	calls: int,
+	moves: [dynamic]e.Layout_Move,
+	result: bool,
+}
+@(thread_local) batch_recorder: Batch_Recorder
+
+record_batch :: proc(user: rawptr, moves: []e.Layout_Move) -> bool {
+	batch_recorder.calls += 1
+	for move in moves {append(&batch_recorder.moves, move)}
+	return batch_recorder.result
+}
+
+batch_fixture :: proc(m: ^e.Manager, r: ^Recorder) {
+	fixture(m, r)
+	m.layout_batch = record_batch
+	batch_recorder = {result = true}
+	// Settle the initial tiles so the next change is a pure move.
+	testing_flush_all(m)
+	clear(&r.actions)
+	batch_recorder.calls = 0
+	clear(&batch_recorder.moves)
+}
+
+testing_flush_all :: proc(m: ^e.Manager) {
+	for s in m.spaces {e.flush(m, s)}
+}
+
+@(test)
+layout_batch_pre_applies_moves_then_resyncs_every_window :: proc(t: ^testing.T) {
+	m: e.Manager
+	r: Recorder
+	batch_fixture(&m, &r)
+	defer e.manager_destroy(&m)
+	defer delete(r.actions)
+	defer delete(batch_recorder.moves)
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--swap", "2"}).failed)
+	testing.expect_value(t, batch_recorder.calls, 1)
+	testing.expect_value(t, len(batch_recorder.moves), 2)
+	// Owning apps are not told about server-side moves; the per-window frame
+	// writes must still follow the batch.
+	frames := 0
+	for a in r.actions {if a.kind == .Frame {frames += 1}}
+	testing.expect_value(t, frames, 2)
+	for move in batch_recorder.moves {
+		testing.expect_value(t, m.windows[move.window].frame.x, move.x)
+		testing.expect_value(t, m.windows[move.window].frame.y, move.y)
+		// The resync write must not trust WindowServer's (already moved) bounds.
+		testing.expect(t, m.windows[move.window].server_placed)
+	}
+}
+
+@(test)
+layout_batch_skips_resizes_and_animation :: proc(t: ^testing.T) {
+	m: e.Manager
+	r: Recorder
+	batch_fixture(&m, &r)
+	defer e.manager_destroy(&m)
+	defer delete(r.actions)
+	defer delete(batch_recorder.moves)
+	// A third window resizes the existing tiles: not position-only.
+	e.add_window(&m, e.Window{id = 3, pid = 44, app = "Notes", role = "AXWindow", subrole = "AXStandardWindow", space = 100, display = 10})
+	testing_flush_all(&m)
+	testing.expect_value(t, batch_recorder.calls, 0)
+	// Animated moves keep today's animation path.
+	m.animation_duration = 0.2
+	clear(&r.actions)
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--swap", "2"}).failed)
+	testing.expect_value(t, batch_recorder.calls, 0)
+}
+
+@(test)
+layout_batch_failure_still_applies_frames :: proc(t: ^testing.T) {
+	m: e.Manager
+	r: Recorder
+	batch_fixture(&m, &r)
+	defer e.manager_destroy(&m)
+	defer delete(r.actions)
+	defer delete(batch_recorder.moves)
+	batch_recorder.result = false
+	testing.expect(t, !e.execute(&m, []string{"window", "1", "--swap", "2"}).failed)
+	testing.expect_value(t, batch_recorder.calls, 1)
+	testing.expect(t, !m.windows[1].server_placed && !m.windows[2].server_placed)
+	frames := 0
+	for a in r.actions {if a.kind == .Frame {frames += 1}}
+	testing.expect_value(t, frames, 2)
+}

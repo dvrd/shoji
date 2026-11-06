@@ -501,7 +501,7 @@ pbzm_decodes_upstream_raven_and_stored_chunks :: proc(t: ^testing.T) {
 	}
 	defer os.remove_all(dir)
 	encoded := transmute([]u8)#load(
-		"../vendor/liblzraven/tests/vectors/zeros_4k.rav",
+		"testdata/zeros_4k.rav",
 	)
 	bytes := make([dynamic]u8)
 	append(&bytes, ..pbzm_fixture(encoded, 4096))

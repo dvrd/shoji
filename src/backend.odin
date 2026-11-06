@@ -289,6 +289,9 @@ State :: struct {
 	event_sink: proc(user: rawptr, event: Event),
 	event_user: rawptr,
 	workspace_events: Workspace_State,
+	close_focus: Close_Focus_Recovery,
+	// Experimental WindowServer gate (C4). Opt-in; never required by native paths.
+	ws: Ws_Adapter,
 	mouse: Mouse_State,
 	stack_touch: Stack_Touch_State,
 	manager: Manager,
@@ -393,8 +396,7 @@ native_focus_verified :: proc(user: rawptr, pid: i32, window: u32) -> bool {
 	focused := attribute(app.element, "AXFocusedWindow")
 	if focused == nil {return false}
 	defer CFRelease(focused)
-	id: u32
-	return _AXUIElementGetWindow(focused, &id) == 0 && id == window
+	return native_focus_owner(state, pid, focused) == window
 }
 
 focus_raise_result :: proc(code: i32, pid: i32, window: u32, user: rawptr, verify: Focus_Verifier) -> string {
@@ -420,6 +422,24 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 	}
 	if action.kind == .Display_Focus {
 		return focus_display(state, action.display)
+	}
+	if action.kind == .Space && action.frame.w > 0 && state.ws.state == .Serving {
+		// C4: land at the destination tile inside the move's own commit.
+		// Unhandled → today's managed-space move below.
+		move := ws_space_move(
+			&state.ws, action.window, action.space, window_space(state, action.window),
+			i32(math.round(action.frame.x)), i32(math.round(action.frame.y)),
+			addition_space_transaction, nil,
+		)
+		if move.moved {
+			state.dirty = true
+			if w := state.manager.windows[action.window]; w != nil && move.placed {
+				w.server_placed = true
+			}
+			motion_trace_record(&state.manager.motion_trace, {kind = move.placed ? "ws-space-placed" : "ws-space-moved", window = action.window, space = action.space})
+			focus_ring_note_action(state, action)
+			return ""
+		}
 	}
 	element := state.windows[action.window]
 	if action.kind >= .Space_Focus ||
@@ -472,15 +492,41 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 			"runningApplicationWithProcessIdentifier:",
 			w.pid,
 		)
+		// C2: arm a once-only ordering receipt before activation, which can
+		// itself bring the window forward (adapter only). One watch at a time.
+		if superseded := ws_focus_cancel(&state.ws); superseded != 0 {
+			motion_trace_record(&state.manager.motion_trace, {kind = "ws-focus-receipt-superseded", window = superseded})
+		}
+		receipt_generation, watching := ws_watch(&state.ws, w.id)
 		if app == nil ||
 		   !intrinsics.objc_send(bool, app, "activateWithOptions:", uint(2)) {
+			if watching {ws_watch(&state.ws, 0)}
 			return "could not activate application"
 		}
 		set_attribute(element, "AXMain", kCFBooleanTrue)
 		raise := cf_string("AXRaise")
 		defer CFRelease(raise)
 		code := AXUIElementPerformAction(element, raise)
-		if err := focus_raise_result(code, w.pid, w.id, state, native_focus_verified); err != "" {return err}
+		ordered := false
+		if watching {
+			receipt, _ := ws_receipt(&state.ws, receipt_generation)
+			ordered = receipt == .Fired
+			if !ordered && code != 0 {
+				// AXRaise reported an error: the receipt decides, briefly.
+				ordered = ws_receipt_wait(&state.ws, receipt_generation, 50 * time.Millisecond)
+			}
+			if ordered || code != 0 {
+				ws_watch(&state.ws, 0)
+				motion_trace_record(&state.manager.motion_trace, {kind = ordered ? "ws-focus-receipt-fired" : "ws-focus-receipt-timeout", window = w.id, value = f64(code)})
+			} else {
+				// The app orders the window in after AXRaise returns; resolve
+				// the receipt on later loop ticks instead of blocking here.
+				ws_focus_pending(&state.ws, receipt_generation, w.id, time.now())
+			}
+		}
+		if !ordered {
+			if err := focus_raise_result(code, w.pid, w.id, state, native_focus_verified); err != "" {return err}
+		}
 	case .Close:
 		button := attribute(element, "AXCloseButton")
 		if button == nil {
@@ -755,6 +801,15 @@ write_accessibility_frame :: proc(
 	}
 	return ""
 }
+// After a gated move WindowServer already shows the target position, so its
+// bounds would make the write a no-op and leave the app's frame stale
+// (c1c2-foreign-20261105). Keep the size, forget the position.
+frame_write_previous :: proc(previous: Maybe(Rect), server_placed: bool) -> Maybe(Rect) {
+	p, known := previous.?
+	if !known || !server_placed {return previous}
+	return Rect{math.INF_F64, math.INF_F64, p.w, p.h}
+}
+
 apply_frame_now :: proc(state: ^State, window: u32, frame: Rect) -> string {
 	if state.read_only {
 		return "window operations are disabled in read-only inspection"
@@ -815,9 +870,10 @@ apply_frame_now :: proc(state: ^State, window: u32, frame: Rect) -> string {
 		app.element,
 		element,
 		effective,
-		previous = previous,
+		previous = frame_write_previous(previous, w.server_placed),
 		size_tolerance = scroll ? .5 : 0,
 	)
+	w.server_placed = false
 	present := frame_updates_end(state)
 	if state.manager.motion_trace.active {
 		actual: Rect

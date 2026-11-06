@@ -7,6 +7,20 @@ import "core:sys/posix"
 import "core:testing"
 
 @(test)
+windowserver_client_identity_refuses_unconfigured_mismatched_and_failed_queries :: proc(t: ^testing.T) {
+	hash: [20]u8
+	hash[0], hash[1] = 0xab, 0xcd
+	pin := "abcd000000000000000000000000000000000000"
+	testing.expect(t, wire.gate_identity_matches(pin, hash[:], 0))
+	testing.expect(t, !wire.gate_identity_matches("", hash[:], 0))
+	testing.expect(t, !wire.gate_identity_matches(pin, hash[:], -1))
+	testing.expect(t, !wire.gate_identity_matches(pin, hash[:19], 0))
+	testing.expect(t, !wire.gate_identity_matches("xbcd000000000000000000000000000000000000", hash[:], 0))
+	hash[19] = 1
+	testing.expect(t, !wire.gate_identity_matches(pin, hash[:], 0))
+}
+
+@(test)
 windowserver_target_requires_the_exact_system_executable :: proc(
 	t: ^testing.T,
 ) {
@@ -97,4 +111,510 @@ windowserver_protocol_rejects_unknown_and_trailing_requests :: proc(
 	testing.expect(t, wire.validate(.Handshake, data[3:]))
 	testing.expect(t, !wire.validate(.Handshake, []u8{0}))
 	testing.expect(t, !wire.validate(wire.Opcode(255), nil))
+}
+
+@(test)
+windowserver_gate_handshake_includes_the_descriptor_count :: proc(t: ^testing.T) {
+	buf: [128]u8
+	n, ok := wire.gate_pack_handshake(buf[:], 11, 22)
+	testing.expect(t, ok)
+	testing.expect_value(t, n, wire.GATE_HANDSHAKE_SIZE)
+	count, count_ok := wire.gate_load_u32(buf[:], wire.GATE_DESC_COUNT_OFF)
+	testing.expect(t, count_ok)
+	testing.expect_value(t, count, u32(1))
+	port, port_ok := wire.gate_handshake_send_right(buf[:])
+	testing.expect(t, port_ok)
+	testing.expect_value(t, port, u32(22))
+	buf[wire.GATE_DESC_COUNT_OFF] = 0
+	_, missing := wire.gate_handshake_send_right(buf[:])
+	testing.expect(t, !missing)
+}
+
+@(test)
+windowserver_gate_audit_token_starts_after_the_trailer_prefix :: proc(t: ^testing.T) {
+	buf: [128]u8
+	testing.expect(t, wire.gate_store_u32(buf[:], 4, u32(wire.GATE_MSG_SIZE)))
+	testing.expect(t, wire.gate_store_u32(buf[:], wire.GATE_MSG_SIZE + 4, wire.GATE_AUDIT_TRAILER_SIZE))
+	// Plant pid and pidversion where mach_msg_audit_trailer_t puts val[5] and val[7].
+	off := wire.GATE_MSG_SIZE + wire.GATE_TRAILER_AUDIT_OFF
+	testing.expect(t, wire.gate_store_u32(buf[:], off + 5 * 4, 4242))
+	testing.expect(t, wire.gate_store_u32(buf[:], off + 7 * 4, 9))
+	token, ok := wire.gate_audit_token(buf[:])
+	testing.expect(t, ok)
+	testing.expect_value(t, wire.gate_audit_pid(&token), u32(4242))
+	testing.expect_value(t, wire.gate_audit_pidversion(&token), u32(9))
+	// msgh_size below a header is not a trailer anchor, even if the buffer is long.
+	testing.expect(t, wire.gate_store_u32(buf[:], 4, 4))
+	_, too_small := wire.gate_audit_token(buf[:])
+	testing.expect(t, !too_small)
+	_, short := wire.gate_audit_token(buf[:8])
+	testing.expect(t, !short)
+}
+
+@(test)
+windowserver_gate_refuses_missing_and_truncated_audit_trailers :: proc(t: ^testing.T) {
+	buf: [128]u8
+	wire.gate_store_u32(buf[:], 4, wire.GATE_MSG_SIZE)
+	// Plausible identity bytes must not authenticate without trailer metadata.
+	wire.gate_store_u32(buf[:], wire.GATE_MSG_SIZE + wire.GATE_TRAILER_AUDIT_OFF + 20, 42)
+	_, missing := wire.gate_audit_token(buf[:])
+	testing.expect(t, !missing)
+	wire.gate_store_u32(buf[:], wire.GATE_MSG_SIZE + 4, wire.GATE_AUDIT_TRAILER_SIZE)
+	_, truncated := wire.gate_audit_token(buf[:wire.GATE_MSG_SIZE + wire.GATE_AUDIT_TRAILER_SIZE - 1])
+	testing.expect(t, !truncated)
+	wire.gate_store_u32(buf[:], wire.GATE_MSG_SIZE, 1)
+	_, wrong_type := wire.gate_audit_token(buf[:])
+	testing.expect(t, !wrong_type)
+	wire.gate_store_u32(buf[:], wire.GATE_MSG_SIZE, 0)
+	wire.gate_store_u32(buf[:], wire.GATE_MSG_SIZE + 4, 129)
+	_, oversized := wire.gate_audit_token(buf[:])
+	testing.expect(t, !oversized)
+}
+
+@(test)
+windowserver_gate_owner_is_the_first_hello :: proc(t: ^testing.T) {
+	pid, version: u32
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.Arm)), i32(4))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.Hello)), i32(0))
+	testing.expect_value(t, pid, u32(10))
+	testing.expect_value(t, version, u32(3))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.Arm)), i32(0))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 11, 3, wire.GATE_VERSION, u32(wire.Gate_Command.Hello)), i32(3))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 4, wire.GATE_VERSION, u32(wire.Gate_Command.Release)), i32(4))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, 99, u32(wire.Gate_Command.Status)), i32(1))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, false, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.Dump)), i32(4))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, 99), i32(1))
+}
+
+gate_test_append_dec :: proc(dst: []u8, n: int, value: u64) -> (out: int, ok: bool) {
+	digits: [20]u8
+	count := 0
+	rest := value
+	if rest == 0 {
+		digits[0] = '0'
+		count = 1
+	} else {
+		for rest > 0 && count < len(digits) {
+			digits[count] = u8('0' + rest % 10)
+			count += 1
+			rest /= 10
+		}
+	}
+	if n + count + 1 > len(dst) {return n, false}
+	pos := n
+	for i := count - 1; i >= 0; i -= 1 {
+		dst[pos] = digits[i]
+		pos += 1
+	}
+	return pos, true
+}
+
+gate_test_name :: proc(dst: []u8, pid: int, stamp: u64) -> (name: cstring, ok: bool) {
+	prefix := "com.shoji.gate.test."
+	n := 0
+	for ch in prefix {
+		if n >= len(dst) - 1 {return}
+		dst[n] = u8(ch)
+		n += 1
+	}
+	n, ok = gate_test_append_dec(dst, n, u64(pid))
+	if !ok || n >= len(dst) - 1 {return}
+	dst[n] = '.'
+	n += 1
+	n, ok = gate_test_append_dec(dst, n, stamp)
+	if !ok || n >= len(dst) {return}
+	dst[n] = 0
+	return cstring(&dst[0]), true
+}
+
+@(test)
+windowserver_gate_mach_round_trip_reports_this_process :: proc(t: ^testing.T) {
+	task := wire.gate_mach_task_self()
+	testing.expect(t, task != 0)
+	bp, bp_ok := wire.gate_process_bootstrap_port()
+	testing.expect(t, bp_ok)
+	if task == 0 || !bp_ok {return}
+
+	service: u32
+	if code := wire.gate_mach_port_allocate(task, wire.MACH_PORT_RIGHT_RECEIVE, &service); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	defer wire.gate_mach_port_destroy(task, service)
+	if code := wire.gate_mach_port_insert_right(task, service, service, wire.MACH_MSG_TYPE_MAKE_SEND); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	rendezvous: u32
+	if code := wire.gate_mach_port_allocate(task, wire.MACH_PORT_RIGHT_RECEIVE, &rendezvous); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	defer wire.gate_mach_port_destroy(task, rendezvous)
+
+	name_buf: [96]u8
+	stamp := u64(uintptr(&name_buf[0]))
+	service_name, name_ok := gate_test_name(name_buf[:], int(posix.getpid()), stamp)
+	testing.expect(t, name_ok)
+	if !name_ok {return}
+	if code := wire.gate_bootstrap_register(bp, service_name, rendezvous); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	client: u32
+	if code := wire.gate_bootstrap_look_up(bp, service_name, &client); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	defer wire.gate_mach_port_deallocate(task, client)
+
+	Align :: struct #align(16) {bytes: [128]u8}
+	handshake: Align
+	n, packed := wire.gate_pack_handshake(handshake.bytes[:], client, service)
+	testing.expect(t, packed)
+	if !packed {return}
+	if code := wire.gate_mach_msg(&handshake.bytes[0], wire.MACH_MSG_SEND, u32(n), 0, 0, 0, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	received: Align
+	if code := wire.gate_mach_msg(&received.bytes[0], wire.MACH_MSG_RECEIVE | wire.MACH_RCV_TIMEOUT, 0, len(received.bytes), rendezvous, 1000, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	got, got_ok := wire.gate_handshake_send_right(received.bytes[:])
+	testing.expect(t, got_ok)
+	if !got_ok {return}
+	defer wire.gate_mach_port_deallocate(task, got)
+
+	reply_port: u32
+	if code := wire.gate_mach_port_allocate(task, wire.MACH_PORT_RIGHT_RECEIVE, &reply_port); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	defer wire.gate_mach_port_destroy(task, reply_port)
+	request: Align
+	rn, request_ok := wire.gate_pack_request(request.bytes[:], got, reply_port, .Hello, 0x53484f4a, 0)
+	testing.expect(t, request_ok)
+	if !request_ok {return}
+	if code := wire.gate_mach_msg(&request.bytes[0], wire.MACH_MSG_SEND, u32(rn), 0, 0, 0, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	incoming: Align
+	if code := wire.gate_mach_msg(&incoming.bytes[0], wire.gate_receive_audit_options(), 0, len(incoming.bytes), service, 1000, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	token, token_ok := wire.gate_audit_token(incoming.bytes[:])
+	testing.expect(t, token_ok)
+	if !token_ok {return}
+	testing.expect_value(t, wire.gate_audit_pid(&token), u32(posix.getpid()))
+	testing.expect(t, wire.gate_audit_pidversion(&token) != 0)
+	identity_hash: [20]u8
+	identity_status := wire.csops_audittoken(i32(posix.getpid()), 5, &identity_hash, len(identity_hash), &token)
+	testing.expect_value(t, identity_status, i32(0))
+	identity_hex: [40]u8
+	hex_digits := "0123456789abcdef"
+	for byte, i in identity_hash {
+		identity_hex[i*2] = hex_digits[byte >> 4]
+		identity_hex[i*2+1] = hex_digits[byte & 15]
+	}
+	testing.expect(t, wire.gate_client_identity(&token, string(identity_hex[:])))
+	stale_token := token
+	stale_token.val[7] += 1
+	testing.expect(t, !wire.gate_client_identity(&stale_token, string(identity_hex[:])))
+
+	reply_right, right_ok := wire.gate_received_reply_right(incoming.bytes[:])
+	testing.expect(t, right_ok)
+	if !right_ok {return}
+	owner_pid := wire.gate_audit_pid(&token)
+	owner_version := wire.gate_audit_pidversion(&token)
+	status := wire.gate_decide(&owner_pid, &owner_version, true, owner_pid, owner_version, wire.GATE_VERSION, u32(wire.Gate_Command.Hello))
+	reply: Align
+	reply_n, reply_ok := wire.gate_pack_reply(reply.bytes[:], reply_right, u32(wire.Gate_Command.Hello), status, u64(owner_pid), 0x53484f4a)
+	testing.expect(t, reply_ok)
+	if !reply_ok {return}
+	if code := wire.gate_mach_msg(&reply.bytes[0], wire.MACH_MSG_SEND, u32(reply_n), 0, 0, 0, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	final: Align
+	if code := wire.gate_mach_msg(&final.bytes[0], wire.MACH_MSG_RECEIVE | wire.MACH_RCV_TIMEOUT, 0, len(final.bytes), reply_port, 1000, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	parsed, parsed_ok := wire.gate_unpack_reply(final.bytes[:])
+	testing.expect(t, parsed_ok)
+	if !parsed_ok {return}
+	testing.expect_value(t, parsed.magic, wire.GATE_REPLY_MAGIC)
+	testing.expect_value(t, parsed.status, i32(0))
+	testing.expect_value(t, parsed.data0, u64(posix.getpid()))
+
+	// A second command needs a fresh send-once from the same receive right.
+	status_req: Align
+	sn, status_ok := wire.gate_pack_request(status_req.bytes[:], got, reply_port, .Status, 0, 0)
+	testing.expect(t, status_ok)
+	if !status_ok {return}
+	if code := wire.gate_mach_msg(&status_req.bytes[0], wire.MACH_MSG_SEND, u32(sn), 0, 0, 0, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	status_in: Align
+	if code := wire.gate_mach_msg(&status_in.bytes[0], wire.gate_receive_audit_options(), 0, len(status_in.bytes), service, 1000, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	status_right, status_right_ok := wire.gate_received_reply_right(status_in.bytes[:])
+	testing.expect(t, status_right_ok)
+	if !status_right_ok {return}
+	status_reply: Align
+	srn, status_reply_ok := wire.gate_pack_reply(status_reply.bytes[:], status_right, u32(wire.Gate_Command.Status), 0, 1, 2)
+	testing.expect(t, status_reply_ok)
+	if !status_reply_ok {return}
+	if code := wire.gate_mach_msg(&status_reply.bytes[0], wire.MACH_MSG_SEND, u32(srn), 0, 0, 0, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	status_final: Align
+	if code := wire.gate_mach_msg(&status_final.bytes[0], wire.MACH_MSG_RECEIVE|wire.MACH_RCV_TIMEOUT, 0, len(status_final.bytes), reply_port, 1000, 0); code != 0 {
+		testing.expect_value(t, code, i32(0))
+		return
+	}
+	status_parsed, status_parsed_ok := wire.gate_unpack_reply(status_final.bytes[:])
+	testing.expect(t, status_parsed_ok)
+	if !status_parsed_ok {return}
+	testing.expect_value(t, status_parsed.command, u32(wire.Gate_Command.Status))
+	testing.expect_value(t, status_parsed.status, i32(0))
+	testing.expect_value(t, status_parsed.data0, u64(1))
+	testing.expect_value(t, status_parsed.data1, u64(2))
+}
+
+@(test)
+windowserver_layout_plan_is_bounded_sealed_and_validated :: proc(t: ^testing.T) {
+	plan: wire.Layout_Plan
+	testing.expect(t, !wire.layout_add(&plan, 42, 100, 450))
+	wire.layout_begin(&plan)
+	testing.expect(t, !wire.layout_seal(&plan, 99, 8000))
+	testing.expect(t, !wire.layout_add(&plan, 0, 100, 450))
+	testing.expect(t, !wire.layout_add(&plan, 42, 1_000_001, 450))
+	testing.expect(t, wire.layout_add(&plan, 42, -100, 450))
+	testing.expect(t, !wire.layout_add(&plan, 42, 100, 450))
+	testing.expect(t, !wire.layout_seal(&plan, 42, 8000))
+	testing.expect(t, !wire.layout_seal(&plan, 99, 8001))
+	for index in 1 ..< wire.LAYOUT_LIMIT {testing.expect(t, wire.layout_add(&plan, u64(42 + index), 400, 450))}
+	testing.expect(t, !wire.layout_add(&plan, 88, 400, 450))
+	testing.expect(t, wire.layout_seal(&plan, 99, 8000))
+	testing.expect(t, !wire.layout_add(&plan, 88, 400, 450))
+	testing.expect(t, !wire.layout_seal(&plan, 99, 8000))
+	testing.expect_value(t, plan.count, u32(wire.LAYOUT_LIMIT))
+	pid, version := u32(10), u32(3)
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 11, 3, wire.GATE_VERSION, u32(wire.Gate_Command.LayoutArm)), i32(4))
+}
+
+@(test)
+windowserver_placement_validates_coordinates_and_requires_owner :: proc(t: ^testing.T) {
+	packed := wire.placement_pack(-600, 400)
+	x, y := wire.placement_unpack(packed)
+	testing.expect_value(t, x, i32(-600))
+	testing.expect_value(t, y, i32(400))
+	testing.expect(t, wire.placement_coordinates_valid(42, i64(x), i64(y)))
+	testing.expect(t, !wire.placement_coordinates_valid(0, 600, 400))
+	testing.expect(t, !wire.placement_coordinates_valid(u64(max(u32)) + 1, 600, 400))
+	testing.expect(t, !wire.placement_coordinates_valid(42, 1_000_001, 400))
+	pid, version := u32(10), u32(3)
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 11, 3, wire.GATE_VERSION, u32(wire.Gate_Command.ArmPlace)), i32(4))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.ArmPlace)), i32(0))
+}
+
+@(test)
+windowserver_claimed_release_stays_busy_until_forward_finishes :: proc(t: ^testing.T) {
+	slot: wire.Hold_Slot
+	generation, armed := wire.hold_arm(&slot, 42, wire.HOLD_SCOPE_INLINE)
+	testing.expect(t, armed)
+	testing.expect(t, wire.hold_try_claim(&slot, 42, true))
+	wire.hold_release(&slot, generation)
+	testing.expect(t, wire.hold_released(&slot, true))
+	_, rearmed := wire.hold_arm(&slot, 77, wire.HOLD_SCOPE_INLINE)
+	testing.expect(t, !rearmed)
+	wire.hold_finish(&slot)
+	_, rearmed_after_forward := wire.hold_arm(&slot, 77, wire.HOLD_SCOPE_INLINE)
+	testing.expect(t, rearmed_after_forward)
+}
+
+@(test)
+windowserver_receipt_is_once_only_and_generation_bound :: proc(t: ^testing.T) {
+	slot: wire.Receipt_Slot
+	take_status :: proc(slot: ^wire.Receipt_Slot, generation: u32) -> i32 {
+		status, _, _ := wire.receipt_take(slot, generation)
+		return status
+	}
+	// Nothing armed: idle.
+	testing.expect_value(t, take_status(&slot, 0), i32(8))
+	// Arm: generation 1, pending until the matching order-in forwards.
+	gen, ok := wire.receipt_arm(&slot, 42)
+	testing.expect(t, ok)
+	testing.expect_value(t, gen, u32(1))
+	testing.expect_value(t, take_status(&slot, 1), i32(6)) // pending
+	// A busy arm is refused and reports the live generation.
+	gen2, ok2 := wire.receipt_arm(&slot, 77)
+	testing.expect(t, !ok2)
+	testing.expect_value(t, gen2, u32(1))
+	testing.expect_value(t, slot.target, u64(42))
+	// A non-matching window does not fire.
+	testing.expect(t, !wire.receipt_fire(&slot, 43, 0, 100))
+	testing.expect_value(t, take_status(&slot, 1), i32(6))
+	// The matching order-in fires exactly once; a stale generation is refused.
+	testing.expect(t, wire.receipt_fire(&slot, 42, -17, 12345))
+	testing.expect(t, !wire.receipt_fire(&slot, 42, 0, 12346))
+	testing.expect_value(t, take_status(&slot, 99), i32(7))
+	status, result, ticks := wire.receipt_take(&slot, 1)
+	testing.expect_value(t, status, i32(0))
+	testing.expect_value(t, result, i32(-17))
+	testing.expect_value(t, ticks, u64(12345))
+	// Consumed: the next read is idle.
+	testing.expect_value(t, take_status(&slot, 1), i32(8))
+	// Cancel before fire: pending work is dropped and a re-arm bumps the
+	// generation so the canceled receipt cannot be replayed.
+	_, ok3 := wire.receipt_arm(&slot, 55)
+	testing.expect(t, ok3)
+	wire.receipt_cancel(&slot)
+	testing.expect_value(t, take_status(&slot, 2), i32(8))
+	gen4, ok4 := wire.receipt_arm(&slot, 55)
+	testing.expect(t, ok4)
+	testing.expect_value(t, gen4, u32(3))
+}
+
+@(test)
+windowserver_gate_accepts_watch_commands :: proc(t: ^testing.T) {
+	pid, version: u32
+	// Watch (12) and WatchStatus (13) are in the accepted command range.
+	testing.expect_value(
+		t,
+		wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.Watch)),
+		i32(4), // unowned: not the owner, but well-formed
+	)
+	testing.expect_value(
+		t,
+		wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.WatchStatus)),
+		i32(4),
+	)
+}
+@(test)
+windowserver_hold_slot_transitions_are_bounded_and_generation_checked :: proc(t: ^testing.T) {
+	slot: wire.Hold_Slot
+	// Busy arm is rejected and keeps the original target and generation.
+	gen, ok := wire.hold_arm(&slot, 42, wire.HOLD_SCOPE_INLINE)
+	testing.expect(t, ok)
+	testing.expect_value(t, gen, u32(1))
+	_, _, busy := wire.hold_busy(&slot)
+	testing.expect(t, busy)
+	gen2, ok2 := wire.hold_arm(&slot, 77, wire.HOLD_SCOPE_TABLE)
+	testing.expect(t, !ok2)
+	testing.expect_value(t, gen2, u32(1))
+	testing.expect_value(t, slot.target, u64(42))
+	// Scope: table claim is refused, wrong window is refused.
+	testing.expect(t, !wire.hold_try_claim(&slot, 42, false))
+	testing.expect(t, !wire.hold_try_claim(&slot, 43, true))
+	// Exactly one inline claim wins.
+	testing.expect(t, wire.hold_try_claim(&slot, 42, true))
+	testing.expect(t, !wire.hold_try_claim(&slot, 42, true))
+	// Finish returns the slot to free; the consumed claim flag stays consumed.
+	wire.hold_finish(&slot)
+	_, _, busy2 := wire.hold_busy(&slot)
+	testing.expect(t, !busy2)
+	gen3, ok3 := wire.hold_arm(&slot, 42, wire.HOLD_SCOPE_INLINE)
+	testing.expect(t, ok3)
+	testing.expect_value(t, gen3, u32(2))
+	// Stale generation release is rejected and leaves the slot armed.
+	target7, status7 := wire.hold_release(&slot, 99)
+	testing.expect_value(t, status7, i32(7))
+	testing.expect_value(t, target7, u64(42))
+	_, _, busy3 := wire.hold_busy(&slot)
+	testing.expect(t, busy3)
+	// Current generation releases; a second release is an idempotent no-op.
+	target0, status0 := wire.hold_release(&slot, 2)
+	testing.expect_value(t, status0, i32(0))
+	testing.expect_value(t, target0, u64(42))
+	target_again, status_again := wire.hold_release(&slot, 2)
+	testing.expect_value(t, status_again, i32(0))
+	testing.expect_value(t, target_again, u64(0))
+	// Release before any claim cancels the arm: no claim afterwards.
+	gen4, ok4 := wire.hold_arm(&slot, 55, wire.HOLD_SCOPE_INLINE | wire.HOLD_SCOPE_TABLE)
+	testing.expect(t, ok4)
+	testing.expect_value(t, gen4, u32(3))
+	wire.hold_release(&slot, 0)
+	testing.expect(t, !wire.hold_try_claim(&slot, 55, true))
+	testing.expect(t, !wire.hold_try_claim(&slot, 55, false))
+	// Table scope arms and claims independently.
+	_, ok5 := wire.hold_arm(&slot, 66, wire.HOLD_SCOPE_TABLE)
+	testing.expect(t, ok5)
+	testing.expect(t, !wire.hold_try_claim(&slot, 66, true))
+	testing.expect(t, wire.hold_try_claim(&slot, 66, false))
+	testing.expect(t, !wire.hold_released(&slot, false))
+	wire.hold_release(&slot, 4)
+	testing.expect(t, wire.hold_released(&slot, false))
+	testing.expect(t, wire.hold_released(&slot, true))
+}
+
+@(test)
+gate_space_apply_is_owner_only_and_bounds_the_command_set :: proc(t: ^testing.T) {
+	pid, version: u32
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.Hello)), i32(0))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.SpaceApply)), i32(0))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 11, 3, wire.GATE_VERSION, u32(wire.Gate_Command.SpaceApply)), i32(4))
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 10, 3, wire.GATE_VERSION, u32(wire.Gate_Command.SpaceApply) + 1), i32(1))
+}
+
+@(test)
+gate_reclaim_only_from_a_confirmed_dead_owner :: proc(t: ^testing.T) {
+	testing.expect(t, !wire.gate_should_reclaim(0, 0, 20, 1, false)) // unowned: normal claim
+	testing.expect(t, !wire.gate_should_reclaim(10, 3, 20, 1, true)) // live owner keeps it
+	testing.expect(t, !wire.gate_should_reclaim(10, 3, 10, 3, false)) // owner re-hello
+	testing.expect(t, wire.gate_should_reclaim(10, 3, 20, 1, false))
+	testing.expect(t, wire.gate_should_reclaim(10, 3, 10, 4, false)) // reused pid, new process
+	// After reclaim the predicate's caller clears the owner; first HELLO wins.
+	pid, version := u32(0), u32(0)
+	testing.expect_value(t, wire.gate_decide(&pid, &version, true, 20, 1, wire.GATE_VERSION, u32(wire.Gate_Command.Hello)), i32(0))
+	testing.expect_value(t, pid, 20)
+}
+
+@(test)
+dock_space_transaction_opcode_is_fixed_size :: proc(t: ^testing.T) {
+	data: [20]u8
+	testing.expect(t, loader.validate(.Window_To_Space_Transaction, data[:]))
+	testing.expect(t, !loader.validate(.Window_To_Space_Transaction, data[:12]))
+	testing.expect(t, !loader.validate(loader.Opcode(u8(loader.Opcode.Window_To_Space_Transaction) + 1), data[:]))
+}
+
+@(test)
+gate_allowlist_accepts_newline_and_comma_lists :: proc(t: ^testing.T) {
+	a :: "0123456789abcdef0123456789abcdef01234567"
+	b :: "89abcdef89abcdef89abcdef89abcdef89abcdef"
+	pattern := [4]u8{0x89, 0xab, 0xcd, 0xef}
+	hash: [20]u8
+	for i in 0 ..< 20 {hash[i] = pattern[i % 4]}
+	testing.expect(t, wire.gate_identity_matches_any(b, hash[:], 0))
+	for list in ([]string{a + "\n" + b + "\n", a + "," + b, "\n\n" + b, a + "\r\n" + b + "\r\n"}) {
+		testing.expect(t, wire.gate_identity_matches_any(list, hash[:], 0))
+	}
+	for list in ([]string{a, "", "\n", b[:39], b + "x", "89ABCDEF89ABCDEF89ABCDEF89ABCDEF89ABCDEF"}) {
+		testing.expect(t, !wire.gate_identity_matches_any(list, hash[:], 0))
+	}
+	testing.expect(t, !wire.gate_identity_matches_any(b, hash[:], 1)) // kernel query failed
+}
+
+@(test)
+gate_allowlist_file_trusted_only_when_root_owned_and_unwritable :: proc(t: ^testing.T) {
+	file, dir := u32(0o100644), u32(0o040755)
+	testing.expect(t, wire.gate_allowlist_trusted(0, file, 41, 0, dir))
+	testing.expect(t, !wire.gate_allowlist_trusted(501, file, 41, 0, dir))          // user-owned file
+	testing.expect(t, !wire.gate_allowlist_trusted(0, 0o100664, 41, 0, dir))        // group-writable
+	testing.expect(t, !wire.gate_allowlist_trusted(0, 0o100646, 41, 0, dir))        // world-writable
+	testing.expect(t, !wire.gate_allowlist_trusted(0, 0o120644, 41, 0, dir))        // symlink
+	testing.expect(t, !wire.gate_allowlist_trusted(0, file, 0, 0, dir))             // empty
+	testing.expect(t, !wire.gate_allowlist_trusted(0, file, wire.GATE_CLIENTS_LIMIT + 1, 0, dir))
+	testing.expect(t, !wire.gate_allowlist_trusted(0, file, 41, 501, dir))          // user-owned dir
+	testing.expect(t, !wire.gate_allowlist_trusted(0, file, 41, 0, 0o040777))       // writable dir: swap
+	testing.expect(t, !wire.gate_allowlist_trusted(0, file, 41, 0, 0o120755))       // dir is a symlink
 }

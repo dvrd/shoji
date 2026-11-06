@@ -2,7 +2,7 @@ package main
 
 // Static op map for the 26A434 transaction dispatch table, generated from
 // artifacts/windowserver-26A434/ghidra/transaction-dispatch-table.txt by
-// tools/window-interception/ghidra/decode-transaction-table.py. Every gated
+// tools/window-interception/rea/ghidra/decode-transaction-table.swift. Every gated
 // op must be verified against this map before its table entry is swapped.
 gate_expected_ops := [?]Gate_Expected_Op{
 	{0x01, 0x187451cbc}, // ZL25PKGTransactionOrderWindowP22_PKGTransactionContext

@@ -23,6 +23,8 @@ Run without arguments to start the window manager.
 --inspect          Print a read-only macOS window/display/space snapshot.
 --load-ws PID FILE Load the experimental WindowServer probe (requires an explicit opt-in).
 --check-ws         Check the experimental WindowServer probe handshake.
+--ws-report [DIR]        WindowServer payload install report; with DIR, export the event ring (bin + JSON).
+--ws-space-move W S X Y  Experimental (SHOJI_WS_ADAPTER=1): gated move of window W to Space S landing at X,Y.
 --validation-pid N Limit a test daemon to process N; requires an explicit -c file.
 --validate-sizes N Validate two named disposable size-fixture windows in process N.
 --validate-swipe N Measure native swipe spacing with two named disposable fixture windows.
@@ -129,17 +131,36 @@ main :: proc() {
 			}
 			fmt.println("WindowServer loaded the experimental load probe. Run --check-ws as the desktop user.")
 			return
+		case "--ws-space-move":
+			if len(args) != 5 {
+				fmt.eprintln("--ws-space-move takes WINDOW SPACE X Y")
+				os.exit(2)
+			}
+			os.exit(ws_space_move_cli(args[1:]))
+		case "--ws-report":
+			if len(args) > 2 {
+				fmt.eprintln("--ws-report takes [DIR]")
+				os.exit(2)
+			}
+			os.exit(ws_report_cli(args[1:]))
 		case "--check-ws":
 			if len(args) != 1 {
 				fmt.eprintln("--check-ws takes no arguments")
 				os.exit(2)
 			}
+			probe := ws_gate_probe()
+			fmt.printf("WindowServer gate: %v (%s)\n", probe.level, probe.detail)
+			if probe.level == .Serving {
+				fmt.printf("  owner pid %d, %d forwarded calls recorded\n", probe.owner_pid, probe.calls)
+			}
 			caps, err := windowserver_check()
-			if err != "" {
+			if err == "" {
+				fmt.printf("legacy load-probe socket: %v\n", caps)
+			}
+			if probe.level == .Absent && err != "" {
 				fmt.eprintln(err)
 				os.exit(1)
 			}
-			fmt.printf("WindowServer experimental payload: %v\n", caps)
 			return
 		case "--version", "-v":
 			fmt.println("shoji 0.1.0-dev")

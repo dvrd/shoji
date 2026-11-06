@@ -1,27 +1,32 @@
-# Vendored decoder
+# Vendored decoder (prebuilt)
 
 Source: https://github.com/anat0m1a/liblzraven
 Commit: `700b88c4b2e1b1d96e499d172dfa0b8e5d9134ab` (2026-07-30).
-License: 0BSD; original LICENSE retained.
+License: 0BSD; original LICENSE retained alongside.
 
-Unmodified decoder sources and headers, decoder/rejection C tests and their
-upstream vectors are included. Encoder sources and Python tooling are omitted.
-This library provides only LZRAVEN block decoding. Shoji owns the bounded pbzm
-container reader and invokes Apple's aa only on the decoded archive.
+We do **not** vendor the upstream source. This directory ships only the built
+static archive `libshoji-raven.a` (LZRAVEN block decoding), which the Dock
+scanner links directly (`scanner/acquisition.odin`). Encoder sources, C tests
+and Python tooling are omitted. Shoji owns the bounded pbzm container reader and
+invokes Apple's `aa` only on the decoded archive.
 
-`task test:raven` runs the upstream C correctness/rejection tests on this host.
-Tests do not replace comparison against real extracted binaries and manifests.
+## Regenerate the archive
 
-## Maintenance ownership
+Run `task raven:regen`. It clones the pinned commit to a throwaway `.raven-src/`,
+builds `model block stream bcj` with the same flags upstream uses, writes
+`libshoji-raven.a` here, and deletes the clone. To bump the pin, change
+`RAVEN_COMMIT` in the `raven:regen` task, regenerate, then re-run
+`task test:dockscan`. The build assumes upstream's `src/` + `include/` layout at
+that commit; adjust the task if upstream restructures.
 
-Shoji maintainers own the vendored decoder's maintenance, defect triage and
-compatibility fixes. Upstream explicitly disclaims ongoing maintenance; an
-upstream update must not be assumed to arrive for a new Apple format or bug.
+The current archive is arm64 macOS. For another arch, regenerate on that target
+(or add an arch flag to the task) and commit the per-arch archive.
 
-Keep the pinned revision and original license recorded above. For a source change,
-record the reason and revision here, retain a reproducing vector, and run
-`task test:raven` plus `task test:dockscan`. Compare decoded output with Apple's
-implementation or a retained known-good extracted binary when the format changes.
-Keep divergence/rejection vectors; do not loosen rejection merely to accept a new
-input without understanding its encoding and bounds. Decoder changes belong to
-the standalone Dock tool and do not require loading a payload or restarting Dock.
+## Verification
+
+We do not re-run upstream's correctness suite. Our decode path is verified end to
+end by `task test:dockscan` (`scanner/scanner_test.odin`), which decodes the
+retained vector `scanner/testdata/zeros_4k.rav` through the linked archive.
+Upstream disclaims ongoing maintenance; do not assume a fix arrives for a new
+Apple format. When the format changes, compare decoded output against Apple's
+implementation or a known-good extracted binary, and keep a reproducing vector.

@@ -7,10 +7,27 @@ a bounded experimental ordering hold, not a proven complete presentation gate.
 The experiment targets one recovered 26A434 SkyLight function,
 `CGXOrderWindowListSpaceSwitchOptions`, only after validating the loaded image's
 UUID, mapped text range, slide and entry bytes. The observer records bounded
-events in memory and forwards every call immediately. File I/O happens on a
+events in memory and forwards unarmed calls immediately. File I/O happens on a
 separate control thread, never in the ordering callback.
 
 ## Current result
+
+Updated 2026-11-04: the server-context placement report
+records the current authenticated Mach controller, generation-aware hold,
+exact-build helper verification and corrected pointer ABI. Three placements
+have matching internal and independent external bounds. Timeout and
+cancellation preserve the original position; the corrected session remained
+healthy throughout. This is disposable-fixture geometry evidence, not a
+complete presentation gate or production integration. See that report for
+the retained first failure and current limitations.
+
+The subsequent C1 fixture experiment passes
+captured multi-window layout acceptance: 18 changes over three runs, zero
+mixed gated frames, maximum ordering callback 0.472 ms. This remains scoped
+to two owned, fixed-size windows on the disposable build; it is not the
+production Shoji adapter or a universal presentation guarantee.
+
+## Historical ordering and visibility results
 
 Validated in the disposable guest on 2026-10-30 and 2026-10-31:
 

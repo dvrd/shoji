@@ -593,7 +593,11 @@ motion_trace_record :: proc(trace: ^Motion_Trace, event: Motion_Event, now: time
 	append(&trace.events, event)
 }
 motion_debug :: proc(m: ^Manager, args: []string) -> Response {
-	if len(args) != 2 || args[0] != "motion" {return failure("debug expects motion start|stop|dump|clear")}
+	if len(args) == 2 && args[0] == "ws" && (args[1] == "status" || args[1] == "dump") {
+		if m.ws_debug == nil {return failure("WindowServer adapter not available in this process")}
+		return success(m.ws_debug(m.backend_user, args[1] == "dump"))
+	}
+	if len(args) != 2 || args[0] != "motion" {return failure("debug expects motion start|stop|dump|clear or ws status|dump")}
 	t := &m.motion_trace
 	switch args[1] {
 	case "start":
@@ -608,5 +612,5 @@ motion_debug :: proc(m: ^Manager, args: []string) -> Response {
 		if err != nil {return failure("could not encode motion trace")}
 		return success(string(data))
 	}
-	return failure("debug expects motion start|stop|dump|clear")
+	return failure("debug expects motion start|stop|dump|clear or ws status|dump")
 }
