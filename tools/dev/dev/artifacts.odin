@@ -46,8 +46,6 @@ generated_directory :: proc(path, name: string) -> (bool, string) {
 			"inspector",
 			"harness",
 		}
-	case "transaction-fix", "macos27":
-		allowed = []string{"shoji-sa.dylib", "shoji-sa.dylib.new"}
 	case:
 		return false, ""
 	}
