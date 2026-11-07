@@ -1,4 +1,4 @@
-package experimental
+package gate
 
 // Ordering completion receipt (C2). One bounded watch slot: the controller
 // arms a window id, and the first matching order-in call (op 1) in the

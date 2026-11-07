@@ -1,6 +1,6 @@
 package shoji
 
-// Experimental WindowServer adapter (C4). Two layers:
+// WindowServer gate adapter (C4). Two layers:
 //
 //  * Ws_Gate_Probe: read-only reporting for --check-ws. Never claims the gate.
 //  * Ws_Adapter: Shoji's own direct-Mach client. Opt-in only; every operation
@@ -16,7 +16,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
-import ws "experimental/window_server"
+import gate "windowserver/gate"
 
 Ws_Gate_Level :: enum {
 	Absent, // no payload status artifact
@@ -31,7 +31,7 @@ Ws_Gate_Probe :: struct {
 	detail:    string,
 }
 
-WS_TGATE_STATUS_PATH :: ws.TGATE_STATUS_PATH
+WS_TGATE_STATUS_PATH :: gate.TGATE_STATUS_PATH
 WS_CONTROLLER_REQUEST_PATH :: "/private/tmp/shoji-gate-controller-request"
 WS_CONTROLLER_RESPONSE_PATH :: "/private/tmp/shoji-gate-controller-response"
 WS_DISABLE_SENTINEL :: "/Library/GPUBundles/ShojiWindowServerProbe/DISABLED"
@@ -124,7 +124,7 @@ Ws_Adapter_State :: enum {
 }
 
 // Transport seam: the real one is Mach, tests inject replies.
-Ws_Exchange :: #type proc(user: rawptr, command: ws.Gate_Command, arg0, arg1: u64) -> (ws.Gate_Reply, bool)
+Ws_Exchange :: #type proc(user: rawptr, command: gate.Gate_Command, arg0, arg1: u64) -> (gate.Gate_Reply, bool)
 
 Ws_Adapter :: struct {
 	state:    Ws_Adapter_State,
@@ -216,11 +216,11 @@ ws_adapter_claim :: proc(a: ^Ws_Adapter) {
 
 // Validate identity, version and command echo; a mismatched reply means the
 // peer is not the gate we built against and is treated as transport failure.
-ws_adapter_raw :: proc(a: ^Ws_Adapter, command: ws.Gate_Command, arg0, arg1: u64) -> (reply: ws.Gate_Reply, ok: bool) {
+ws_adapter_raw :: proc(a: ^Ws_Adapter, command: gate.Gate_Command, arg0, arg1: u64) -> (reply: gate.Gate_Reply, ok: bool) {
 	if a.exchange == nil {return}
 	reply, ok = a.exchange(a.user, command, arg0, arg1)
 	if !ok {return}
-	if reply.magic != ws.GATE_REPLY_MAGIC || reply.version != ws.GATE_VERSION || reply.command != u32(command) {
+	if reply.magic != gate.GATE_REPLY_MAGIC || reply.version != gate.GATE_VERSION || reply.command != u32(command) {
 		return {}, false
 	}
 	return reply, true
@@ -228,7 +228,7 @@ ws_adapter_raw :: proc(a: ^Ws_Adapter, command: ws.Gate_Command, arg0, arg1: u64
 
 // One gate call while serving. Transport failure or "not owner" latches
 // .Lost; every other status is returned to the typed operation.
-ws_adapter_call :: proc(a: ^Ws_Adapter, command: ws.Gate_Command, arg0, arg1: u64) -> (reply: ws.Gate_Reply, ok: bool) {
+ws_adapter_call :: proc(a: ^Ws_Adapter, command: gate.Gate_Command, arg0, arg1: u64) -> (reply: gate.Gate_Reply, ok: bool) {
 	if a.state != .Serving {return}
 	reply, ok = ws_adapter_raw(a, command, arg0, arg1)
 	if !ok || reply.status == WS_STATUS_NOT_OWNER {
@@ -243,8 +243,8 @@ ws_adapter_call :: proc(a: ^Ws_Adapter, command: ws.Gate_Command, arg0, arg1: u6
 // Stage a placement that the payload applies when `wid` next passes the
 // transaction-table (space) channel. Busy/invalid → unhandled, still serving.
 ws_space_place :: proc(a: ^Ws_Adapter, wid: u32, x, y: i32) -> (generation: u32, handled: bool) {
-	if !ws.placement_coordinates_valid(u64(wid), i64(x), i64(y)) {return}
-	reply, ok := ws_adapter_call(a, .SpacePlace, u64(wid), ws.placement_pack(x, y))
+	if !gate.placement_coordinates_valid(u64(wid), i64(x), i64(y)) {return}
+	reply, ok := ws_adapter_call(a, .SpacePlace, u64(wid), gate.placement_pack(x, y))
 	if !ok || reply.status != WS_STATUS_OK {return}
 	return u32(reply.data1), true
 }
@@ -253,8 +253,8 @@ ws_space_place :: proc(a: ^Ws_Adapter, wid: u32, x, y: i32) -> (generation: u32,
 // no Release round trip. For a single-threaded owner whose own (Dock)
 // transaction is the trigger.
 ws_space_apply :: proc(a: ^Ws_Adapter, wid: u32, x, y: i32) -> (generation: u32, handled: bool) {
-	if !ws.placement_coordinates_valid(u64(wid), i64(x), i64(y)) {return}
-	reply, ok := ws_adapter_call(a, .SpaceApply, u64(wid), ws.placement_pack(x, y))
+	if !gate.placement_coordinates_valid(u64(wid), i64(x), i64(y)) {return}
+	reply, ok := ws_adapter_call(a, .SpaceApply, u64(wid), gate.placement_pack(x, y))
 	if !ok || reply.status != WS_STATUS_OK {return}
 	return u32(reply.data1), true
 }
@@ -302,7 +302,7 @@ ws_placement_status :: proc(a: ^Ws_Adapter) -> (result: Ws_Placement, handled: b
 	if !ok {return}
 	result.status = reply.status
 	result.generation = u32(reply.data0)
-	result.x, result.y = ws.placement_unpack(reply.data1)
+	result.x, result.y = gate.placement_unpack(reply.data1)
 	return result, true
 }
 
@@ -315,14 +315,14 @@ Ws_Layout_Move :: struct {
 // ordering. Any rejected step leaves the plan unsealed (never armed) and the
 // caller applies the moves itself.
 ws_layout_stage :: proc(a: ^Ws_Adapter, moves: []Ws_Layout_Move, marker: u32, budget_us: u64) -> (generation: u32, handled: bool) {
-	if a.state != .Serving || len(moves) == 0 || len(moves) > ws.LAYOUT_LIMIT || marker == 0 || budget_us == 0 || budget_us > 8_000 {return}
+	if a.state != .Serving || len(moves) == 0 || len(moves) > gate.LAYOUT_LIMIT || marker == 0 || budget_us == 0 || budget_us > 8_000 {return}
 	for move in moves {
-		if move.wid == marker || !ws.placement_coordinates_valid(u64(move.wid), i64(move.x), i64(move.y)) {return}
+		if move.wid == marker || !gate.placement_coordinates_valid(u64(move.wid), i64(move.x), i64(move.y)) {return}
 	}
 	reply, ok := ws_adapter_call(a, .LayoutBegin, 0, 0)
 	if !ok || reply.status != WS_STATUS_OK {return}
 	for move in moves {
-		reply, ok = ws_adapter_call(a, .LayoutAdd, u64(move.wid), ws.placement_pack(move.x, move.y))
+		reply, ok = ws_adapter_call(a, .LayoutAdd, u64(move.wid), gate.placement_pack(move.x, move.y))
 		if !ok || reply.status != WS_STATUS_OK {return}
 	}
 	reply, ok = ws_adapter_call(a, .LayoutArm, u64(marker), budget_us)
@@ -395,23 +395,23 @@ Ws_Mach_Buffer :: struct #align (16) {
 	bytes: [128]u8,
 }
 
-ws_mach_exchange :: proc(user: rawptr, command: ws.Gate_Command, arg0, arg1: u64) -> (reply: ws.Gate_Reply, ok: bool) {
+ws_mach_exchange :: proc(user: rawptr, command: gate.Gate_Command, arg0, arg1: u64) -> (reply: gate.Gate_Reply, ok: bool) {
 	m := (^Ws_Mach)(user)
 	if m == nil || m.service == 0 {return}
 	port_type: u32
-	if ws.gate_mach_port_type(m.task, m.service, &port_type) != 0 || port_type & ws.MACH_PORT_TYPE_SEND == 0 {return}
+	if gate.gate_mach_port_type(m.task, m.service, &port_type) != 0 || port_type & gate.MACH_PORT_TYPE_SEND == 0 {return}
 	msg: Ws_Mach_Buffer
-	n, packed := ws.gate_pack_request(msg.bytes[:], m.service, 1, command, arg0, arg1)
+	n, packed := gate.gate_pack_request(msg.bytes[:], m.service, 1, command, arg0, arg1)
 	if !packed {return}
 	reply_port: u32
-	if ws.gate_mach_port_allocate(m.task, ws.MACH_PORT_RIGHT_RECEIVE, &reply_port) != 0 {return}
-	defer ws.gate_mach_port_destroy(m.task, reply_port)
-	if !ws.gate_store_u32(msg.bytes[:], 12, reply_port) {return}
-	options := u32(ws.MACH_MSG_SEND) | u32(ws.MACH_MSG_RECEIVE) | u32(ws.MACH_RCV_TIMEOUT)
+	if gate.gate_mach_port_allocate(m.task, gate.MACH_PORT_RIGHT_RECEIVE, &reply_port) != 0 {return}
+	defer gate.gate_mach_port_destroy(m.task, reply_port)
+	if !gate.gate_store_u32(msg.bytes[:], 12, reply_port) {return}
+	options := u32(gate.MACH_MSG_SEND) | u32(gate.MACH_MSG_RECEIVE) | u32(gate.MACH_RCV_TIMEOUT)
 	// A hold serializes all transaction dispatch, so production holds are
 	// frame-scale; 250 ms bounds a stuck gate.
-	if ws.gate_mach_msg(&msg.bytes[0], options, u32(n), len(msg.bytes), reply_port, 250, 0) != 0 {return}
-	return ws.gate_unpack_reply(msg.bytes[:])
+	if gate.gate_mach_msg(&msg.bytes[0], options, u32(n), len(msg.bytes), reply_port, 250, 0) != 0 {return}
+	return gate.gate_unpack_reply(msg.bytes[:])
 }
 
 // Session-rendezvous fallback, as in the experiment gate client. The root
@@ -423,25 +423,25 @@ ws_mach_exchange :: proc(user: rawptr, command: ws.Gate_Command, arg0, arg1: u64
 WS_RENDEZVOUS_TIMEOUT_MS :: 3000
 
 ws_mach_rendezvous :: proc(task: u32, timeout_ms: u32) -> (service: u32, ok: bool) {
-	bootstrap, bootstrap_ok := ws.gate_process_bootstrap_port()
+	bootstrap, bootstrap_ok := gate.gate_process_bootstrap_port()
 	if !bootstrap_ok {return}
 	rendezvous: u32
-	if ws.gate_mach_port_allocate(task, ws.MACH_PORT_RIGHT_RECEIVE, &rendezvous) != 0 {return}
-	defer ws.gate_mach_port_destroy(task, rendezvous)
-	if ws.gate_bootstrap_register(bootstrap, ws.GATE_RENDEZVOUS_NAME, rendezvous) != 0 {return}
+	if gate.gate_mach_port_allocate(task, gate.MACH_PORT_RIGHT_RECEIVE, &rendezvous) != 0 {return}
+	defer gate.gate_mach_port_destroy(task, rendezvous)
+	if gate.gate_bootstrap_register(bootstrap, gate.GATE_RENDEZVOUS_NAME, rendezvous) != 0 {return}
 	message: Ws_Mach_Buffer
-	options := u32(ws.MACH_MSG_RECEIVE) | u32(ws.MACH_RCV_TIMEOUT)
+	options := u32(gate.MACH_MSG_RECEIVE) | u32(gate.MACH_RCV_TIMEOUT)
 	size := u32(len(message.bytes))
-	if ws.gate_mach_msg(&message.bytes[0], options, 0, size, rendezvous, timeout_ms, 0) != 0 {return}
-	return ws.gate_handshake_send_right(message.bytes[:])
+	if gate.gate_mach_msg(&message.bytes[0], options, 0, size, rendezvous, timeout_ms, 0) != 0 {return}
+	return gate.gate_handshake_send_right(message.bytes[:])
 }
 
 // Task-port handoff: publish request.<pid>; the root helper inserts a send
 // right and answers response.<pid> with "<pid> <name>". Bounded by `timeout`.
 ws_mach_handoff :: proc(task: u32, timeout: time.Duration) -> (service: u32, ok: bool) {
 	pid := posix.getpid()
-	request_path := fmt.tprintf("%s.%d", ws.GATE_HANDOFF_REQUEST_PATH, pid)
-	response_path := fmt.tprintf("%s.%d", ws.GATE_HANDOFF_RESPONSE_PATH, pid)
+	request_path := fmt.tprintf("%s.%d", gate.GATE_HANDOFF_REQUEST_PATH, pid)
+	response_path := fmt.tprintf("%s.%d", gate.GATE_HANDOFF_RESPONSE_PATH, pid)
 	defer posix.unlink(strings.unsafe_string_to_cstring(request_path))
 	line := fmt.tprintf("%d\n", pid)
 	fd := posix.open(strings.unsafe_string_to_cstring(request_path), {.WRONLY, .CREAT, .TRUNC, .NOFOLLOW}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
@@ -463,7 +463,7 @@ ws_mach_handoff :: proc(task: u32, timeout: time.Duration) -> (service: u32, ok:
 		name, parsed := ws_handoff_parse(string(buffer[:count]), u32(pid))
 		if !parsed {continue}
 		port_type: u32
-		if ws.gate_mach_port_type(task, name, &port_type) != 0 || port_type & ws.MACH_PORT_TYPE_SEND == 0 {continue}
+		if gate.gate_mach_port_type(task, name, &port_type) != 0 || port_type & gate.MACH_PORT_TYPE_SEND == 0 {continue}
 		return name, true
 	}
 	return
@@ -492,7 +492,7 @@ ws_adapter_open :: proc(a: ^Ws_Adapter, enabled: bool, timeout: time.Duration = 
 		a.state = .Absent
 		return
 	}
-	task := ws.gate_mach_task_self()
+	task := gate.gate_mach_task_self()
 	service, ok := ws_mach_handoff(task, timeout)
 	if !ok {
 		service, ok = ws_mach_rendezvous(task, WS_RENDEZVOUS_TIMEOUT_MS)
@@ -519,7 +519,7 @@ ws_adapter_close :: proc(a: ^Ws_Adapter) {
 		SLSReleaseWindow(a.marker.connection, a.marker.window)
 	}
 	if a.mach.service != 0 {
-		ws.gate_mach_port_deallocate(a.mach.task, a.mach.service)
+		gate.gate_mach_port_deallocate(a.mach.task, a.mach.service)
 	}
 	a^ = {state = .Disabled}
 }
@@ -549,7 +549,7 @@ ws_space_move_cli :: proc(args: []string) -> int {
 	space, space_ok := strconv.parse_u64(args[1])
 	x, x_ok := strconv.parse_i64(args[2])
 	y, y_ok := strconv.parse_i64(args[3])
-	if !wid_ok || !space_ok || !x_ok || !y_ok || space == 0 || !ws.placement_coordinates_valid(wid, x, y) {
+	if !wid_ok || !space_ok || !x_ok || !y_ok || space == 0 || !gate.placement_coordinates_valid(wid, x, y) {
 		fmt.eprintln("--ws-space-move: invalid arguments")
 		return 2
 	}

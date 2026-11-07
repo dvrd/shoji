@@ -1,11 +1,11 @@
-package payload
+package windowserver_payload
 
-// Exact per-build server helpers (hook.PLACEMENT_HELPERS). Called only from
+// Exact per-build server helpers (gate.PLACEMENT_HELPERS). Called only from
 // the ordering callback, on its serialized server thread and with that
 // callback's connection context.
 // Never call these from the independent IPC/control thread.
 import "base:intrinsics"
-import hook "../window_server"
+import gate "../../windowserver/gate"
 
 Placement_Rect :: struct {x, y, w, h: f64}
 Placement_Lookup :: proc "c" (wid: u32) -> rawptr
@@ -28,7 +28,7 @@ SPACE_OP_MIN, SPACE_OP_MAX :: 0x18, 0x19
 placement_auto: u32
 
 verify_placement_helpers :: proc(slide: u64) -> bool {
-	helpers := hook.PLACEMENT_HELPERS
+	helpers := gate.PLACEMENT_HELPERS
 	for helper in helpers {
 		words := ([^]u32)(uintptr(helper.unslid + slide))
 		for word in 0 ..< 4 {if words[word] != helper.signature[word] {return false}}
@@ -57,5 +57,5 @@ apply_server_placement :: proc "contextless" (connection: rawptr, wid: u32) {
 	if !(after.x >= -1_000_000 && after.x <= 1_000_000 && after.y >= -1_000_000 && after.y <= 1_000_000) {finish_placement(10, 0); return}
 	status := i32(10)
 	if after.x == f64(placement_x) && after.y == f64(placement_y) {status = 0}
-	finish_placement(status, hook.placement_pack(i32(after.x), i32(after.y)))
+	finish_placement(status, gate.placement_pack(i32(after.x), i32(after.y)))
 }

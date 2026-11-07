@@ -19,7 +19,7 @@ import "core:strings"
 import "core:sys/posix"
 import "core:time"
 import loader "dock"
-import ws "experimental/window_server"
+import gate "windowserver/gate"
 
 WS_ATTACH_PAYLOAD :: WS_PAYLOAD_DIR + "/shoji-ws.dylib"
 WS_ATTACH_START_WAIT :: 5 * time.Second
@@ -89,13 +89,13 @@ ws_attach :: proc() -> (result: Ws_Attach_Result, err: Ws_Attach_Error) {
 	if err = ws_attach_preflight(&result); err != .None {return}
 	result.windowserver = ws_attach_find_windowserver()
 	if result.windowserver <= 0 {return result, .No_WindowServer}
-	self := ws.gate_mach_task_self()
+	self := gate.gate_mach_task_self()
 	task: u32
-	if code := ws.gate_task_for_pid(self, result.windowserver, &task); code != 0 {
+	if code := gate.gate_task_for_pid(self, result.windowserver, &task); code != 0 {
 		result.detail = fmt.tprintf("task_for_pid %d", code)
 		return result, .Task_Port
 	}
-	defer ws.gate_mach_port_deallocate(self, task)
+	defer gate.gate_mach_port_deallocate(self, task)
 	status, resident := ws_attach_read_status(result.windowserver)
 	if !resident {
 		status, err = ws_attach_load(&result, task)
@@ -114,7 +114,7 @@ ws_attach :: proc() -> (result: Ws_Attach_Result, err: Ws_Attach_Error) {
 ws_attach_preflight :: proc(result: ^Ws_Attach_Result) -> Ws_Attach_Error {
 	if posix.geteuid() != 0 {return .Not_Root}
 	if os.exists(WS_DISABLE_SENTINEL) {return .Disabled}
-	if build := os_build(); build != ws.BUILD {
+	if build := os_build(); build != gate.BUILD {
 		result.detail = build
 		return .Unsupported_Build
 	}
@@ -130,7 +130,7 @@ ws_attach_load :: proc(
 	result: ^Ws_Attach_Result,
 	task: u32,
 ) -> (
-	status: ws.Tgate_Status,
+	status: gate.Tgate_Status,
 	err: Ws_Attach_Error,
 ) {
 	switch ws_images_scan(task) {
@@ -149,7 +149,7 @@ ws_attach_load :: proc(
 		return {}, .Inject
 	}
 	// sudo clears the environment; the loader requires the explicit opt-in.
-	posix.setenv(ws.EXPERIMENT_ENV, "1", true)
+	posix.setenv(gate.EXPERIMENT_ENV, "1", true)
 	if message := loader.inject_windowserver(WS_ATTACH_PAYLOAD, result.windowserver);
 	   message != "" {
 		result.detail = message
@@ -171,10 +171,10 @@ ws_attach_load :: proc(
 // either: whoever can replace the file chooses code that runs in WindowServer.
 ws_attach_payload_safe :: proc(file_uid, file_mode, dir_uid, dir_mode: u32) -> bool {
 	return file_uid == 0 &&
-		file_mode & ws.S_IFMT_BITS == ws.S_IFREG_BITS &&
+		file_mode & gate.S_IFMT_BITS == gate.S_IFREG_BITS &&
 		file_mode & 0o022 == 0 &&
 		dir_uid == 0 &&
-		dir_mode & ws.S_IFMT_BITS == ws.S_IFDIR_BITS &&
+		dir_mode & gate.S_IFMT_BITS == gate.S_IFDIR_BITS &&
 		dir_mode & 0o022 == 0
 }
 
@@ -196,7 +196,7 @@ ws_attach_find_windowserver :: proc() -> i32 {
 	if count <= 0 {return 0}
 	found: i32 = 0
 	for pid in pids[:min(int(count), len(pids))] {
-		if pid <= 0 || !ws.valid_path(loader.windowserver_process_path(pid)) {continue}
+		if pid <= 0 || !gate.valid_path(loader.windowserver_process_path(pid)) {continue}
 		// Two system WindowServers would make the target ambiguous.
 		if found != 0 {return 0}
 		found = pid
@@ -204,20 +204,20 @@ ws_attach_find_windowserver :: proc() -> i32 {
 	return found
 }
 
-ws_attach_read_status :: proc(windowserver: i32) -> (status: ws.Tgate_Status, ok: bool) {
-	fd := posix.open(ws.TGATE_STATUS_PATH, {.NOFOLLOW, .CLOEXEC})
+ws_attach_read_status :: proc(windowserver: i32) -> (status: gate.Tgate_Status, ok: bool) {
+	fd := posix.open(gate.TGATE_STATUS_PATH, {.NOFOLLOW, .CLOEXEC})
 	if fd < 0 {return}
 	defer posix.close(fd)
 	st: posix.stat_t
 	if posix.fstat(fd, &st) != .OK {return}
 	// One extra byte detects a file longer than the expected status.
-	data: [size_of(ws.Tgate_Status) + 1]u8
+	data: [size_of(gate.Tgate_Status) + 1]u8
 	n := posix.read(fd, &data[0], len(data))
 	if n < 0 {return}
-	return ws.tgate_status_decode(data[:n], u32(st.st_uid), windowserver)
+	return gate.tgate_status_decode(data[:n], u32(st.st_uid), windowserver)
 }
 
-ws_attach_wait_status :: proc(windowserver: i32) -> (status: ws.Tgate_Status, ok: bool) {
+ws_attach_wait_status :: proc(windowserver: i32) -> (status: gate.Tgate_Status, ok: bool) {
 	deadline := time.time_add(time.now(), WS_ATTACH_START_WAIT)
 	for {
 		status, ok = ws_attach_read_status(windowserver)
@@ -260,12 +260,12 @@ ws_attach_trust_self :: proc() -> Ws_Attach_Error {
 	hash: [20]u8
 	if csops(i32(posix.getpid()), 5, &hash, len(hash)) != 0 {return .Self_Identity}
 	existing := ""
-	if data, _, ok := read_limited(WS_CLIENTS_PATH, ws.GATE_CLIENTS_LIMIT); ok {
+	if data, _, ok := read_limited(WS_CLIENTS_PATH, gate.GATE_CLIENTS_LIMIT); ok {
 		existing = string(data)
 	}
 	merged := ws_attach_clients_merge(existing, hex(hash[:]), WS_ATTACH_CLIENTS_KEEP)
 	if merged == existing {return .None}
-	if len(merged) > ws.GATE_CLIENTS_LIMIT {return .Clients_Write}
+	if len(merged) > gate.GATE_CLIENTS_LIMIT {return .Clients_Write}
 	return ws_attach_write_clients(merged) ? .None : .Clients_Write
 }
 
@@ -289,7 +289,7 @@ ws_attach_write_clients :: proc(content: string) -> bool {
 }
 
 ws_attach_deliver :: proc(task, gate_port: u32, detail: ^string) -> Ws_Attach_Error {
-	failure, code := ws.gate_deliver_to_rendezvous(task, gate_port, WS_ATTACH_DELIVERY_WAIT)
+	failure, code := gate.gate_deliver_to_rendezvous(task, gate_port, WS_ATTACH_DELIVERY_WAIT)
 	if failure != .None {
 		detail^ = fmt.tprintf("%v %d", failure, code)
 		return .Delivery

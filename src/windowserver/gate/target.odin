@@ -1,4 +1,4 @@
-package experimental
+package gate
 
 PATH :: "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
 CANONICAL_PATH :: "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/Resources/WindowServer"

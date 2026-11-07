@@ -13,7 +13,7 @@ import "core:fmt"
 import "core:os"
 import "core:sys/posix"
 import "core:time"
-import ws "experimental/window_server"
+import gate "windowserver/gate"
 
 WS_ATTACH_ATTEMPTS :: 5
 WS_ATTACH_RETRY_FIRST :: 2 * time.Second
@@ -65,7 +65,7 @@ ws_attach_runtime_stop :: proc(r: ^Ws_Attach_Runtime) {
 	if r.child != 0 {posix.kill(posix.pid_t(r.child), .SIGKILL)}
 	ws_attach_close_output(r)
 	if r.rendezvous != 0 {
-		ws.gate_mach_port_destroy(ws.gate_mach_task_self(), r.rendezvous)
+		gate.gate_mach_port_destroy(gate.gate_mach_task_self(), r.rendezvous)
 		r.rendezvous = 0
 	}
 }
@@ -152,15 +152,15 @@ ws_attach_spawn :: proc(r: ^Ws_Attach_Runtime, now: time.Time) -> string {
 
 // The receive right lives as long as the daemon, so the name is registered once.
 ws_attach_register :: proc(r: ^Ws_Attach_Runtime) -> string {
-	bootstrap, ok := ws.gate_process_bootstrap_port()
+	bootstrap, ok := gate.gate_process_bootstrap_port()
 	if !ok {return "no session bootstrap port; run the daemon in the login session"}
-	task := ws.gate_mach_task_self()
+	task := gate.gate_mach_task_self()
 	port: u32
-	if ws.gate_mach_port_allocate(task, ws.MACH_PORT_RIGHT_RECEIVE, &port) != 0 {
+	if gate.gate_mach_port_allocate(task, gate.MACH_PORT_RIGHT_RECEIVE, &port) != 0 {
 		return "cannot allocate the gate rendezvous port"
 	}
-	if code := ws.gate_bootstrap_register(bootstrap, ws.GATE_RENDEZVOUS_NAME, port); code != 0 {
-		ws.gate_mach_port_destroy(task, port)
+	if code := gate.gate_bootstrap_register(bootstrap, gate.GATE_RENDEZVOUS_NAME, port); code != 0 {
+		gate.gate_mach_port_destroy(task, port)
 		return fmt.tprintf("gate rendezvous name is in use (%d)", code)
 	}
 	r.rendezvous = port
@@ -171,15 +171,15 @@ ws_attach_register :: proc(r: ^Ws_Attach_Runtime) -> string {
 ws_attach_receive :: proc(r: ^Ws_Attach_Runtime) -> bool {
 	if r.rendezvous == 0 {return false}
 	message: Ws_Mach_Buffer
-	options := u32(ws.MACH_MSG_RECEIVE) | u32(ws.MACH_RCV_TIMEOUT)
+	options := u32(gate.MACH_MSG_RECEIVE) | u32(gate.MACH_RCV_TIMEOUT)
 	size := u32(len(message.bytes))
-	if ws.gate_mach_msg(&message.bytes[0], options, 0, size, r.rendezvous, 0, 0) != 0 {
+	if gate.gate_mach_msg(&message.bytes[0], options, 0, size, r.rendezvous, 0, 0) != 0 {
 		return false
 	}
-	service, ok := ws.gate_handshake_send_right(message.bytes[:])
+	service, ok := gate.gate_handshake_send_right(message.bytes[:])
 	if !ok {return false}
 	ws_adapter_close(r.ws)
-	ws_adapter_connect(r.ws, ws.gate_mach_task_self(), service)
+	ws_adapter_connect(r.ws, gate.gate_mach_task_self(), service)
 	fmt.eprintln("shoji:", ws_adapter_describe(r.ws))
 	if r.ws.state != .Serving {return false}
 	r.manager.layout_batch = ws_layout_batch

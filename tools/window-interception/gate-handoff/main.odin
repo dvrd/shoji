@@ -19,7 +19,7 @@ import "core:sys/posix"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import hook "../../../src/experimental/window_server"
+import gate "../../../src/windowserver/gate"
 
 foreign import system "system:System"
 
@@ -47,7 +47,7 @@ Dir_Entry :: struct {
 	name:     [1024]u8,
 }
 
-STATUS_PATH :: hook.TGATE_STATUS_PATH
+STATUS_PATH :: gate.TGATE_STATUS_PATH
 STATUS_PORT_OFF :: 104 // Tgate_Status.mach_port
 COPY_SEND :: 19 // MACH_MSG_TYPE_COPY_SEND
 
@@ -101,7 +101,7 @@ process_request :: proc(ws_task, gate_port: u32, name: string) -> (refused: bool
 		return true
 	}
 	pid := i32(pid64)
-	request_path := fmt.tprintf("%s.%s", hook.GATE_HANDOFF_REQUEST_PATH, name)
+	request_path := fmt.tprintf("%s.%s", gate.GATE_HANDOFF_REQUEST_PATH, name)
 	claimed_path := fmt.tprintf("%s.claimed", request_path)
 	if rename_file(strings.unsafe_string_to_cstring(request_path), strings.unsafe_string_to_cstring(claimed_path)) != 0 {
 		return false
@@ -142,7 +142,7 @@ process_request :: proc(ws_task, gate_port: u32, name: string) -> (refused: bool
 		mach_port_deallocate(self, send)
 		return true
 	}
-	response_path := fmt.tprintf("%s.%d", hook.GATE_HANDOFF_RESPONSE_PATH, pid)
+	response_path := fmt.tprintf("%s.%d", gate.GATE_HANDOFF_RESPONSE_PATH, pid)
 	temporary := fmt.tprintf("%s.tmp", response_path)
 	if os.write_entire_file(temporary, transmute([]u8)fmt.tprintf("%d %d\n", pid, inserted)) != nil {
 		fmt.eprintf("refused %d (response write)\n", pid)
@@ -203,7 +203,7 @@ main :: proc() {
 }
 
 // Fallback delivery when the client's task port is unavailable. The client,
-// after its file handoff times out, registers hook.GATE_RENDEZVOUS_NAME in its
+// after its file handoff times out, registers gate.GATE_RENDEZVOUS_NAME in its
 // session bootstrap and waits for a handshake carrying the gate send right.
 // WindowServer cannot look that name up on macOS 27 (1100); this root helper
 // runs in the invoking user's session namespace and can. Authorization is
@@ -211,7 +211,7 @@ main :: proc() {
 RENDEZVOUS_WAIT :: 10 * time.Second // covers the client's 5 s handoff wait.
 
 bootstrap_handshake :: proc(ws_task, gate_port: u32, pid: i32) -> bool {
-	failure, code := hook.gate_deliver_to_rendezvous(ws_task, gate_port, RENDEZVOUS_WAIT)
+	failure, code := gate.gate_deliver_to_rendezvous(ws_task, gate_port, RENDEZVOUS_WAIT)
 	if failure != .None {
 		fmt.eprintf("refused %d (%v %#x)\n", pid, failure, u32(code))
 		return false

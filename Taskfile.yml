@@ -204,8 +204,8 @@ tasks:
     desc: Type-check all source and tests
     cmds:
       - '{{.ODIN}} check src -warnings-as-errors -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/dock_payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/experimental/window_server_payload -warnings-as-errors -no-entry-point -target-features:pauth -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/payloads/dock -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/payloads/windowserver -warnings-as-errors -no-entry-point -target-features:pauth -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tests -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock/scanner -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
@@ -284,7 +284,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.STEP}} payload compile "bin/shoji-sa.dylib: arm64e code loaded into Dock" -- {{.ODIN_ARM64E}} build src/dock_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.STEP}} payload compile "bin/shoji-sa.dylib: arm64e code loaded into Dock" -- {{.ODIN_ARM64E}} build src/payloads/dock -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - '{{.STEP}} payload normalize "mark arm64e ABI as preview so Dock accepts it" -- ./bin/inspector normalize-arm64e bin/shoji-sa.dylib'
       - '{{.STEP}} payload sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
   build:windowserver-hook-selftest:
@@ -337,21 +337,21 @@ tasks:
         # through the root-owned clients file (lifecycle/trust-client.swift), so
         # rebuilding Shoji never requires a new payload.
         allow=$client_hash
-        {{.ODIN_ARM64E}} build src/experimental/window_server_payload "-define:SHOJI_GATE_CLIENT_CDHASH=$allow" -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor23.dylib"
+        {{.ODIN_ARM64E}} build src/payloads/windowserver "-define:SHOJI_GATE_CLIENT_CDHASH=$allow" -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor23.dylib"
       - ./bin/inspector normalize-arm64e bin/shoji-ws-observer.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-observer.dylib'
   build:windowserver-payload:
     deps: [build:step, build:inspector]
     desc: Build the WindowServer gate payload that `shoji --ws-attach` loads (does not load it)
     silent: true
-    sources: ['src/experimental/window_server_payload/*.odin', 'src/experimental/window_server/*.odin', 'src/dock/*.odin']
+    sources: ['src/payloads/windowserver/*.odin', 'src/windowserver/gate/*.odin', 'src/dock/*.odin']
     generates: [bin/shoji-ws.dylib]
     env:
       ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.STEP}} ws-payload compile "bin/shoji-ws.dylib: gate code loaded into WindowServer" -- {{.ODIN_ARM64E}} build src/experimental/window_server_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws.dylib"'
+      - '{{.STEP}} ws-payload compile "bin/shoji-ws.dylib: gate code loaded into WindowServer" -- {{.ODIN_ARM64E}} build src/payloads/windowserver -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws.dylib"'
       - '{{.STEP}} ws-payload normalize "mark arm64e ABI as preview so WindowServer accepts it" -- ./bin/inspector normalize-arm64e bin/shoji-ws.dylib'
       - '{{.STEP}} ws-payload sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - bin/shoji-ws.dylib'
   build:windowserver-ordering-trigger:
@@ -454,7 +454,7 @@ tasks:
     desc: Cross-build the Intel Dock payload
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build src/dock_payload -warnings-as-errors -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN}} build src/payloads/dock -warnings-as-errors -target:darwin_amd64 -build-mode:shared -out:bin/shoji-sa-amd64.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - '{{.CODESIGN}} --force --sign - bin/shoji-sa-amd64.dylib'
   test:amd64:
     desc: Run Intel tests (requires Intel macOS or Rosetta)

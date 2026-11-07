@@ -1,13 +1,13 @@
-package payload
+package windowserver_payload
 
-import hook "../window_server"
+import gate "../../windowserver/gate"
 
 // Static op map for each build's transaction dispatch table, generated from
 // artifacts/macos_versions/<build>/model/transaction-dispatch-table.txt by
 // tools/window-interception/rea/ghidra/decode-transaction-table.swift. Op 0x58 is an
 // empty slot on both builds. Every gated op must be verified against this map
 // before its table entry is swapped.
-when hook.BUILD == "26B123" {
+when gate.BUILD == "26B123" {
 	gate_expected_ops := [?]Gate_Expected_Op {
 		{0x01, 0x182a58548}, // meta=0x0010000002c8b570
 		{0x02, 0x182a58654}, // meta=0x0010000002c81eb4
@@ -149,7 +149,7 @@ when hook.BUILD == "26B123" {
 		{0x8b, 0x182a64ccc}, // meta=0x0010000002c82c27
 		{0x8c, 0x182a64d1c}, // meta=0x0010000002c82c4d
 	}
-} else when hook.BUILD == "26A434" {
+} else when gate.BUILD == "26A434" {
 	gate_expected_ops := [?]Gate_Expected_Op {
 		{0x01, 0x187451cbc}, // meta=0x001000000766d95c
 		{0x02, 0x187451dc8}, // meta=0x0010000007664429

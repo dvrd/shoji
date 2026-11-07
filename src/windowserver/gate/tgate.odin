@@ -1,4 +1,4 @@
-package experimental
+package gate
 
 // Transaction-gate status shared by the payload (writer, inside WindowServer)
 // and Shoji (reader). The payload writes it to TGATE_STATUS_PATH as

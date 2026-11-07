@@ -6,7 +6,7 @@ package shoji
 // already patched (install status 24). Reads dyld's image list through the
 // task port; bounded in images and bytes read.
 
-import ws "experimental/window_server"
+import gate "windowserver/gate"
 
 TASK_DYLD_INFO :: 17
 // Task_Dyld_Info is five natural_t words.
@@ -85,8 +85,8 @@ ws_image_path_is_shoji_payload :: proc(path_prefix: string) -> bool {
 
 // Install status of the most recent payload start (ordering hook stage).
 ws_attach_install_status :: proc() -> (status: u64, ok: bool) {
-	data, st, read_ok := read_limited(ws.OBSERVER_STATUS_PATH, 4096)
-	if !read_ok || u32(st.st_uid) != ws.UID || len(data) < 24 {return}
+	data, st, read_ok := read_limited(gate.OBSERVER_STATUS_PATH, 4096)
+	if !read_ok || u32(st.st_uid) != gate.UID || len(data) < 24 {return}
 	if string(data[:8]) != "WSOBINST" {return}
 	return (^u64)(&data[16])^, true
 }

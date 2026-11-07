@@ -1,45 +1,45 @@
 package tests
 
 import mac "../src"
-import wire "../src/experimental/window_server"
+import gate "../src/windowserver/gate"
 import "core:strings"
 import "core:testing"
 
 @(private = "file")
-status_bytes :: proc(status: wire.Tgate_Status) -> []u8 {
-	data := make([]u8, size_of(wire.Tgate_Status), context.temp_allocator)
+status_bytes :: proc(status: gate.Tgate_Status) -> []u8 {
+	data := make([]u8, size_of(gate.Tgate_Status), context.temp_allocator)
 	copied := status
-	copy(data, (cast([^]u8)&copied)[:size_of(wire.Tgate_Status)])
+	copy(data, (cast([^]u8)&copied)[:size_of(gate.Tgate_Status)])
 	return data
 }
 
 @(test)
 tgate_status_decode_requires_current_status_for_live_windowserver :: proc(t: ^testing.T) {
-	good := wire.Tgate_Status {
-		magic            = wire.TGATE_MAGIC,
-		version          = wire.TGATE_VERSION,
+	good := gate.Tgate_Status {
+		magic            = gate.TGATE_MAGIC,
+		version          = gate.TGATE_VERSION,
 		mach_port        = 0x1303,
 		windowserver_pid = 400,
 	}
 	data := status_bytes(good)
-	status, ok := wire.tgate_status_decode(data, wire.UID, 400)
+	status, ok := gate.tgate_status_decode(data, gate.UID, 400)
 	testing.expect(t, ok)
 	testing.expect_value(t, status.mach_port, 0x1303)
 	// A status left by a previous WindowServer must not be trusted.
-	_, ok = wire.tgate_status_decode(data, wire.UID, 401)
+	_, ok = gate.tgate_status_decode(data, gate.UID, 401)
 	testing.expect(t, !ok)
 	// Only WindowServer's user may have written the file.
-	_, ok = wire.tgate_status_decode(data, 501, 400)
+	_, ok = gate.tgate_status_decode(data, 501, 400)
 	testing.expect(t, !ok)
-	_, ok = wire.tgate_status_decode(data[:len(data) - 1], wire.UID, 400)
+	_, ok = gate.tgate_status_decode(data[:len(data) - 1], gate.UID, 400)
 	testing.expect(t, !ok)
 	old := good
-	old.version = wire.TGATE_VERSION - 1
-	_, ok = wire.tgate_status_decode(status_bytes(old), wire.UID, 400)
+	old.version = gate.TGATE_VERSION - 1
+	_, ok = gate.tgate_status_decode(status_bytes(old), gate.UID, 400)
 	testing.expect(t, !ok)
 	foreign_magic := good
 	foreign_magic.magic[0] = 'X'
-	_, ok = wire.tgate_status_decode(status_bytes(foreign_magic), wire.UID, 400)
+	_, ok = gate.tgate_status_decode(status_bytes(foreign_magic), gate.UID, 400)
 	testing.expect(t, !ok)
 }
 
@@ -124,7 +124,7 @@ dock_payload_resolves_beside_the_executable :: proc(t: ^testing.T) {
 @(test)
 ws_images_scan_reads_this_process_without_a_payload :: proc(t: ^testing.T) {
 	// Exercises the dyld image-list walk on a task that surely has no payload.
-	scan := mac.ws_images_scan(wire.gate_mach_task_self())
+	scan := mac.ws_images_scan(gate.gate_mach_task_self())
 	testing.expect_value(t, scan, mac.Ws_Images_Scan.Clean)
 	testing.expect(t, mac.ws_image_path_is_shoji_payload(mac.WS_PAYLOAD_PREFIX))
 	testing.expect(t, !mac.ws_image_path_is_shoji_payload("/System/Library/Frameworks/"))
@@ -132,11 +132,11 @@ ws_images_scan_reads_this_process_without_a_payload :: proc(t: ^testing.T) {
 
 @(test)
 barrier_parks_suspended_threads_that_are_off_core :: proc(t: ^testing.T) {
-	testing.expect(t, wire.barrier_run_state_parked(wire.TH_STATE_STOPPED, 1))
-	testing.expect(t, wire.barrier_run_state_parked(wire.TH_STATE_WAITING, 1))
+	testing.expect(t, gate.barrier_run_state_parked(gate.TH_STATE_STOPPED, 1))
+	testing.expect(t, gate.barrier_run_state_parked(gate.TH_STATE_WAITING, 1))
 	// WindowServer keeps a thread in an uninterruptible kernel wait at login.
-	testing.expect(t, wire.barrier_run_state_parked(wire.TH_STATE_UNINTERRUPTIBLE, 1))
-	testing.expect(t, wire.barrier_run_state_parked(wire.TH_STATE_HALTED, 1))
-	testing.expect(t, !wire.barrier_run_state_parked(wire.TH_STATE_RUNNING, 1))
-	testing.expect(t, !wire.barrier_run_state_parked(wire.TH_STATE_WAITING, 0))
+	testing.expect(t, gate.barrier_run_state_parked(gate.TH_STATE_UNINTERRUPTIBLE, 1))
+	testing.expect(t, gate.barrier_run_state_parked(gate.TH_STATE_HALTED, 1))
+	testing.expect(t, !gate.barrier_run_state_parked(gate.TH_STATE_RUNNING, 1))
+	testing.expect(t, !gate.barrier_run_state_parked(gate.TH_STATE_WAITING, 0))
 }

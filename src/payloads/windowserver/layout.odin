@@ -1,9 +1,9 @@
-package payload
+package windowserver_payload
 
 import "base:intrinsics"
-import hook "../window_server"
+import gate "../../windowserver/gate"
 
-layout_plan: hook.Layout_Plan
+layout_plan: gate.Layout_Plan
 layout_generation: u32
 layout_budget_us: u64
 layout_complete: u32
@@ -16,8 +16,8 @@ layout_applied: u32
 apply_server_layout :: proc "contextless" (connection: rawptr) {
 	started := mach_absolute_time()
 	status := i32(0)
-	windows: [hook.LAYOUT_LIMIT]rawptr
-	before: [hook.LAYOUT_LIMIT]Placement_Rect
+	windows: [gate.LAYOUT_LIMIT]rawptr
+	before: [gate.LAYOUT_LIMIT]Placement_Rect
 	applied := u32(0)
 	if connection == nil {status = 8}
 	for index in 0 ..< layout_plan.count {
