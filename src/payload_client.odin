@@ -1,6 +1,6 @@
 package shoji
 
-import wire "dock"
+import dock "dock"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -18,11 +18,11 @@ addition_connect :: proc() -> i32 {
 }
 
 addition_exchange :: proc(
-	packet: ^wire.Packet,
+	packet: ^dock.Packet,
 	handshake: bool = false,
 	created_space: ^u64 = nil,
 ) -> (
-	wire.Capabilities,
+	dock.Capabilities,
 	string,
 ) {
 	fd := addition_connect()
@@ -35,7 +35,7 @@ addition_exchange :: proc(
 		return {}, "unexpected scripting-addition socket owner"
 	}
 
-	if !write_all(fd, wire.finish(packet)) {
+	if !write_all(fd, dock.finish(packet)) {
 		return {}, "could not send scripting-addition request"
 	}
 
@@ -44,14 +44,14 @@ addition_exchange :: proc(
 		return {}, "scripting addition did not acknowledge request"
 	}
 
-	if status[0] == u8(wire.Status.Native_Error) {
+	if status[0] == u8(dock.Status.Native_Error) {
 		data: [5]u8
 		if !read_exact(fd, data[:]) {
 			return {}, "incomplete scripting-addition native error"
 		}
-		r := wire.reader(data[:])
-		stage := wire.unpack(&r, wire.Native_Stage)
-		code := wire.unpack(&r, i32)
+		r := dock.reader(data[:])
+		stage := dock.unpack(&r, dock.Native_Stage)
+		code := dock.unpack(&r, i32)
 		return {}, fmt.tprintf(
 			"scripting addition failed at %v (native error %d)",
 			stage,
@@ -59,20 +59,20 @@ addition_exchange :: proc(
 		)
 	}
 
-	if status[0] != u8(wire.Status.OK) {
+	if status[0] != u8(dock.Status.OK) {
 		return {}, fmt.tprintf(
 			"scripting addition returned %v",
-			wire.Status(status[0]),
+			dock.Status(status[0]),
 		)
 	}
 
 	if handshake {
-		data: [len(wire.VERSION) + 5]u8
+		data: [len(dock.VERSION) + 5]u8
 		if !read_exact(fd, data[:]) {
 			return {}, "incomplete scripting-addition handshake"
 		}
 
-		caps, ok := wire.handshake(data[:]); if !ok {
+		caps, ok := dock.handshake(data[:]); if !ok {
 			return {}, "incompatible scripting-addition protocol"
 		}
 
@@ -85,7 +85,7 @@ addition_exchange :: proc(
 			return {}, "incomplete tracked Space creation response"
 		}
 
-		r := wire.reader(data[:]); created_space^ = wire.unpack(&r, u64)
+		r := dock.reader(data[:]); created_space^ = dock.unpack(&r, u64)
 		if created_space^ == 0 {
 			return {}, "payload did not identify its created Space"
 		}
@@ -105,16 +105,16 @@ addition_create_tracked_space :: proc(anchor: u64) -> (u64, string) {
 			"loaded payload lacks tracked Space creation; load the rebuilt payload into a fresh Dock"
 	}
 
-	packet := wire.begin(.Space_Create_Tracked)
-	wire.pack(&packet, anchor)
+	packet := dock.begin(.Space_Create_Tracked)
+	dock.pack(&packet, anchor)
 
 	id: u64
 	_, err = addition_exchange(&packet, created_space = &id)
 	return id, err
 }
 
-addition_check :: proc() -> (wire.Capabilities, string) {
-	packet := wire.begin(.Handshake)
+addition_check :: proc() -> (dock.Capabilities, string) {
+	packet := dock.begin(.Handshake)
 	return addition_exchange(&packet, true)
 }
 
@@ -125,10 +125,10 @@ addition_space_transaction :: proc(_: rawptr, target: u64, wid: u32, source: u64
 	caps, err := addition_check()
 	if err != "" {return err}
 	if .Space_Transaction not_in caps {return "Dock payload lacks transactional Space moves"}
-	packet := wire.begin(.Window_To_Space_Transaction)
-	wire.pack(&packet, target)
-	wire.pack(&packet, wid)
-	wire.pack(&packet, source)
+	packet := dock.begin(.Window_To_Space_Transaction)
+	dock.pack(&packet, target)
+	dock.pack(&packet, wid)
+	dock.pack(&packet, source)
 	_, err = addition_exchange(&packet)
 	return err
 }
@@ -138,24 +138,24 @@ addition_action :: proc(action: Action) -> string {
 		return err
 	}
 
-	packet: wire.Packet
+	packet: dock.Packet
 
 	#partial switch action.kind {
 	case .Order:
-		packet = wire.begin(.Window_Order); wire.pack(&packet, action.window)
-		wire.pack(&packet, i32(action.value))
-		wire.pack(&packet, action.relative)
+		packet = dock.begin(.Window_Order); dock.pack(&packet, action.window)
+		dock.pack(&packet, i32(action.value))
+		dock.pack(&packet, action.relative)
 	case .Scale:
-		packet = wire.begin(.Window_Scale); wire.pack(&packet, action.window)
-		wire.pack(&packet, f32(action.frame.x))
-		wire.pack(&packet, f32(action.frame.y))
-		wire.pack(&packet, f32(action.frame.w))
-		wire.pack(&packet, f32(action.frame.h))
+		packet = dock.begin(.Window_Scale); dock.pack(&packet, action.window)
+		dock.pack(&packet, f32(action.frame.x))
+		dock.pack(&packet, f32(action.frame.y))
+		dock.pack(&packet, f32(action.frame.w))
+		dock.pack(&packet, f32(action.frame.h))
 	case .Focus_Without_Raise:
-		packet = wire.begin(.Window_Focus)
-		wire.pack(&packet, action.window)
+		packet = dock.begin(.Window_Focus)
+		dock.pack(&packet, action.window)
 	case .Space_Focus, .Space_Create, .Space_Destroy:
-		op := wire.Opcode.Space_Focus
+		op := dock.Opcode.Space_Focus
 
 		if action.kind == .Space_Create {
 			op = .Space_Create
@@ -164,38 +164,38 @@ addition_action :: proc(action: Action) -> string {
 		if action.kind == .Space_Destroy {
 			op = .Space_Destroy
 		}
-		packet = wire.begin(op); wire.pack(&packet, action.space)
+		packet = dock.begin(op); dock.pack(&packet, action.space)
 	case .Space_Move:
-		packet = wire.begin(.Space_Move); wire.pack(&packet, action.space)
-		wire.pack(&packet, action.destination)
-		wire.pack(&packet, u64(0))
-		wire.pack(&packet, false)
+		packet = dock.begin(.Space_Move); dock.pack(&packet, action.space)
+		dock.pack(&packet, action.destination)
+		dock.pack(&packet, u64(0))
+		dock.pack(&packet, false)
 	case .Space:
-		packet = wire.begin(.Window_To_Space); wire.pack(&packet, action.space)
-		wire.pack(&packet, action.window)
+		packet = dock.begin(.Window_To_Space); dock.pack(&packet, action.space)
+		dock.pack(&packet, action.window)
 	case .Opacity:
-		packet = wire.begin(
+		packet = dock.begin(
 			action.duration > 0 \
-				? wire.Opcode.Window_Opacity_Fade \
-				: wire.Opcode.Window_Opacity,
+				? dock.Opcode.Window_Opacity_Fade \
+				: dock.Opcode.Window_Opacity,
 		)
-		wire.pack(&packet, action.window)
-		wire.pack(&packet, f32(action.value))
+		dock.pack(&packet, action.window)
+		dock.pack(&packet, f32(action.value))
 		if action.duration > 0 {
-			wire.pack(&packet, f32(action.duration))
+			dock.pack(&packet, f32(action.duration))
 		}
 	case .Layer:
-		level := wire.window_layer_key(action.value, caps)
-		packet = wire.begin(.Window_Layer); wire.pack(&packet, action.window)
-		wire.pack(&packet, level)
+		level := dock.window_layer_key(action.value, caps)
+		packet = dock.begin(.Window_Layer); dock.pack(&packet, action.window)
+		dock.pack(&packet, level)
 	case .Sticky, .Shadow:
-		packet = wire.begin(
+		packet = dock.begin(
 			action.kind == .Sticky \
-				? wire.Opcode.Window_Sticky \
-				: wire.Opcode.Window_Shadow,
+				? dock.Opcode.Window_Sticky \
+				: dock.Opcode.Window_Shadow,
 		)
-		wire.pack(&packet, action.window)
-		wire.pack(&packet, action.flag)
+		dock.pack(&packet, action.window)
+		dock.pack(&packet, action.flag)
 	case:
 		return "unsupported scripting-addition action"
 	}
@@ -351,21 +351,21 @@ addition_reload_backoff :: proc(r: ^Addition_Reload, now: time.Time) {
 			: min(r.retry_delay * 2, 30 * time.Second)
 	r.next_attempt = time.time_add(now, r.retry_delay)
 }
-addition_reload_tick :: proc(r: ^Addition_Reload, dock: i32, now: time.Time) {
+addition_reload_tick :: proc(r: ^Addition_Reload, dock_pid: i32, now: time.Time) {
 	if r.payload == "" {
 		return
 	}
 	if r.output_open && !health.output_tail_drain(&r.output, r.output_fd) {
 		addition_reload_close_output(r)
 	}
-	if dock != r.dock {
-		r.dock = dock
+	if dock_pid != r.dock {
+		r.dock = dock_pid
 		r.healthy, r.loaded = false, false
 		r.phase = .Check
 		r.next_attempt = now
 		r.retry_delay = 0
 	}
-	if dock == 0 ||
+	if dock_pid == 0 ||
 	   r.child != 0 ||
 	   r.healthy ||
 	   time.diff(now, r.next_attempt) > 0 {
@@ -389,7 +389,7 @@ addition_reload_tick :: proc(r: ^Addition_Reload, dock: i32, now: time.Time) {
 	r.output_fd = output_fd
 	r.output_open = output_fd >= 0
 	r.spawned_at = now
-	r.child, r.child_dock = pid, dock
+	r.child, r.child_dock = pid, dock_pid
 }
 
 addition_reload_record_failure :: proc(

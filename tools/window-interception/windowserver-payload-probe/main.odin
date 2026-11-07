@@ -4,8 +4,8 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:sys/posix"
 import mach "core:sys/darwin"
-import loader "../../../src/dock"
 import gate "../../../src/windowserver/gate"
+import inject "../../../src/inject"
 
 foreign import system "system:System"
 
@@ -67,7 +67,7 @@ region_info :: proc(page, page_size: u64) -> (info: Region_Info, ok: bool) {
 		size: u64
 		words: [19]u32
 		count := u32(len(words))
-		code := mach_vm_region_recurse(loader.mach_task_self(), &address, &size, &depth, &words[0], &count)
+		code := mach_vm_region_recurse(inject.mach_task_self(), &address, &size, &depth, &words[0], &count)
 		if code != 0 || count < 13 || address > page || page - address > size ||
 		   page_size > size - (page - address) {return {}, false}
 		if words[12] == 0 {return {i32(words[0]), i32(words[1]), u8(words[11] >> 24)}, true}
@@ -90,10 +90,10 @@ permission_probe :: proc() {
 	}
 	defer write_result(&result)
 	if !running_in_windowserver() {return}
-	handle := loader.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)
+	handle := inject.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)
 	if handle == nil {result.status = 2; return}
 	// The payload and all probe storage remain resident; no dylib unload is attempted.
-	server := loader.raw_symbol(handle, "SLXServer")
+	server := inject.raw_symbol(handle, "SLXServer")
 	info: Image_Info
 	if server == nil || dladdr(server, &info) == 0 {result.status = 2; return}
 	location, image_ok := gate.inspect_ordering_image(info.base)
@@ -118,10 +118,10 @@ permission_probe :: proc() {
 	page_bytes := ([^]u8)(uintptr(result.page))
 	copy(baseline, page_bytes[:int(page_size)])
 
-	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	kernel := inject.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {result.status = 3; return}
-	protect := cast(proc "c" (_: u32, _: u64, _: u64, _: i32, _: i32) -> i32)loader.raw_symbol(kernel, "mach_vm_protect")
-	deallocate := cast(gate.Deallocate)loader.raw_symbol(kernel, "mach_vm_deallocate")
+	protect := cast(proc "c" (_: u32, _: u64, _: u64, _: i32, _: i32) -> i32)inject.raw_symbol(kernel, "mach_vm_protect")
+	deallocate := cast(gate.Deallocate)inject.raw_symbol(kernel, "mach_vm_deallocate")
 	if protect == nil || deallocate == nil {result.status = 3; return}
 	result.status = 0
 
@@ -143,7 +143,7 @@ permission_probe :: proc() {
 	}
 	result.flags |= FLAG_BARRIER_ENTER
 	result.threads = u64(barrier.count)
-	task := loader.mach_task_self()
+	task := inject.mach_task_self()
 	alias: u64
 	alias_current, alias_maximum: i32
 	unrecoverable := false

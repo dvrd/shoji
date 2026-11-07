@@ -1,10 +1,11 @@
 package tests
 
-import loader "../src/dock"
+import dock "../src/dock"
 import gate "../src/windowserver/gate"
 import "core:os"
 import "core:sys/posix"
 import "core:testing"
+import inject "../src/inject"
 
 @(test)
 windowserver_client_identity_refuses_unconfigured_mismatched_and_failed_queries :: proc(t: ^testing.T) {
@@ -45,7 +46,7 @@ windowserver_target_requires_the_exact_system_executable :: proc(
 	testing.expect_value(t, path_error, nil)
 	testing.expect_value(
 		t,
-		loader.inject_windowserver(executable, i32(posix.getpid())),
+		inject.inject_windowserver(executable, i32(posix.getpid())),
 		"target process is not the system WindowServer",
 	)
 }
@@ -583,9 +584,9 @@ gate_reclaim_only_from_a_confirmed_dead_owner :: proc(t: ^testing.T) {
 @(test)
 dock_space_transaction_opcode_is_fixed_size :: proc(t: ^testing.T) {
 	data: [20]u8
-	testing.expect(t, loader.validate(.Window_To_Space_Transaction, data[:]))
-	testing.expect(t, !loader.validate(.Window_To_Space_Transaction, data[:12]))
-	testing.expect(t, !loader.validate(loader.Opcode(u8(loader.Opcode.Window_To_Space_Transaction) + 1), data[:]))
+	testing.expect(t, dock.validate(.Window_To_Space_Transaction, data[:]))
+	testing.expect(t, !dock.validate(.Window_To_Space_Transaction, data[:12]))
+	testing.expect(t, !dock.validate(dock.Opcode(u8(dock.Opcode.Window_To_Space_Transaction) + 1), data[:]))
 }
 
 @(test)

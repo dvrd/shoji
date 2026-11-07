@@ -11,8 +11,8 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:sys/posix"
 import mach "core:sys/darwin"
-import loader "../../dock"
 import gate "../../windowserver/gate"
+import inject "../../inject"
 
 foreign import system "system:System"
 
@@ -209,7 +209,7 @@ gate_try_handshake :: proc() {
 	if gate_bootstrap_port == 0 {return}
 	client: u32
 	if gate.gate_bootstrap_look_up(gate_bootstrap_port, gate.GATE_RENDEZVOUS_NAME, &client) != 0 {return}
-	defer gate.gate_mach_port_deallocate(loader.mach_task_self(), client)
+	defer gate.gate_mach_port_deallocate(inject.mach_task_self(), client)
 	message: struct #align(16) {bytes: [128]u8}
 	n, ok := gate.gate_pack_handshake(message.bytes[:], client, gate_service_send)
 	if !ok {return}
@@ -438,6 +438,7 @@ write_dump :: proc() {
 }
 
 // Call a PAC-signed handler (key A, discriminator 0) with the context in x0.
+@(enable_target_feature = "pauth")
 gate_call_handler :: asm(handler: u64, ctx: rawptr) -> (result: u64) [
 	handler = %x8,
 	ctx = %x0,
@@ -453,6 +454,7 @@ gate_call_handler :: asm(handler: u64, ctx: rawptr) -> (result: u64) [
 
 // Authenticate a table pointer the same way blraaz would, yielding the raw
 // address; a bad signature poisons the result and fails verification safely.
+@(enable_target_feature = "pauth")
 auth_ptr :: asm(p: u64) -> (r: u64) {
 	mov r, p;
 	autiza r;
@@ -659,7 +661,7 @@ prepare_table_copy :: proc(
 	for index in 0 ..< table_bytes / 8 {target[index] = source[index]}
 	for op, index in GATED_OPS {
 		gate_originals[op] = source[op * 2]
-		target[op * 2] = loader.sign_function(stub_page + u64(index) * 32)
+		target[op * 2] = inject.sign_function(stub_page + u64(index) * 32)
 	}
 	encoded, in_range := gate.encode_adrp_add(result.dispatch_site, copy_page, 24)
 	if !in_range {
@@ -764,7 +766,7 @@ region_info :: proc(page, page_size: u64) -> (info: Region_Info, ok: bool) {
 		size: u64
 		words: [19]u32
 		count := u32(len(words))
-		code := mach_vm_region_recurse(loader.mach_task_self(), &address, &size, &depth, &words[0], &count)
+		code := mach_vm_region_recurse(inject.mach_task_self(), &address, &size, &depth, &words[0], &count)
 		if code != 0 || count < 13 || address > page || page - address > size ||
 		   page_size > size - (page - address) {return {}, false}
 		if words[12] == 0 {return {i32(words[0]), i32(words[1]), u8(words[11] >> 24)}, true}
@@ -875,9 +877,9 @@ install_observer :: proc() {
 	defer write_file(STATUS_PATH, &result, size_of(result))
 	if !running_in_windowserver() {return}
 	mach_timebase_info(&observer_timebase)
-	handle := loader.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)
+	handle := inject.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)
 	if handle == nil {result.status = 20; return}
-	server := loader.raw_symbol(handle, "SLXServer")
+	server := inject.raw_symbol(handle, "SLXServer")
 	if server == nil {result.status = 21; return}
 	info: Image_Info
 	if dladdr(server, &info) == 0 {result.status = 22; return}
@@ -900,14 +902,14 @@ install_observer :: proc() {
 	result.initial_current = i64(initial.protection)
 	result.initial_max = i64(initial.max_protection)
 
-	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	kernel := inject.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {result.status = 3; return}
-	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)loader.raw_symbol(kernel, "mach_vm_allocate")
-	deallocate := cast(gate.Deallocate)loader.raw_symbol(kernel, "mach_vm_deallocate")
-	protect := cast(Mach_Protect)loader.raw_symbol(kernel, "mach_vm_protect")
+	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)inject.raw_symbol(kernel, "mach_vm_allocate")
+	deallocate := cast(gate.Deallocate)inject.raw_symbol(kernel, "mach_vm_deallocate")
+	protect := cast(Mach_Protect)inject.raw_symbol(kernel, "mach_vm_protect")
 	if allocate == nil || deallocate == nil || protect == nil {result.status = 3; return}
 
-	task := loader.mach_task_self()
+	task := inject.mach_task_self()
 	entry_words := ([^]u32)(uintptr(entry))
 	expected: [4]u32
 	for index in 0 ..< 4 {expected[index] = entry_words[index]}
@@ -919,7 +921,7 @@ install_observer :: proc() {
 		result.status = 4
 		return
 	}
-	replacement := loader.strip_function(u64(uintptr(rawptr(ordering_observer))))
+	replacement := inject.strip_function(u64(uintptr(rawptr(ordering_observer))))
 	plan, plan_ok := gate.plan_inline(entry, trampoline, replacement, expected)
 	if !plan_ok {
 		deallocate(task, trampoline, page_size)
@@ -1062,7 +1064,7 @@ install_observer :: proc() {
 	gate_last_status.bootstrap_port = u64(gate_bootstrap_port)
 	write_file(TGATE_STATUS_PATH, &gate_last_status, size_of(gate_last_status))
 	thread: posix.pthread_t
-	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(loader.sign_function(u64(uintptr(rawptr(control_thread)))))
+	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(inject.sign_function(u64(uintptr(rawptr(control_thread)))))
 	thread_result := posix.pthread_create(&thread, nil, worker, nil)
 	result.thread_create_code = i64(thread_result)
 	if thread_result != nil {

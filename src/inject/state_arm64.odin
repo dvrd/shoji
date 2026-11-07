@@ -1,4 +1,4 @@
-package dock
+package inject
 
 // Darwin's setters for a fresh (zero-flags) arm64e thread state use distinct
 // discriminators, not the zero discriminator used for ordinary function pointers.

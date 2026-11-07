@@ -8,7 +8,7 @@ import "core:strconv"
 import "core:time"
 import "core:sys/posix"
 import objc "core:sys/darwin/Foundation"
-import dockwire "../../../../src/dock"
+import dock "../../../../src/dock"
 
 Object :: ^objc.Object
 Rect :: struct {x, y, w, h: f64}
@@ -148,11 +148,11 @@ dock_order :: proc(wid: u32) -> int {
 		fmt.println("dock_order: payload socket unavailable")
 		return 1
 	}
-	packet := dockwire.begin(.Window_Order)
-	dockwire.pack(&packet, wid)
-	dockwire.pack(&packet, i32(1))
-	dockwire.pack(&packet, u32(0))
-	bytes := dockwire.finish(&packet)
+	packet := dock.begin(.Window_Order)
+	dock.pack(&packet, wid)
+	dock.pack(&packet, i32(1))
+	dock.pack(&packet, u32(0))
+	bytes := dock.finish(&packet)
 	if posix.write(fd, raw_data(bytes), uint(len(bytes))) != len(bytes) {return 1}
 	status: [1]u8
 	n := posix.read(fd, &status[0], 1)

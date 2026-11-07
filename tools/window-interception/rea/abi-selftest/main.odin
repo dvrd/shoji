@@ -2,8 +2,8 @@ package main
 
 import "core:fmt"
 import "core:os"
-import bridge "../../../../src/dock"
 import "base:intrinsics"
+import inject "../../../../src/inject"
 
 foreign import fixture "../../../../bin/shoji-ws-abi-native.o"
 
@@ -51,7 +51,7 @@ main :: proc() {
 	fmt.println("PASS: raw-address placement ABI; lookup, CGRect HFA return, three pointers + two doubles")
 	// The native compiler authenticates C function pointers. The Odin callback
 	// itself is a raw procedure value in this project's arm64e compiler.
-	callback := transmute(Ordering_Callback)uintptr(bridge.sign_function(u64(uintptr(rawptr(forward)))))
+	callback := transmute(Ordering_Callback)uintptr(inject.sign_function(u64(uintptr(rawptr(forward)))))
 	if len(os.args) == 2 && os.args[1] == "--trampoline" {
 		run_trampoline(callback)
 		return
@@ -65,7 +65,7 @@ main :: proc() {
 		fmt.eprintf("FAIL: owned C/Odin six-argument ABI fixture (%d)\n", code)
 		os.exit(1)
 	}
-	raw_callback := transmute(Raw_Ordering_Callback)uintptr(bridge.sign_function(u64(uintptr(rawptr(raw_forward)))))
+	raw_callback := transmute(Raw_Ordering_Callback)uintptr(inject.sign_function(u64(uintptr(rawptr(raw_forward)))))
 	if code := shoji_abi_raw_run(raw_callback); code != 0 {
 		fmt.eprintf("FAIL: owned C/Odin raw flag fixture (%d)\n", code)
 		os.exit(1)

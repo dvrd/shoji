@@ -17,6 +17,7 @@ import "core:strings"
 import "core:sys/posix"
 import "core:time"
 import gate "windowserver/gate"
+import attach "windowserver/attach"
 
 Ws_Gate_Level :: enum {
 	Absent, // no payload status artifact
@@ -34,7 +35,6 @@ Ws_Gate_Probe :: struct {
 WS_TGATE_STATUS_PATH :: gate.TGATE_STATUS_PATH
 WS_CONTROLLER_REQUEST_PATH :: "/private/tmp/shoji-gate-controller-request"
 WS_CONTROLLER_RESPONSE_PATH :: "/private/tmp/shoji-gate-controller-response"
-WS_DISABLE_SENTINEL :: "/Library/GPUBundles/ShojiWindowServerProbe/DISABLED"
 WS_ENABLE_ENV :: "SHOJI_WS_ADAPTER"
 WS_DISABLE_ENV :: "SHOJI_WINDOWSERVER_DISABLE"
 WS_HELLO_NONCE :: 0x53484f4a
@@ -192,7 +192,7 @@ ws_adapter_enabled :: proc(opt_in, disable_env, sentinel: bool) -> bool {
 ws_adapter_env_enabled :: proc() -> bool {
 	opt_in := os.get_env(WS_ENABLE_ENV, context.temp_allocator) == "1"
 	disable := os.get_env(WS_DISABLE_ENV, context.temp_allocator) == "1"
-	sentinel := os.exists(WS_DISABLE_SENTINEL)
+	sentinel := os.exists(attach.WS_DISABLE_SENTINEL)
 	return ws_adapter_enabled(opt_in, disable, sentinel)
 }
 

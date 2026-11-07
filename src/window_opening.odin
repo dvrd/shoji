@@ -1,7 +1,7 @@
 package shoji
 
 import "core:math"
-import recovery "dock"
+import dock "dock"
 import "core:fmt"
 import "core:time"
 
@@ -511,7 +511,7 @@ opening_conceal :: proc(m: ^Manager, w: ^Window) -> string {
 		}
 		if err := animation_journal_record(
 			&state.animation_journal,
-			recovery.Entry{w.id, surface.id, owner, proxy_owner},
+			dock.Entry{w.id, surface.id, owner, proxy_owner},
 		); err != "" {
 			surface_destroy(state, surface); return err
 		}

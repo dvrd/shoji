@@ -14,10 +14,8 @@ import "core:sys/posix"
 import "core:time"
 import gate "windowserver/gate"
 import ipc "ipc"
+import attach "windowserver/attach"
 
-WS_PAYLOAD_DIR :: "/Library/GPUBundles/ShojiWindowServerProbe"
-WS_PAYLOAD_PATH :: WS_PAYLOAD_DIR + "/shoji-ws.dylib"
-WS_CLIENTS_PATH :: WS_PAYLOAD_DIR + "/clients"
 WS_RING_PATH :: gate.OBSERVER_RESPONSE_PATH
 WS_SUPPORTED_BUILD :: gate.BUILD
 
@@ -134,33 +132,6 @@ ws_clients_evaluate :: proc(
 // CLI
 // ------------------------------------------------------------------------
 
-foreign import system "system:System"
-foreign system {
-	csops :: proc "c" (pid: i32, ops: u32, useraddr: rawptr, usersize: uintptr) -> i32 ---
-}
-
-hex :: proc(bytes: []u8) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	for v in bytes {fmt.sbprintf(&b, "%02x", v)}
-	return strings.to_string(b)
-}
-
-os_build :: proc() -> string {
-	build: [32]u8
-	length := uintptr(len(build))
-	if sysctlbyname("kern.osversion", &build[0], &length, nil, 0) != 0 || length == 0 {return "unknown"}
-	return strings.clone(string(build[:length - 1]), context.temp_allocator)
-}
-
-read_limited :: proc(path: string, limit: int) -> (data: []u8, st: posix.stat_t, ok: bool) {
-	fd := posix.open(strings.clone_to_cstring(path, context.temp_allocator), {.NOFOLLOW, .CLOEXEC})
-	if fd < 0 {return}
-	defer posix.close(fd)
-	if posix.fstat(fd, &st) != .OK || i64(st.st_size) <= 0 || i64(st.st_size) > i64(limit) {return}
-	data = make([]u8, int(st.st_size), context.temp_allocator)
-	if i64(posix.read(fd, &data[0], len(data))) != i64(st.st_size) {return}
-	return data, st, true
-}
 
 // Ask a running daemon (which may own the gate) before claiming directly.
 @(private = "file")
@@ -189,31 +160,31 @@ daemon_request :: proc(args: []string) -> (text: string, reached: bool) {
 ws_report_cli :: proc(args: []string) -> int {
 	out_dir := len(args) > 0 ? args[0] : ""
 	started := time.now()
-	build := os_build()
+	build := attach.os_build()
 	fmt.printf("macOS build: %s (payload supports %s: %s)\n", build, WS_SUPPORTED_BUILD, build == WS_SUPPORTED_BUILD ? "yes" : "no")
 
 	disable_env := os.get_env(WS_DISABLE_ENV, context.temp_allocator) == "1"
-	sentinel := os.exists(WS_DISABLE_SENTINEL)
+	sentinel := os.exists(attach.WS_DISABLE_SENTINEL)
 	fmt.printf("kill switch: %s (env %v, sentinel %v)\n", disable_env || sentinel ? "ON" : "off", disable_env, sentinel)
 
-	if payload, _, ok := read_limited(WS_PAYLOAD_PATH, 64 << 20); ok {
+	if payload, _, ok := attach.read_limited(attach.WS_PAYLOAD_PATH, 64 << 20); ok {
 		ctx: sha2.Context_256
 		sha2.init_256(&ctx)
 		sha2.update(&ctx, payload)
 		digest: [32]u8
 		sha2.final(&ctx, digest[:])
-		fmt.printf("payload: installed sha256=%s\n", hex(digest[:]))
+		fmt.printf("payload: installed sha256=%s\n", attach.hex(digest[:]))
 	} else {
 		fmt.println("payload: not installed")
 	}
 	fmt.printf("payload resident: %v (status file %s)\n", ws_tgate_present(), WS_TGATE_STATUS_PATH)
 
 	self: [20]u8
-	self_ok := csops(i32(posix.getpid()), 5, &self, len(self)) == 0
-	fmt.printf("this binary CDHash: %s\n", self_ok ? hex(self[:]) : "unavailable (unsigned?)")
+	self_ok := attach.csops(i32(posix.getpid()), 5, &self, len(self)) == 0
+	fmt.printf("this binary CDHash: %s\n", self_ok ? attach.hex(self[:]) : "unavailable (unsigned?)")
 	dir: posix.stat_t
-	content, file, clients_ok := read_limited(WS_CLIENTS_PATH, gate.GATE_CLIENTS_LIMIT)
-	if clients_ok && posix.lstat(WS_PAYLOAD_DIR, &dir) == .OK {
+	content, file, clients_ok := attach.read_limited(attach.WS_CLIENTS_PATH, gate.GATE_CLIENTS_LIMIT)
+	if clients_ok && posix.lstat(attach.WS_PAYLOAD_DIR, &dir) == .OK {
 		r := ws_clients_evaluate(
 			string(content), u32(file.st_uid), u32(transmute(u16)file.st_mode), i64(file.st_size),
 			u32(dir.st_uid), u32(transmute(u16)dir.st_mode), self_ok ? self[:] : nil,
@@ -250,7 +221,7 @@ ws_report_cli :: proc(args: []string) -> int {
 		fmt.println("event ring: not exported (gate not reachable)")
 		return 1
 	}
-	raw, st, ok := read_limited(WS_RING_PATH, WS_RING_SIZE)
+	raw, st, ok := attach.read_limited(WS_RING_PATH, WS_RING_SIZE)
 	// The Dump above rewrote the snapshot; an older file is a previous run's.
 	written_ns := i64(st.st_mtim.tv_sec) * 1_000_000_000 + i64(st.st_mtim.tv_nsec)
 	if !ok || written_ns < time.to_unix_nanoseconds(started) - 1_000_000_000 {

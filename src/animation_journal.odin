@@ -1,6 +1,6 @@
 package shoji
 
-import wire "dock"
+import dock "dock"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
@@ -15,12 +15,12 @@ foreign import recovery_sls "system:SkyLight.framework"
 
 Animation_Journal :: struct {
 	path: string,
-	entries: map[u32]wire.Entry,
+	entries: map[u32]dock.Entry,
 	next_retry: time.Time,
 }
 Journal_Data :: struct {
 	version: int,
-	entries: []wire.Entry,
+	entries: []dock.Entry,
 }
 JOURNAL_LIMIT :: 256
 animation_journal_close :: proc(j: ^Animation_Journal) {
@@ -28,7 +28,7 @@ animation_journal_close :: proc(j: ^Animation_Journal) {
 }
 animation_journal_open :: proc(j: ^Animation_Journal, path: string) -> string {
 	j.path = strings.clone(path)
-	j.entries = make(map[u32]wire.Entry)
+	j.entries = make(map[u32]dock.Entry)
 	fd := posix.open(
 		strings.clone_to_cstring(path, context.temp_allocator),
 		{.NOFOLLOW, .NONBLOCK, .CLOEXEC},
@@ -88,7 +88,7 @@ animation_journal_save :: proc(j: ^Animation_Journal) -> string {
 		return "animation recovery journal is unavailable"
 	}
 	entries := make(
-		[dynamic]wire.Entry,
+		[dynamic]dock.Entry,
 		0,
 		len(j.entries),
 		context.temp_allocator,
@@ -135,7 +135,7 @@ animation_journal_save :: proc(j: ^Animation_Journal) -> string {
 }
 animation_journal_record :: proc(
 	j: ^Animation_Journal,
-	entry: wire.Entry,
+	entry: dock.Entry,
 ) -> string {
 	if entry.window in j.entries {
 		return "window has unfinished animation recovery"
@@ -181,7 +181,7 @@ animation_recovery_query_owner :: proc(cid: i32, window: u32) -> (i32, bool) {
 }
 animation_recovery_restore :: proc(
 	user: rawptr,
-	entry: wire.Entry,
+	entry: dock.Entry,
 	proxy_valid: bool,
 ) -> bool {
 	return(
@@ -203,7 +203,7 @@ animation_recovery_tick :: proc(state: ^State, now: time.Time) {
 		return
 	}
 	windows := make([dynamic]u32, context.temp_allocator)
-	backend := wire.Backend {
+	backend := dock.Backend {
 		animation_recovery_owner,
 		animation_recovery_restore,
 		state,
@@ -212,7 +212,7 @@ animation_recovery_tick :: proc(state: ^State, now: time.Time) {
 		if window in state.animations || window in state.opening_guards {
 			continue
 		}
-		result := wire.restore(entry, backend, false)
+		result := dock.restore(entry, backend, false)
 		if result == .Restored || result == .Gone {
 			append(&windows, window)
 		}

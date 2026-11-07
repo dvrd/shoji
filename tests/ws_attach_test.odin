@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import health "../src/health"
 import service "../src/service"
+import attach "../src/windowserver/attach"
 
 @(private = "file")
 status_bytes :: proc(status: gate.Tgate_Status) -> []u8 {
@@ -49,14 +50,14 @@ tgate_status_decode_requires_current_status_for_live_windowserver :: proc(t: ^te
 ws_attach_payload_safe_requires_root_owned_unwritable_file_and_dir :: proc(t: ^testing.T) {
 	file :: u32(0o100644)
 	dir :: u32(0o040755)
-	testing.expect(t, mac.ws_attach_payload_safe(0, file, 0, dir))
-	testing.expect(t, !mac.ws_attach_payload_safe(501, file, 0, dir))
-	testing.expect(t, !mac.ws_attach_payload_safe(0, file, 501, dir))
-	testing.expect(t, !mac.ws_attach_payload_safe(0, 0o100664, 0, dir))
-	testing.expect(t, !mac.ws_attach_payload_safe(0, 0o100646, 0, dir))
-	testing.expect(t, !mac.ws_attach_payload_safe(0, file, 0, 0o040775))
-	testing.expect(t, !mac.ws_attach_payload_safe(0, 0o120755, 0, dir)) // symlink
-	testing.expect(t, !mac.ws_attach_payload_safe(0, file, 0, 0o120755))
+	testing.expect(t, attach.ws_attach_payload_safe(0, file, 0, dir))
+	testing.expect(t, !attach.ws_attach_payload_safe(501, file, 0, dir))
+	testing.expect(t, !attach.ws_attach_payload_safe(0, file, 501, dir))
+	testing.expect(t, !attach.ws_attach_payload_safe(0, 0o100664, 0, dir))
+	testing.expect(t, !attach.ws_attach_payload_safe(0, 0o100646, 0, dir))
+	testing.expect(t, !attach.ws_attach_payload_safe(0, file, 0, 0o040775))
+	testing.expect(t, !attach.ws_attach_payload_safe(0, 0o120755, 0, dir)) // symlink
+	testing.expect(t, !attach.ws_attach_payload_safe(0, file, 0, 0o120755))
 }
 
 @(test)
@@ -65,29 +66,29 @@ ws_attach_clients_merge_keeps_recent_wellformed_entries :: proc(t: ^testing.T) {
 	b := strings.repeat("b", 40, context.temp_allocator)
 	c := strings.repeat("c", 40, context.temp_allocator)
 	self := strings.repeat("1", 40, context.temp_allocator)
-	merged := mac.ws_attach_clients_merge("", self, 3)
+	merged := attach.ws_attach_clients_merge("", self, 3)
 	testing.expect_value(t, merged, strings.concatenate({self, "\n"}, context.temp_allocator))
 	// Self moves to the end; malformed entries drop; oldest entries age out.
 	existing := strings.concatenate({a, ",", self, " bogus\n", b, "\n", c}, context.temp_allocator)
-	merged = mac.ws_attach_clients_merge(existing, self, 3)
+	merged = attach.ws_attach_clients_merge(existing, self, 3)
 	expected := strings.concatenate({b, "\n", c, "\n", self, "\n"}, context.temp_allocator)
 	testing.expect_value(t, merged, expected)
 	// Already newest: unchanged, so the caller skips the write.
-	testing.expect_value(t, mac.ws_attach_clients_merge(expected, self, 3), expected)
+	testing.expect_value(t, attach.ws_attach_clients_merge(expected, self, 3), expected)
 	upper := strings.repeat("A", 40, context.temp_allocator)
-	merged = mac.ws_attach_clients_merge(upper, self, 3)
+	merged = attach.ws_attach_clients_merge(upper, self, 3)
 	testing.expect(t, !strings.contains(merged, upper))
 }
 
 @(test)
 ws_attach_rejects_arguments :: proc(t: ^testing.T) {
-	testing.expect_value(t, mac.ws_attach_cli({"--payload", "/tmp/x.dylib"}), 2)
+	testing.expect_value(t, attach.ws_attach_cli({"--payload", "/tmp/x.dylib"}), 2)
 }
 
 @(test)
 ws_attach_retries_transient_failures_and_stops_on_refusal :: proc(t: ^testing.T) {
 	failed := health.Child_Exit{.Exited, 1}
-	refused := health.Child_Exit{.Exited, mac.WS_ATTACH_EXIT_REFUSED}
+	refused := health.Child_Exit{.Exited, attach.WS_ATTACH_EXIT_REFUSED}
 	Outcome :: mac.Ws_Attach_Outcome
 	testing.expect_value(t, mac.ws_attach_exit_outcome(failed, true, 1), Outcome.Connected)
 	testing.expect_value(t, mac.ws_attach_exit_outcome(failed, false, 1), Outcome.Retry)
@@ -126,10 +127,10 @@ dock_payload_resolves_beside_the_executable :: proc(t: ^testing.T) {
 @(test)
 ws_images_scan_reads_this_process_without_a_payload :: proc(t: ^testing.T) {
 	// Exercises the dyld image-list walk on a task that surely has no payload.
-	scan := mac.ws_images_scan(gate.gate_mach_task_self())
-	testing.expect_value(t, scan, mac.Ws_Images_Scan.Clean)
-	testing.expect(t, mac.ws_image_path_is_shoji_payload(mac.WS_PAYLOAD_PREFIX))
-	testing.expect(t, !mac.ws_image_path_is_shoji_payload("/System/Library/Frameworks/"))
+	scan := attach.ws_images_scan(gate.gate_mach_task_self())
+	testing.expect_value(t, scan, attach.Ws_Images_Scan.Clean)
+	testing.expect(t, attach.ws_image_path_is_shoji_payload(attach.WS_PAYLOAD_PREFIX))
+	testing.expect(t, !attach.ws_image_path_is_shoji_payload("/System/Library/Frameworks/"))
 }
 
 @(test)

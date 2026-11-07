@@ -1,4 +1,4 @@
-package dock
+package inject
 
 // Explicit register reads keep implicit ABI inputs visible to the template checker.
 // All volatile registers are clobbered, including SIMD registers.
