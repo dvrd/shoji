@@ -3,6 +3,7 @@ package tests
 import e "../src"
 import "core:encoding/json"
 import "core:testing"
+import layout "../src/layout"
 
 Recorder :: struct {
 	actions: [dynamic]e.Action,
@@ -50,7 +51,7 @@ cross_space_swap_rolls_back_failed_second_move :: proc(t: ^testing.T) {
 	testing.expect(t, e.execute(&m, []string{"window", "1", "--swap", "3"}).failed)
 	testing.expect_value(t, m.windows[1].space, u64(100))
 	testing.expect_value(t, m.windows[3].space, u64(200))
-	testing.expect(t, e.find(s.view.root, 3) != nil && e.find(s.view.root, 1) == nil)
+	testing.expect(t, layout.find(s.view.root, 3) != nil && layout.find(s.view.root, 1) == nil)
 	testing.expect_value(t, r.actions[len(r.actions) - 1].space, u64(100))
 }
 
@@ -126,7 +127,7 @@ config_and_layout_transitions :: proc(t: ^testing.T) {
 	testing.expect(t, !e.execute(&m, []string{"space", "--layout", "float"}).failed)
 	testing.expect_value(t, s.view.root.count, 0)
 	testing.expect(t, !e.execute(&m, []string{"space", "--layout", "bsp"}).failed)
-	testing.expect(t, e.find(s.view.root, 1) != nil && e.find(s.view.root, 2) != nil)
+	testing.expect(t, layout.find(s.view.root, 1) != nil && layout.find(s.view.root, 2) != nil)
 }
 
 @(test)
@@ -143,8 +144,8 @@ global_configuration_preserves_explicit_space_settings :: proc(t: ^testing.T) {
 	testing.expect_value(t, s.view.gap, f64(24))
 	testing.expect(t, !e.execute(&m, []string{"space", "1", "--layout", "stack"}).failed)
 	testing.expect(t, !e.execute(&m, []string{"config", "layout", "float"}).failed)
-	testing.expect_value(t, e.space_by_id(&m, 100).view.layout, e.Layout.Stack)
-	testing.expect_value(t, s.view.layout, e.Layout.Float)
+	testing.expect_value(t, e.space_by_id(&m, 100).view.layout, layout.Layout.Stack)
+	testing.expect_value(t, s.view.layout, layout.Layout.Float)
 	bad := e.execute(&m, []string{"config", "--space", "1", "split_ratio", "NaN"})
 	testing.expect(t, bad.failed)
 	testing.expect(t, !e.space_by_id(&m, 100).overrides["split_ratio"])
@@ -248,7 +249,7 @@ directional_auto_balance_and_opacity_duration_are_configurable :: proc(t: ^testi
 	defer e.manager_destroy(&m);defer delete(r.actions)
 	testing.expect(t, !e.execute(&m, []string{"config", "auto_balance", "x-axis"}).failed)
 	testing.expect_value(t, e.config(&m, []string{"auto_balance"}).text, "x-axis")
-	testing.expect_value(t, e.space_by_id(&m, 100).view.balance_axis, e.Split.Horizontal)
+	testing.expect_value(t, e.space_by_id(&m, 100).view.balance_axis, layout.Split.Horizontal)
 	testing.expect(t, !e.execute(&m, []string{"config", "window_opacity_duration", "0.25"}).failed)
 	testing.expect(t, !e.execute(&m, []string{"config", "window_opacity", "on"}).failed)
 	fades := 0
@@ -268,7 +269,7 @@ insert_toggle_and_stack_direction_follow_command_contract :: proc(t: ^testing.T)
 	testing.expect(t, !e.execute(&m, []string{"window", "1", "--insert", "west"}).failed)
 	testing.expect_value(t, s.view.insertion, u32(0))
 	testing.expect(t, !e.execute(&m, []string{"window", "1", "--stack", "2"}).failed)
-	n := e.find(s.view.root, 1)
+	n := layout.find(s.view.root, 1)
 	testing.expect_value(t, n.windows[0], u32(1))
 	testing.expect_value(t, n.windows[1], u32(2))
 }
@@ -340,8 +341,8 @@ rule_apply_can_target_one_rule :: proc(t: ^testing.T) {
 	testing.expect(t, !m.windows[1].floating)
 	testing.expect(t, m.windows[2].floating)
 	s := e.space_by_id(&m, 100)
-	testing.expect(t, e.find(s.view.root, 1) != nil)
-	testing.expect(t, e.find(s.view.root, 2) == nil)
+	testing.expect(t, layout.find(s.view.root, 1) != nil)
+	testing.expect(t, layout.find(s.view.root, 2) == nil)
 	testing.expect(t, e.execute(&m, []string{"rule", "--apply", "999"}).failed)
 	testing.expect(t, e.execute(&m, []string{"rule", "--apply", "1", "2"}).failed)
 }
@@ -412,12 +413,12 @@ cross_space_swap_and_warp_update_both_views :: proc(t: ^testing.T) {
 	testing.expect(t, !e.execute(&m, []string{"window", "1", "--swap", "3"}).failed)
 	testing.expect_value(t, m.windows[1].space, u64(200))
 	testing.expect_value(t, m.windows[3].space, u64(100))
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 3) != nil)
-	testing.expect(t, e.find(e.space_by_id(&m, 200).view.root, 1) != nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, 3) != nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 200).view.root, 1) != nil)
 	testing.expect(t, !e.execute(&m, []string{"window", "1", "--warp", "3"}).failed)
 	testing.expect_value(t, m.windows[1].space, u64(100))
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 3) != nil)
-	testing.expect(t, e.find(e.space_by_id(&m, 200).view.root, 1) == nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, 3) != nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 200).view.root, 1) == nil)
 	// Two actions for a swap and one for a warp are sent through the payload backend.
 	// Frame actions from flushing the affected BSP views are intentionally separate.
 	space_actions := 0
@@ -541,7 +542,7 @@ window_family_and_area_selectors_follow_tree_structure :: proc(t: ^testing.T) {
 			floating = true,
 		},
 	)
-	w.floating = false;e.add(&s.view, 3, 2);e.flush(&m, s)
+	w.floating = false;layout.add(&s.view, 3, 2);e.flush(&m, s)
 	testing.expect(t, e.select_window(&m, "sibling", 1) == nil)
 	testing.expect_value(t, e.select_window(&m, "first_nephew", 1).id, u32(2))
 	testing.expect_value(t, e.select_window(&m, "second_nephew", 1).id, u32(3))
@@ -567,10 +568,10 @@ window_space_move_carries_destination_tile_landing :: proc(t: ^testing.T) {
 	landing: e.Rect
 	for a in r.actions {if a.kind == .Space && a.window == 1 {landing = a.frame}}
 	testing.expect(t, landing.w > 0 && landing.h > 0)
-	n := e.find(other.view.root, 1)
+	n := layout.find(other.view.root, 1)
 	testing.expect(t, n != nil)
-	if n != nil {testing.expect_value(t, e.frame_for(n), landing)}
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) == nil)
+	if n != nil {testing.expect_value(t, layout.frame_for(n), landing)}
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, 1) == nil)
 }
 
 @(test)
@@ -585,8 +586,8 @@ window_space_move_failure_unstages_destination :: proc(t: ^testing.T) {
 	e.add_window(&m, e.Window{id = 3, pid = 44, app = "Notes", role = "AXWindow", subrole = "AXStandardWindow", space = 200, display = 10})
 	r.fail = true
 	testing.expect(t, e.execute(&m, []string{"window", "1", "--space", "2"}).failed)
-	testing.expect(t, e.find(other.view.root, 1) == nil)
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) != nil)
+	testing.expect(t, layout.find(other.view.root, 1) == nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, 1) != nil)
 	testing.expect_value(t, m.windows[1].space, 100)
 }
 

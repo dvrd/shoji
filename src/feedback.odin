@@ -2,6 +2,7 @@ package shoji
 
 import "core:fmt"
 import "core:math"
+import layout "layout"
 
 foreign import feedback_sls "system:SkyLight.framework"
 foreign import feedback_cg "system:CoreGraphics.framework"
@@ -44,8 +45,8 @@ Focus_Ring :: struct {
 }
 
 Tab_Indicator_State :: struct {
-	bars: [MAX_STACK]Feedback_Window,
-	tabs: [MAX_STACK]Tab_Indicator,
+	bars: [layout.MAX_STACK]Feedback_Window,
+	tabs: [layout.MAX_STACK]Tab_Indicator,
 	count: int,
 	order_dirty: bool,
 }
@@ -62,7 +63,7 @@ tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
 	tabs, count := tab_indicators(&state.manager, frame)
 	backend := feedback_backend(state)
 	indicator := &state.tab_indicator
-	for i in 0 ..< MAX_STACK {
+	for i in 0 ..< layout.MAX_STACK {
 		bar := &indicator.bars[i]
 		if i >= count {
 			if bar.surface.id != 0 { backend.destroy(state, bar.surface) }
@@ -92,7 +93,7 @@ tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
 	indicator.count = count
 	if count > 0 && indicator.order_dirty && backend.reorder != nil {
 		indicator.order_dirty = false
-		surfaces: [MAX_STACK]Owned_Surface; surface_count := 0
+		surfaces: [layout.MAX_STACK]Owned_Surface; surface_count := 0
 		for i in 0 ..< count {
 			if indicator.bars[i].surface.id != 0 {
 				surfaces[surface_count] = indicator.bars[i].surface
@@ -640,7 +641,7 @@ drag_edge_scroll :: proc(
 	dragging := target.view.scroll.dragging
 	target.view.scroll.dragging = true
 	defer target.view.scroll.dragging = dragging
-	scroll_pan(&target.view, before + delta)
+	layout.scroll_pan(&target.view, before + delta)
 	if target.view.scroll.offset == before {
 		return false, ""
 	}
@@ -685,7 +686,7 @@ drag_target_at :: proc(
 		   point.y > viewport.y + viewport.h {
 			continue
 		}
-		n := find(s.view.root, w.id)
+		n := layout.find(s.view.root, w.id)
 		if n == nil || (n.column_tabbed && n.order[0] != w.id) {
 			continue
 		}
@@ -718,8 +719,8 @@ Tab_Indicator :: struct {
 	active: bool,
 }
 
-tab_indicators :: proc(m: ^Manager, frame: Rect) -> ([MAX_STACK]Tab_Indicator, int) {
-	result: [MAX_STACK]Tab_Indicator
+tab_indicators :: proc(m: ^Manager, frame: Rect) -> ([layout.MAX_STACK]Tab_Indicator, int) {
+	result: [layout.MAX_STACK]Tab_Indicator
 	w := m.windows[m.focused]
 	if w == nil || w.floating || w.hidden || w.minimized || !(w.ordered_in.? or_else true) || frame.w < 8 || frame.h < 16 {
 		return result, 0
@@ -728,7 +729,7 @@ tab_indicators :: proc(m: ^Manager, frame: Rect) -> ([MAX_STACK]Tab_Indicator, i
 	if s == nil || !s.visible || s.view.layout != .Scroll {
 		return result, 0
 	}
-	n := find(s.view.root, w.id)
+	n := layout.find(s.view.root, w.id)
 	if n == nil || !n.column_tabbed || n.count < 2 || n.order[0] != w.id {
 		return result, 0
 	}
@@ -869,15 +870,15 @@ focus_ring_plans :: proc(
 	return
 }
 
-feedback_frame :: proc(v: ^View, n: ^Node, action: Mouse_Drop) -> Rect {
-	frame := frame_for(n)
+feedback_frame :: proc(v: ^layout.View, n: ^layout.Node, action: Mouse_Drop) -> Rect {
+	frame := layout.frame_for(n)
 	if v.layout == .Scroll && n.count > 0 {
-		frame = scroll_window_frame(v, n, n.order[0])
+		frame = layout.scroll_window_frame(v, n, n.order[0])
 	}
 	if action == .Stack || action == .Swap {
 		return frame
 	}
-	a, b := partition(
+	a, b := layout.partition(
 		frame,
 		(action == .East || action == .West) ? .Vertical : .Horizontal,
 		v.ratio,
@@ -893,7 +894,7 @@ insertion_feedback :: proc(m: ^Manager, s: ^Space) -> (Feedback_Plan, bool) {
 	   s.view.layout == .Float {
 		return {}, false
 	}
-	n := find(s.view.root, s.view.insertion)
+	n := layout.find(s.view.root, s.view.insertion)
 	if n == nil {
 		return {}, false
 	}
@@ -942,7 +943,7 @@ drag_feedback :: proc(
 	   t.view.layout == .Float {
 		return {}, false
 	}
-	a, b := find(s.view.root, w.id), find(t.view.root, target)
+	a, b := layout.find(s.view.root, w.id), layout.find(t.view.root, target)
 	if a == nil || b == nil || a == b {
 		return {}, false
 	}
@@ -953,7 +954,7 @@ drag_feedback :: proc(
 		m.mouse.drop_stack,
 		a.count,
 	)
-	if action == .None || (action == .Stack && b.count >= MAX_STACK) {
+	if action == .None || (action == .Stack && b.count >= layout.MAX_STACK) {
 		return {}, false
 	}
 	if t.view.layout == .Scroll && (action == .West || action == .East) {
@@ -964,17 +965,17 @@ drag_feedback :: proc(
 				: destination.frame.x + destination.frame.w
 		x +=
 			action == .West \
-				? -scroll_gap(&t.view) / 2 \
-				: scroll_gap(&t.view) / 2
+				? -layout.scroll_gap(&t.view) / 2 \
+				: layout.scroll_gap(&t.view) / 2
 		frame := Rect {
 			clamp(
 				x - 2,
 				viewport.x,
 				max(viewport.x, viewport.x + viewport.w - 4),
 			),
-			viewport.y + scroll_gap(&t.view),
+			viewport.y + layout.scroll_gap(&t.view),
 			min(4, viewport.w),
-			max(1, viewport.h - 2 * scroll_gap(&t.view)),
+			max(1, viewport.h - 2 * layout.scroll_gap(&t.view)),
 		}
 		return {
 				window = target,

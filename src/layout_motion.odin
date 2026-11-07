@@ -1,6 +1,7 @@
 package shoji
 
 import "core:math"
+import layout "layout"
 
 // Window animation
 // ------------------------------------------------------------------------
@@ -114,18 +115,10 @@ interpolate_frame :: proc(from, to: Rect, progress: f64, kind: Easing) -> Rect {
 // Viewport springs
 // ------------------------------------------------------------------------
 
-// One camera trajectory drives the strip; column geometry stays in target
-// coordinates and presentation translates every row by the same displacement.
-Scroll_Motion :: struct {
-	initialized, active: bool,
-	position, target, velocity: f64,
-	from, initial_velocity, began: f64,
-	anchor: u32,
-}
 SCROLL_SPRING_OMEGA :: 28.2842712474619 // sqrt(800), unit mass, critical damping
 SCROLL_SPRING_DURATION :: 0.3256347067030293 // -ln(0.0001) / sqrt(800)
 
-scroll_motion_sample :: proc(motion: ^Scroll_Motion, now: f64) {
+scroll_motion_sample :: proc(motion: ^layout.Scroll_Motion, now: f64) {
 	if !motion.active {
 		return
 	}
@@ -142,7 +135,7 @@ scroll_motion_sample :: proc(motion: ^Scroll_Motion, now: f64) {
 	motion.velocity =
 		(motion.initial_velocity - SCROLL_SPRING_OMEGA * b * t) * decay
 }
-scroll_motion_prepare :: proc(v: ^View, now: f64, animate: bool) {
+scroll_motion_prepare :: proc(v: ^layout.View, now: f64, animate: bool) {
 	motion := &v.scroll.motion
 	if !motion.initialized || !animate || v.scroll.dragging {
 		motion^ = {
@@ -198,8 +191,8 @@ scroll_begin_pan :: proc(m: ^Manager, s: ^Space) {
 	v.scroll.anchor = 0
 	v.scroll.dragging = true
 	v.scroll.motion.active = false
-	scroll_update(v)
-	scroll_anchor(v, v.scroll.focused)
+	layout.scroll_update(v)
+	layout.scroll_anchor(v, v.scroll.focused)
 }
 
 Scroll_Snap :: struct {
@@ -207,10 +200,10 @@ Scroll_Snap :: struct {
 	window: u32,
 	centered: bool,
 }
-scroll_snap_target :: proc(v: ^View, position, velocity: f64) -> Scroll_Snap {
+scroll_snap_target :: proc(v: ^layout.View, position, velocity: f64) -> Scroll_Snap {
 	projected := position + velocity * 0.332833083
-	gap, width := scroll_gap(v), v.scroll.viewport.w
-	leading, trailing := first(v.root), last(v.root)
+	gap, width := layout.scroll_gap(v), v.scroll.viewport.w
+	leading, trailing := layout.first(v.root), layout.last(v.root)
 	if leading == nil || leading.count == 0 {
 		return {position, 0, false}
 	}
@@ -229,7 +222,7 @@ scroll_snap_target :: proc(v: ^View, position, velocity: f64) -> Scroll_Snap {
 		window = leading.order[0],
 	}
 	best_distance := f64(1e300)
-	for n := leading; n != nil; n = next(n) {
+	for n := leading; n != nil; n = layout.next(n) {
 		if n.count == 0 {
 			continue
 		}
@@ -239,7 +232,7 @@ scroll_snap_target :: proc(v: ^View, position, velocity: f64) -> Scroll_Snap {
 			v.scroll_options.center == .Always ||
 			(v.scroll_options.center_single && leading == trailing)
 		if v.scroll_options.center == .On_Overflow {
-			left, right := previous(n), next(n)
+			left, right := layout.previous(n), layout.next(n)
 			center =
 				(left != nil &&
 					left.column_width + n.column_width + 3 * gap > width) ||
@@ -270,7 +263,7 @@ scroll_snap_target :: proc(v: ^View, position, velocity: f64) -> Scroll_Snap {
 		}
 	}
 	if !best.centered {
-		for n := leading; n != nil; n = next(n) {
+		for n := leading; n != nil; n = layout.next(n) {
 			x :=
 				n.frame.x - v.scroll.viewport.x + v.scroll.offset - best.offset
 			padding := min(gap, max(0, (width - n.column_width) * 0.5))
@@ -295,14 +288,14 @@ scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64, prevent_oversho
 	v.scroll.dragging = false
 	snap := scroll_snap_target(v, v.scroll.offset, velocity)
 	if step != 0 {
-		current := find(v.root, m.focused)
-		neighbor := step > 0 ? next(current) : previous(current)
+		current := layout.find(v.root, m.focused)
+		neighbor := step > 0 ? layout.next(current) : layout.previous(current)
 		if neighbor != nil && neighbor.count > 0 {
 			// Reveal only the adjacent column, independently of fling speed.
 			before := v.scroll.offset
-			scroll_reveal(v, neighbor.order[0])
+			layout.scroll_reveal(v, neighbor.order[0])
 			snap = {offset = v.scroll.offset, window = neighbor.order[0]}
-			v.scroll.offset = before; scroll_update(v)
+			v.scroll.offset = before; layout.scroll_update(v)
 		}
 	}
 	if snap.window == 0 {
@@ -317,8 +310,8 @@ scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64, prevent_oversho
 	}
 	v.scroll.anchor = 0
 	v.scroll.offset = snap.offset
-	scroll_update(v)
-	scroll_anchor(v, snap.window)
+	layout.scroll_update(v)
+	layout.scroll_anchor(v, snap.window)
 	v.scroll.focused, v.scroll.reveal = snap.window, false
 	if prevent_overshoot {
 		distance := snap.offset - v.scroll.motion.position
@@ -451,15 +444,15 @@ scroll_frame_sample :: proc(frame: ^Scroll_Frame, elapsed: f64) {
 		frame.current.h = frame.target.h; frame.velocity.h = 0
 	}
 }
-scroll_world_target :: proc(v: ^View, n: ^Node, w: ^Window) -> Rect {
-	r := size_feedback_frame(w, scroll_window_frame(v, n, w.id, false))
+scroll_world_target :: proc(v: ^layout.View, n: ^layout.Node, w: ^Window) -> Rect {
+	r := size_feedback_frame(w, layout.scroll_window_frame(v, n, w.id, false))
 	r.x += v.scroll.offset
 	return r
 }
 scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 	v := &s.view
 	changed := false
-	for n := first(v.root); n != nil; n = next(n) {
+	for n := layout.first(v.root); n != nil; n = layout.next(n) {
 		for i in 0 ..< n.count {
 			w := m.windows[n.windows[i]]
 			if w == nil {
@@ -475,7 +468,7 @@ scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 	}
 	previously_active := v.scroll.geometry_active
 	active := false
-	for n := first(v.root); n != nil; n = next(n) {
+	for n := layout.first(v.root); n != nil; n = layout.next(n) {
 		for i in 0 ..< n.count {
 			w := m.windows[n.windows[i]]
 			if w == nil {
@@ -501,7 +494,7 @@ scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 				// A small resize can resolve in one content update while existing
 				// position motion continues. Cap the cutoff to the gap so a growing
 				// body uses only the available spacing during catch-up motion.
-				cutoff := min(10.0, scroll_gap(v))
+				cutoff := min(10.0, layout.scroll_gap(v))
 				if f.target.w != target.w {
 					f.snap_width = scroll_small_resize(
 						f.current.w,

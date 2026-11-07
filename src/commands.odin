@@ -4,6 +4,7 @@ import "core:strings"
 import "core:math"
 import "core:strconv"
 import "core:encoding/json"
+import layout "layout"
 
 // Command dispatch
 // ------------------------------------------------------------------------
@@ -25,8 +26,8 @@ result :: proc(err: string) -> Response {
 	return {err, err != ""}
 }
 
-layout_name :: proc(layout: Layout) -> string {
-	switch layout {
+layout_name :: proc(mode: layout.Layout) -> string {
+	switch mode {
 	case .BSP:
 		return "bsp"
 	case .Stack:
@@ -39,7 +40,7 @@ layout_name :: proc(layout: Layout) -> string {
 	return "float"
 }
 
-parse_layout :: proc(text: string) -> (Layout, bool) {
+parse_layout :: proc(text: string) -> (layout.Layout, bool) {
 	switch text {
 	case "bsp":
 		return .BSP, true
@@ -294,14 +295,14 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 	if s := space_by_id(m, w.space); s != nil {
 		result.space = s.index
 		result.is_visible = result.is_visible && (w.sticky || s.visible)
-		if n := find(s.view.root, w.id); n != nil {
+		if n := layout.find(s.view.root, w.id); n != nil {
 			if s.view.layout == .Scroll {
-				result.layout_frame = size_feedback_frame(w, scroll_window_frame(&s.view, n, w.id, false))
+				result.layout_frame = size_feedback_frame(w, layout.scroll_window_frame(&s.view, n, w.id, false))
 				result.column_tabbed, result.column_active, result.column_full = n.column_tabbed, n.order[0] == w.id, n.column_full
 				size := n.column_size.kind == .Default ? s.view.scroll_options.default_width : n.column_size
 				result.column_width_request, result.column_width_proportional = size.value, size.kind == .Proportion
 				result.row_height_request, result.row_weight = w.row_fixed, w.row_weight > 0 ? w.row_weight : 1
-				for column := first(s.view.root); column != nil; column = next(column) {result.column_index += 1; if column == n {break}}
+				for column := layout.first(s.view.root); column != nil; column = layout.next(column) {result.column_index += 1; if column == n {break}}
 			}
 			for i in 0 ..< n.count {
 				if n.windows[i] == w.id {
@@ -347,10 +348,10 @@ space_json :: proc(m: ^Manager, s: ^Space) -> Space_JSON {
 		}
 	}
 	sort_ids(result.windows[:])
-	if n := first(s.view.root); n != nil && n.count > 0 {
+	if n := layout.first(s.view.root); n != nil && n.count > 0 {
 		result.first_window = n.windows[0]
 	}
-	if n := last(s.view.root); n != nil && n.count > 0 {
+	if n := layout.last(s.view.root); n != nil && n.count > 0 {
 		result.last_window = n.windows[n.count - 1]
 	}
 	return result
@@ -572,7 +573,7 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		case "rel": value += s.view.scroll.offset
 		case: return failure("scroll expects abs or rel")
 		}
-		scroll_pan(&s.view, value)
+		layout.scroll_pan(&s.view, value)
 		s.view.scroll.centered = false
 		s.view.scroll.focused = m.focused;s.view.scroll.reveal = false
 	case "--layout":
@@ -588,16 +589,16 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		if !ok || (angle != 90 && angle != 180 && angle != 270) {
 			return failure("rotate expects 90, 180, or 270")
 		}
-		rotate(s.view.root, angle)
+		layout.rotate(s.view.root, angle)
 	case "--mirror":
 		if s.view.layout == .Scroll {return failure("mirroring is unavailable in scroll layout")}
 		if operand != "x-axis" && operand != "y-axis" {
 			return failure("mirror expects x-axis or y-axis")
 		}
-		mirror(s.view.root, operand == "x-axis" ? .Horizontal : .Vertical)
+		layout.mirror(s.view.root, operand == "x-axis" ? .Horizontal : .Vertical)
 	case "--balance", "--equalize":
 		if s.view.layout == .Scroll {return failure("balance/equalize split ratios are unavailable in scroll layout")}
-		axis: Split
+		axis: layout.Split
 		switch operand {
 		case "", "both":
 			axis = .Auto
@@ -609,9 +610,9 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 			return failure("invalid axis")
 		}
 		if op == "--balance" {
-			balance(s.view.root, axis)
+			layout.balance(s.view.root, axis)
 		} else {
-			equalize(s.view.root, axis, s.view.ratio)
+			layout.equalize(s.view.root, axis, s.view.ratio)
 		}
 	case "--label":
 		delete(s.label)
@@ -632,7 +633,7 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		   !parse_numbers(strings.join(parts[1:], ":", context.temp_allocator), values[:]) {
 			return failure("padding expects abs|rel:top:bottom:left:right")
 		}
-		p := Padding{values[0], values[1], values[2], values[3]}
+		p := layout.Padding{values[0], values[1], values[2], values[3]}
 		if parts[0] == "rel" {
 			p.top += s.view.padding.top
 			p.bottom += s.view.padding.bottom
@@ -799,8 +800,8 @@ swap_space_windows :: proc(m: ^Manager, a, b: ^Space) -> string {
 		if !move.moved {continue}
 		move.window.space, move.window.display = move.target.id, move.target.display
 		if err != "" {
-			remove(&move.source.view, move.window.id)
-			if layout_admitted(move.window) {add(&move.target.view, move.window.id)}
+			layout.remove(&move.source.view, move.window.id)
+			if layout_admitted(move.window) {layout.add(&move.target.view, move.window.id)}
 		}
 	}
 	if err != "" {return err}

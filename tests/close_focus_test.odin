@@ -3,6 +3,7 @@ package tests
 import mac "../src"
 import "core:testing"
 import "core:time"
+import layout "../src/layout"
 
 @(test)
 closing_focused_scroll_window_focuses_the_surviving_visible_window :: proc(t: ^testing.T) {
@@ -78,7 +79,7 @@ close_focus_ignores_offscreen_columns_and_unfocused_window_closes :: proc(t: ^te
 	niri_open(m, 2); niri_open(m, 3)
 	s := m.spaces[0]
 	s.view.scroll.anchor = 0; s.view.scroll.offset = -16
-	mac.scroll_update(&s.view)
+	layout.scroll_update(&s.view)
 	candidate := mac.close_focus_candidate(m, s)
 	testing.expect(t, candidate == 1 || candidate == 2)
 	mac.remove_observed_window(&state, 2)

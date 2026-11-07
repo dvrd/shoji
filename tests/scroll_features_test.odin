@@ -2,6 +2,7 @@ package tests
 
 import e "../src"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 scroll_width_presets_reset_after_explicit_resize_and_survive_output_resize :: proc(
@@ -45,7 +46,7 @@ scroll_consume_and_expel_have_distinct_membership_and_focus :: proc(
 	niri_open(&m, 2); niri_open(&m, 3)
 	e.execute(&m, {"window", "1", "--focus"})
 	testing.expect(t, !e.execute(&m, {"window", "--consume"}).failed)
-	n := e.find(m.spaces[0].view.root, 1)
+	n := layout.find(m.spaces[0].view.root, 1)
 	testing.expect_value(t, n.count, 2)
 	testing.expect_value(t, n.windows[1], u32(2))
 	testing.expect_value(t, m.focused, u32(1))
@@ -54,10 +55,10 @@ scroll_consume_and_expel_have_distinct_membership_and_focus :: proc(
 	testing.expect_value(t, m.focused, u32(1))
 	testing.expect_value(
 		t,
-		e.next(e.find(m.spaces[0].view.root, 1)).windows[0],
+		layout.next(layout.find(m.spaces[0].view.root, 1)).windows[0],
 		u32(2),
 	)
-	testing.expect_value(t, e.find(m.spaces[0].view.root, 1).count, 1)
+	testing.expect_value(t, layout.find(m.spaces[0].view.root, 1).count, 1)
 }
 
 @(test)
@@ -73,8 +74,8 @@ scroll_directional_consume_expel_preserves_selected_focus :: proc(
 	)
 	testing.expect_value(
 		t,
-		e.find(m.spaces[0].view.root, 3),
-		e.find(m.spaces[0].view.root, 2),
+		layout.find(m.spaces[0].view.root, 3),
+		layout.find(m.spaces[0].view.root, 2),
 	)
 	testing.expect_value(t, m.focused, u32(3))
 	testing.expect(
@@ -83,7 +84,7 @@ scroll_directional_consume_expel_preserves_selected_focus :: proc(
 	)
 	testing.expect(
 		t,
-		e.find(m.spaces[0].view.root, 3) != e.find(m.spaces[0].view.root, 2),
+		layout.find(m.spaces[0].view.root, 3) != layout.find(m.spaces[0].view.root, 2),
 	)
 	testing.expect_value(t, m.focused, u32(3))
 }
@@ -148,17 +149,17 @@ scroll_default_column_display_applies_to_new_columns_only :: proc(t: ^testing.T)
 	testing.expect_value(t, e.config(&m, {"scroll_default_column_display"}).text, "normal")
 	testing.expect(t, e.config(&m, {"scroll_default_column_display", "invalid"}).failed)
 	testing.expect(t, !e.config(&m, {"scroll_default_column_display", "tabbed"}).failed)
-	testing.expect(t, !e.find(m.spaces[0].view.root, 1).column_tabbed)
+	testing.expect(t, !layout.find(m.spaces[0].view.root, 1).column_tabbed)
 	niri_open(&m, 2)
-	testing.expect(t, e.find(m.spaces[0].view.root, 2).column_tabbed)
+	testing.expect(t, layout.find(m.spaces[0].view.root, 2).column_tabbed)
 	testing.expect(t, !e.config(&m, {"scroll_default_column_display", "normal"}).failed)
 	niri_open(&m, 3)
-	testing.expect(t, !e.find(m.spaces[0].view.root, 3).column_tabbed)
-	testing.expect(t, e.find(m.spaces[0].view.root, 2).column_tabbed)
+	testing.expect(t, !layout.find(m.spaces[0].view.root, 3).column_tabbed)
+	testing.expect(t, layout.find(m.spaces[0].view.root, 2).column_tabbed)
 	e.remove_window(&m, 1); e.remove_window(&m, 2); e.remove_window(&m, 3)
 	testing.expect(t, !e.config(&m, {"scroll_default_column_display", "tabbed"}).failed)
 	niri_open(&m, 4)
-	testing.expect(t, e.find(m.spaces[0].view.root, 4).column_tabbed)
+	testing.expect(t, layout.find(m.spaces[0].view.root, 4).column_tabbed)
 }
 
 @(test)
@@ -169,7 +170,7 @@ scroll_default_column_display_supports_space_overrides :: proc(t: ^testing.T) {
 	testing.expect(t, !e.config(&m, {"scroll_default_column_display", "normal"}).failed)
 	testing.expect_value(t, e.config(&m, {"--space", "1", "scroll_default_column_display"}).text, "tabbed")
 	niri_open(&m, 2)
-	testing.expect(t, e.find(m.spaces[0].view.root, 2).column_tabbed)
+	testing.expect(t, layout.find(m.spaces[0].view.root, 2).column_tabbed)
 }
 
 @(test)
@@ -192,7 +193,7 @@ scroll_tabbed_columns_preserve_rows_and_only_raise_active :: proc(
 		}
 	}
 	testing.expect_value(t, orders, 1)
-	n := e.find(m.spaces[0].view.root, 1)
+	n := layout.find(m.spaces[0].view.root, 1)
 	testing.expect_value(t, m.windows[1].frame.x, n.frame.x + 9)
 	testing.expect_value(t, m.windows[1].frame.w, n.frame.w - 9)
 	testing.expect_value(t, m.windows[1].size_intent.w, n.column_width - 9)
@@ -246,7 +247,7 @@ scroll_tab_indicator_position_changes_layout_and_preserves_tab_order :: proc(t: 
 	testing.expect(t, e.config(&m, {"tab_indicator_position", "right"}).failed)
 	testing.expect(t, !e.config(&m, {"tab_indicator_position", "top"}).failed)
 	testing.expect_value(t, e.config(&m, {"tab_indicator_position"}).text, "top")
-	n := e.find(m.spaces[0].view.root, 1)
+	n := layout.find(m.spaces[0].view.root, 1)
 	testing.expect_value(t, m.windows[1].frame.y, n.frame.y + 9)
 	testing.expect_value(t, m.windows[1].frame.h, n.frame.h - 9)
 	testing.expect_value(t, m.windows[1].size_intent.h, n.frame.h - 9)
@@ -337,7 +338,7 @@ scroll_legacy_expel_failed_focus_leaves_membership_intact :: proc(
 	r.fail = true
 	testing.expect(t, e.execute(&m, {"window", "--expel"}).failed)
 	testing.expect_value(t, m.focused, u32(2))
-	testing.expect_value(t, e.find(m.spaces[0].view.root, 2).count, 2)
+	testing.expect_value(t, layout.find(m.spaces[0].view.root, 2).count, 2)
 }
 
 @(test)
@@ -352,7 +353,7 @@ scroll_column_move_and_warp_preserve_proportional_width_request :: proc(
 		t,
 		!e.execute(&m, {"window", "--move-column", "west"}).failed,
 	)
-	testing.expect_value(t, e.first(m.spaces[0].view.root).windows[0], u32(2))
+	testing.expect_value(t, layout.first(m.spaces[0].view.root).windows[0], u32(2))
 	e.execute(&m, {"window", "--warp", "east"})
 	m.spaces[0].view.frame.w = 1600
 	e.flush(&m, m.spaces[0])

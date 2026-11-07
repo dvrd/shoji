@@ -2,6 +2,7 @@ package tests
 
 import mac "../src"
 import "core:testing"
+import layout "../src/layout"
 
 Tab_Probe :: struct {
 	observations: map[u32]mac.Window_Observation,
@@ -18,10 +19,10 @@ ordered_out_tab_is_untiled_invisible_and_not_draggable :: proc(t: ^testing.T) {
 	testing.expect(t, !mac.window_json(&m, w).is_visible)
 	testing.expect_value(t, mac.mouse_begin(&m, 1, .Move, {0, 0}).window, u32(0))
 	testing.expect_value(t, mac.reconcile_window_memberships(&m), "")
-	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 1) == nil)
+	testing.expect(t, layout.find(mac.space_by_id(&m, 100).view.root, 1) == nil)
 	w.ordered_in = true
 	testing.expect_value(t, mac.reconcile_window_memberships(&m), "")
-	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 1) != nil)
+	testing.expect(t, layout.find(mac.space_by_id(&m, 100).view.root, 1) != nil)
 	testing.expect(t, !w.minimized && !w.hidden)
 }
 @(test)
@@ -58,7 +59,7 @@ tab_switch_frees_full_stack_before_inserting_active_tab :: proc(t: ^testing.T) {
 	testing.expect_value(t, mac.reconcile_window_memberships(&m), "")
 	view := &mac.space_by_id(&m, 100).view
 	testing.expect_value(t, view.root.count, 32)
-	testing.expect(t, mac.find(view.root, 1) == nil && mac.find(view.root, 33) != nil)
+	testing.expect(t, layout.find(view.root, 1) == nil && layout.find(view.root, 33) != nil)
 }
 @(test)
 unchanged_tab_reconciliation_preserves_bsp_nodes_and_ratios :: proc(t: ^testing.T) {
@@ -166,7 +167,7 @@ read_only_tab_retention_does_not_mutate_tiling_or_emit_commands :: proc(t: ^test
 	apps := make(map[i32]bool);defer delete(apps);apps[42] = true
 	root := mac.space_by_id(&state.manager, 100).view.root
 	mac.retain_unlisted_windows(&state, &seen, apps)
-	testing.expect(t, seen[1] && mac.find(root, 1) != nil)
+	testing.expect(t, seen[1] && layout.find(root, 1) != nil)
 	testing.expect_value(t, len(rec.actions), 0)
 }
 @(test)

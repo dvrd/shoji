@@ -1,6 +1,7 @@
 package shoji
 
 import "core:math"
+import layout "layout"
 
 // Gesture routing
 // ------------------------------------------------------------------------
@@ -15,7 +16,7 @@ Scroll_Gesture :: struct {
 	owned: bool,
 	space: u64,
 	last: f64,
-	layout: Layout,
+	layout: layout.Layout,
 	travel: f64,
 	switched: bool,
 }
@@ -26,7 +27,7 @@ layout_gesture_route :: proc(
 	g: ^Scroll_Gesture,
 	sample: Scroll_Sample,
 	space: u64,
-	layout: Layout,
+	layout: layout.Layout,
 	modifier: u64,
 	enabled: bool,
 	now: f64,
@@ -183,7 +184,7 @@ scroll_gesture_pan :: proc(m: ^Manager, space: u64, delta: f64) -> string {
 	if math.is_nan(delta) || math.is_inf(delta) {
 		return "invalid scroll delta"
 	}
-	scroll_pan(&s.view, s.view.scroll.offset + delta)
+	layout.scroll_pan(&s.view, s.view.scroll.offset + delta)
 	if m.scroll_animate {
 		return flush(m, s)
 	}

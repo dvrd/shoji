@@ -2,6 +2,7 @@ package shoji
 
 import "core:fmt"
 import "core:time"
+import layout "layout"
 
 // Scroll layout and viewport
 // ------------------------------------------------------------------------
@@ -14,12 +15,12 @@ foreign scroll_cg {
 mouse_scroll_event :: proc(state: ^State, event: Ref, now: time.Time) -> bool {
 	m := &state.manager
 	space := u64(0)
-	layout := Layout.Float
+	mode := layout.Layout.Float
 	if display := display_by_id(m, m.mouse_display); display != nil {
 		if s := space_by_id(m, display.active_space);
 		   s != nil && (s.view.layout == .Scroll || s.view.layout == .BSP) {
 			space = s.id
-			layout = s.view.layout
+			mode = s.view.layout
 		}
 	}
 	// CGEventTypes.h: continuous events report pixel deltas; ordinary wheels
@@ -43,7 +44,7 @@ mouse_scroll_event :: proc(state: ^State, event: Ref, now: time.Time) -> bool {
 		&state.mouse.scroll,
 		{x, y, CGEventGetFlags(event) & MOUSE_MODIFIERS, phase, momentum},
 		space,
-		layout,
+		mode,
 		m.mouse.modifier,
 		m.mouse.scroll && !(m.mouse.three_finger_horizontal && state.stack_touch.library != nil),
 		seconds,

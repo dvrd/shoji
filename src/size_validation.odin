@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:math"
 import "core:strings"
 import "core:time"
+import layout "layout"
 
 // Owned-window size validation
 // ------------------------------------------------------------------------
@@ -135,7 +136,7 @@ validate_window_sizes :: proc(pid: i32, swipe: bool = false) -> int {
 		return 1
 	}
 	size_validation_print("clamped-width-adapted", &state, a, b)
-	if find(s.view.root, a).column_size.value != 300 {
+	if layout.find(s.view.root, a).column_size.value != 300 {
 		return 1
 	}
 	state.manager.animation_duration = 0.5
@@ -193,8 +194,8 @@ validate_window_sizes :: proc(pid: i32, swipe: bool = false) -> int {
 	   !aw.size_feedback.width_valid {
 		return 1
 	}
-	if find(s.view.root, a).column_size.value != 1600 ||
-	   math.abs(find(s.view.root, a).column_width - 1200) > 1 {
+	if layout.find(s.view.root, a).column_size.value != 1600 ||
+	   math.abs(layout.find(s.view.root, a).column_width - 1200) > 1 {
 		return 1
 	}
 	size_validation_print("maximum-width-adapted", &state, a, b)

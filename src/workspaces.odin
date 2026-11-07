@@ -6,6 +6,7 @@ import "core:mem"
 import "core:strings"
 import objc "core:sys/darwin/Foundation"
 import posix "core:sys/posix"
+import layout "layout"
 
 // Display and Space discovery
 // ------------------------------------------------------------------------
@@ -168,7 +169,7 @@ refresh_displays :: proc(state: ^State) {
 	for i := len(m.spaces) - 1; i >= 0; i -= 1 {
 		s := m.spaces[i]
 		if !seen[s.id] {
-			view_destroy(&s.view)
+			layout.view_destroy(&s.view)
 			delete(s.overrides)
 			delete(s.uuid)
 			delete(s.label)

@@ -3,6 +3,7 @@ package shoji
 import "core:math"
 import "core:fmt"
 import "core:time"
+import layout "layout"
 
 // Accepted-size feedback
 // ------------------------------------------------------------------------
@@ -160,7 +161,7 @@ size_feedback_late_result :: proc(w: ^Window, observed: Rect) -> bool {
 
 scroll_feedback_prepare :: proc(m: ^Manager, s: ^Space) {
 	v := &s.view
-	for n := first(v.root); n != nil; n = next(n) {
+	for n := layout.first(v.root); n != nil; n = layout.next(n) {
 		n.column_observed = 0
 		any_observed := false
 		footprint: f64
@@ -173,9 +174,9 @@ scroll_feedback_prepare :: proc(m: ^Manager, s: ^Space) {
 			if n.column_tabbed {
 				height = n.frame.h
 				if v.tab_indicator_top {
-					height = max(1, height - tab_indicator_gutter(v, n))
+					height = max(1, height - layout.tab_indicator_gutter(v, n))
 				} else {
-					width = max(1, width - tab_indicator_gutter(v, n))
+					width = max(1, width - layout.tab_indicator_gutter(v, n))
 				}
 			}
 			if n.zoom != nil {
@@ -195,7 +196,7 @@ scroll_feedback_prepare :: proc(m: ^Manager, s: ^Space) {
 			}
 			size_feedback_invalidate(w)
 			if w.size_feedback.width_valid && n.zoom == nil {
-				gutter := v.tab_indicator_top ? f64(0) : tab_indicator_gutter(v, n)
+				gutter := v.tab_indicator_top ? f64(0) : layout.tab_indicator_gutter(v, n)
 				footprint = max(footprint, w.size_feedback.accepted.w + gutter)
 				any_observed = true
 			} else {

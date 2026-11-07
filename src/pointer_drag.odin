@@ -2,6 +2,7 @@ package shoji
 
 import "core:fmt"
 import "core:math"
+import layout "layout"
 
 // Pointer interaction
 // ------------------------------------------------------------------------
@@ -195,7 +196,7 @@ mouse_border_resize :: proc(
 	if s == nil ||
 	   !s.visible ||
 	   s.view.layout == .Float ||
-	   find(s.view.root, id) == nil ||
+	   layout.find(s.view.root, id) == nil ||
 	   w.windowed_frame != nil {
 		return {}
 	}
@@ -264,7 +265,7 @@ mouse_drag_frame :: proc(d: Mouse_Drag, point: Mouse_Point) -> Rect {
 	}
 	return r
 }
-mouse_fence :: proc(n: ^Node, split: Split, leading: bool) -> ^Node {
+mouse_fence :: proc(n: ^layout.Node, split: layout.Split, leading: bool) -> ^layout.Node {
 	for child := n; child != nil && child.parent != nil; child = child.parent {
 		parent := child.parent
 		if parent.split == split &&
@@ -302,9 +303,9 @@ mouse_update :: proc(
 		return "dragged window is no longer available"
 	}
 	s := space_by_id(m, w.space)
-	n: ^Node
+	n: ^layout.Node
 	if s != nil && s.view.layout != .Float {
-		n = find(s.view.root, w.id)
+		n = layout.find(s.view.root, w.id)
 	}
 	if n == nil {
 		r := mouse_drag_frame(d^, point)
@@ -317,7 +318,7 @@ mouse_update :: proc(
 		if s.view.layout == .Scroll {
 			delta := (point.x - d.previous.x) * (d.left ? f64(-1) : f64(1))
 			if delta != 0 {
-				if err := scroll_set_width(
+				if err := layout.scroll_set_width(
 					&s.view,
 					w.id,
 					fmt.tprintf("rel:%g", delta),
@@ -440,7 +441,7 @@ mouse_drop_region :: proc(
 }
 
 layout_drop_region :: proc(
-	v: ^View,
+	v: ^layout.View,
 	frame: Rect,
 	point: Mouse_Point,
 	stack: bool,
@@ -484,7 +485,7 @@ mouse_drop :: proc(
 		if s == nil || s.view.layout == .Float {
 			return ""
 		}
-		n := find(s.view.root, w.id)
+		n := layout.find(s.view.root, w.id)
 		if n == nil || n != s.view.root || n.count != 1 {
 			return ""
 		}
@@ -513,7 +514,7 @@ mouse_drop :: proc(
 	if t == nil || t.view.layout == .Float {
 		return ""
 	}
-	a := find(s.view.root, source.id); b := find(t.view.root, target)
+	a := layout.find(s.view.root, source.id); b := layout.find(t.view.root, target)
 	if a == nil || b == nil || a == b {
 		return ""
 	}
@@ -537,7 +538,7 @@ mouse_drop :: proc(
 			)
 		}
 		if (action == .Stack || t.view.layout == .Stack) &&
-		   b.count == MAX_STACK {
+		   b.count == layout.MAX_STACK {
 			return "target stack is full"
 		}
 		if err := perform(
@@ -546,18 +547,18 @@ mouse_drop :: proc(
 		); err != "" {
 			return err
 		}
-		remove(&s.view, source.id)
+		layout.remove(&s.view, source.id)
 		source.space, source.display = t.id, t.display
 		if action == .Stack {
-			stack_push(b, source.id)
+			layout.stack_push(b, source.id)
 		} else {
 			b.split =
 				(action == .East || action == .West) ? .Vertical : .Horizontal
 			b.insert_stack = false
 			b.insert_first = action == .North || action == .West
-			add(&t.view, source.id, target)
+			layout.add(&t.view, source.id, target)
 			if t.view.layout == .Scroll && source_width > 0 {
-				if placed := find(t.view.root, source.id); placed != nil {
+				if placed := layout.find(t.view.root, source.id); placed != nil {
 					placed.column_width = source_width
 					placed.column_resolved = source_width
 					placed.column_size, placed.column_preset, placed.column_full =
@@ -574,22 +575,22 @@ mouse_drop :: proc(
 	case .None:
 		return ""
 	case .Swap:
-		swap(a, b)
+		layout.swap(a, b)
 	case .Stack:
-		if b.count == MAX_STACK {
+		if b.count == layout.MAX_STACK {
 			return "target stack is full"
 		}
-		remove(&s.view, source.id); b = find(s.view.root, target)
-		stack_push(b, source.id)
+		layout.remove(&s.view, source.id); b = layout.find(s.view.root, target)
+		layout.stack_push(b, source.id)
 	case .North, .East, .South, .West:
-		remove(&s.view, source.id); b = find(s.view.root, target)
+		layout.remove(&s.view, source.id); b = layout.find(s.view.root, target)
 		b.split =
 			(action == .East || action == .West) ? .Vertical : .Horizontal
 		b.insert_stack = false
 		b.insert_first = action == .North || action == .West
-		add(&s.view, source.id, target)
+		layout.add(&s.view, source.id, target)
 		if s.view.layout == .Scroll && source_width > 0 {
-			if placed := find(s.view.root, source.id); placed != nil {
+			if placed := layout.find(s.view.root, source.id); placed != nil {
 				placed.column_width = source_width
 				placed.column_resolved = source_width
 				placed.column_size, placed.column_preset, placed.column_full =

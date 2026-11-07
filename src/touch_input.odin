@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:math"
 import "core:time"
 import "core:sync"
+import layout "layout"
 
 foreign import touch_dl "system:c"
 
@@ -128,7 +129,7 @@ Stack_Touch_State :: struct {
 	focus: u32,
 	generation: u64,
 	horizontal_space: u64,
-	horizontal_layout: Layout,
+	horizontal_layout: layout.Layout,
 	horizontal_active, horizontal_switched: bool,
 	horizontal_travel: f64,
 	horizontal_direction: i32,
@@ -305,7 +306,7 @@ stack_swipe_apply :: proc(state: ^State, focus: u32, generation: u64, direction:
 	if w == nil || w.generation != generation { return }
 	s := space_by_id(m, w.space)
 	if s == nil || !s.visible || s.view.layout != .BSP { return }
-	n := find(s.view.root, w.id)
+	n := layout.find(s.view.root, w.id)
 	if n == nil || n.count < 2 { return }
 	selector := direction > 0 ? "stack.next" : "stack.prev"
 	if target := select_window(m, selector); target != nil {

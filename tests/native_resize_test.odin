@@ -3,6 +3,7 @@ package tests
 import mac "../src"
 import "core:testing"
 import "core:time"
+import layout "../src/layout"
 
 resize_collect :: proc(state: ^mac.State) {
 	r := (^Recorder)(state.event_user)
@@ -312,8 +313,8 @@ native_resize_reflows_nested_neighbors_and_resizes_single_tiles :: proc(
 	)
 	testing.expect(t, w.frame.w > before.w && w.frame.h > before.h)
 	for _, window in m.windows {
-		n := mac.find(s.view.root, window.id)
-		testing.expect_value(t, window.frame, mac.frame_for(n))
+		n := layout.find(s.view.root, window.id)
+		testing.expect_value(t, window.frame, layout.frame_for(n))
 	}
 	mac.remove_window(&m, 2); mac.remove_window(&m, 3); mac.flush(&m, s)
 	before = w.frame; clear(&r.actions)
@@ -345,11 +346,11 @@ native_resize_reflows_nested_neighbors_and_resizes_single_tiles :: proc(
 		},
 	)
 	mac.flush(&m, s)
-	testing.expect_value(t, w.frame, mac.frame_for(mac.find(s.view.root, 1)))
+	testing.expect_value(t, w.frame, layout.frame_for(layout.find(s.view.root, 1)))
 	testing.expect_value(
 		t,
 		m.windows[4].frame,
-		mac.frame_for(mac.find(s.view.root, 4)),
+		layout.frame_for(layout.find(s.view.root, 4)),
 	)
 }
 

@@ -4,6 +4,7 @@ import "core:math"
 import dock "dock"
 import "core:fmt"
 import "core:time"
+import layout "layout"
 
 // Window admission
 // ------------------------------------------------------------------------
@@ -71,11 +72,11 @@ opening_intended :: proc(w: ^Window) -> bool {
 	return managed(&value)
 }
 
-opening_clone_node :: proc(source, parent: ^Node) -> ^Node {
+opening_clone_node :: proc(source, parent: ^layout.Node) -> ^layout.Node {
 	if source == nil {
 		return nil
 	}
-	n := new(Node); n^ = source^; n.parent = parent; n.zoom = nil
+	n := new(layout.Node); n^ = source^; n.parent = parent; n.zoom = nil
 	n.left = opening_clone_node(source.left, n)
 	n.right = opening_clone_node(source.right, n)
 	return n
@@ -178,29 +179,29 @@ admit_window :: proc(
 		return false, exclude_opening(m, w)
 	}
 	v := s.view; v.root = opening_clone_node(s.view.root, nil)
-	defer view_destroy(&v)
-	zooms := capture_zooms(&s.view); restore_zooms(&v, zooms[:])
-	if !add(&v, w.id, window_insertion(m, &v)) {
+	defer layout.view_destroy(&v)
+	zooms := layout.capture_zooms(&s.view); layout.restore_zooms(&v, zooms[:])
+	if !layout.add(&v, w.id, window_insertion(m, &v)) {
 		o.wait = .Space; return false, ""
 	}
 	if v.layout == .BSP {
 		if !bsp_constraints(m, &v) {
 			o.wait = .Space; return false, ""
 		}
-		view_update(&v)
+		layout.view_update(&v)
 	}
 	if v.layout == .Scroll {
 		v.scroll.geometry_enabled = false
-		scroll_constraints(m, &v); view_update(&v); scroll_rows(m, &v)
+		scroll_constraints(m, &v); layout.view_update(&v); scroll_rows(m, &v)
 		if m.focused == w.id && !o.focus_superseded {
-			scroll_reveal(&v, w.id); scroll_update(&v); scroll_rows(m, &v)
+			layout.scroll_reveal(&v, w.id); layout.scroll_update(&v); scroll_rows(m, &v)
 		}
 	}
-	n := find(v.root, w.id)
+	n := layout.find(v.root, w.id)
 	target :=
 		v.layout == .Scroll \
-			? scroll_window_frame(&v, n, w.id, false) \
-			: frame_for(n)
+			? layout.scroll_window_frame(&v, n, w.id, false) \
+			: layout.frame_for(n)
 	if v.layout == .Scroll && target.h > v.scroll.viewport.h {
 		o.wait = .Space; return false, ""
 	}
@@ -257,7 +258,7 @@ admit_window :: proc(
 		}
 	}
 	placement := aligned
-	parked := v.layout == .Scroll && scroll_park_frame(&v, aligned).x != aligned.x
+	parked := v.layout == .Scroll && layout.scroll_park_frame(&v, aligned).x != aligned.x
 	if parked {
 		// AppKit clamps wholly off-screen AX moves to a visible edge. Keep
 		// that stable native position while retaining the strip's world frame.

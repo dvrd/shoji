@@ -3,6 +3,7 @@ package tests
 import mac "../src"
 import "core:testing"
 import "core:time"
+import layout "../src/layout"
 
 feedback_create :: proc(
 	state: ^mac.State,
@@ -505,7 +506,7 @@ destroyed_floating_window_drops_its_ring_before_reflow_even_after_focus_changes 
 		)
 		w := state.manager.windows[1]
 		w.floating = true
-		mac.remove(&state.manager.spaces[0].view, 1)
+		layout.remove(&state.manager.spaces[0].view, 1)
 		// The remaining tile has a pending reflow; its native writes must not
 		// keep the destroyed floating owner's border on screen.
 		state.animations = make(map[u32]mac.Animation_Job)
@@ -773,7 +774,7 @@ scroll_drop_indicator_matches_column_insertion_and_preserves_width :: proc(
 	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2, 200); niri_open(&m, 3, 200)
 	s := m.spaces[0]
-	source_width := mac.find(s.view.root, 1).column_width
+	source_width := layout.find(s.view.root, 1).column_width
 	drag := mac.mouse_begin(&m, 1, .Move, {30, 40})
 	w := m.windows[3]
 	point := mac.Mouse_Point{w.frame.x + 1, w.frame.y + w.frame.h / 2}
@@ -781,11 +782,11 @@ scroll_drop_indicator_matches_column_insertion_and_preserves_width :: proc(
 	testing.expect(t, valid && plan.solid)
 	testing.expect_value(t, plan.frame.w, f64(4))
 	testing.expect_value(t, mac.mouse_drop(&m, drag, 3, point), "")
-	n := mac.first(s.view.root)
+	n := layout.first(s.view.root)
 	testing.expect_value(t, n.windows[0], u32(2))
-	n = mac.next(n); testing.expect_value(t, n.windows[0], u32(1))
+	n = layout.next(n); testing.expect_value(t, n.windows[0], u32(1))
 	testing.expect_value(t, n.column_width, source_width)
-	n = mac.next(n); testing.expect_value(t, n.windows[0], u32(3))
+	n = layout.next(n); testing.expect_value(t, n.windows[0], u32(3))
 }
 
 @(test)
@@ -796,7 +797,7 @@ edge_scroll_waits_accelerates_reverses_and_stops_at_bounds :: proc(
 	defer mac.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
 	s := m.spaces[0]
-	mac.scroll_pan(&s.view, -16); mac.flush(&m, s)
+	layout.scroll_pan(&s.view, -16); mac.flush(&m, s)
 	drag := mac.mouse_begin(&m, 1, .Move, {30, 40})
 	edge: mac.Drag_Edge
 	point := mac.Mouse_Point{1280, 400}
@@ -841,7 +842,7 @@ edge_scroll_runs_without_new_pointer_events_and_releases_ownership :: proc(
 	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
 	niri_open(&state.manager, 2); niri_open(&state.manager, 3)
 	s := state.manager.spaces[0]
-	mac.scroll_pan(&s.view, -16); mac.flush(&state.manager, s)
+	layout.scroll_pan(&s.view, -16); mac.flush(&state.manager, s)
 	state.mouse.drag = mac.mouse_begin(&state.manager, 1, .Move, {30, 40})
 	state.mouse.phase = .Dragging
 	state.mouse.point = {1280, 400}
@@ -869,8 +870,8 @@ insertion_and_drag_previews_match_split_geometry :: proc(t: ^testing.T) {
 	)
 	plan, valid := mac.insertion_feedback(&m, s)
 	testing.expect(t, valid)
-	n := mac.find(s.view.root, 1)
-	_, right := mac.partition(mac.frame_for(n), .Vertical, s.view.ratio, 0)
+	n := layout.find(s.view.root, 1)
+	_, right := layout.partition(layout.frame_for(n), .Vertical, s.view.ratio, 0)
 	testing.expect_value(t, plan.frame, right)
 	testing.expect(
 		t,

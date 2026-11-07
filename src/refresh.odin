@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:strings"
 import objc "core:sys/darwin/Foundation"
 import "core:time"
+import layout "layout"
 
 // Desktop refresh
 // ------------------------------------------------------------------------
@@ -215,12 +216,12 @@ remove_observed_window :: proc(state: ^State, id: u32) {
 close_focus_candidate :: proc(m: ^Manager, s: ^Space) -> u32 {
 	v := &s.view; viewport := v.scroll.viewport
 	best: u32; best_area: f64; best_preferred: bool
-	for n := first(v.root); n != nil; n = next(n) {
+	for n := layout.first(v.root); n != nil; n = layout.next(n) {
 		for i in 0 ..< n.count {
 			id := n.windows[i]; w := m.windows[id]
 			if w == nil || !layout_admitted(w) || w.space != s.id ||
 			   (n.column_tabbed && id != n.order[0]) { continue }
-			r := scroll_window_frame(v, n, id, false)
+			r := layout.scroll_window_frame(v, n, id, false)
 			width := min(r.x + r.w, viewport.x + viewport.w) - max(r.x, viewport.x)
 			height := min(r.y + r.h, viewport.y + viewport.h) - max(r.y, viewport.y)
 			if width <= 0 || height <= 0 { continue }

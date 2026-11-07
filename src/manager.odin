@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
+import layout "layout"
 
 // Manager state and reconciliation
 // ------------------------------------------------------------------------
@@ -12,10 +13,10 @@ Scroll_Return :: struct {
 	space: u64,
 	previous, next: u32,
 	column_index, row: int,
-	peers: [MAX_STACK]u32,
+	peers: [layout.MAX_STACK]u32,
 	peer_count: int,
 	width: f64,
-	size: Scroll_Size,
+	size: layout.Scroll_Size,
 	preset: Maybe(int),
 	full, tabbed: bool,
 }
@@ -81,7 +82,7 @@ Space :: struct {
 	index, display: u32,
 	uuid, label: string,
 	visible, fullscreen: bool,
-	view: View,
+	view: layout.View,
 	overrides: map[string]bool,
 }
 
@@ -135,7 +136,7 @@ Manager :: struct {
 	scroll_animate: bool,
 	scroll_frame_pacing: bool,
 	scroll_time: f64,
-	scroll_options: Scroll_Options,
+	scroll_options: layout.Scroll_Options,
 	native_resize_window: u32,
 	feedback_color: u32,
 	focus_ring: Focus_Ring_Config,
@@ -175,16 +176,16 @@ Manager :: struct {
 	focused, last_focused: u32,
 	active_space, last_space: u64,
 	last_display, mouse_window, mouse_display: u32,
-	default_layout: Layout,
-	padding: Padding,
+	default_layout: layout.Layout,
+	padding: layout.Padding,
 	gap, ratio: f64,
 	opacity_duration: f64,
 	animation_duration: f64,
 	animation_easing: Easing,
-	balance_axis: Split,
+	balance_axis: layout.Split,
 	active_opacity, normal_opacity: f64,
 	window_opacity: bool,
-	split: Split,
+	split: layout.Split,
 	first_child, auto_balance: bool,
 	zoom_persist: bool,
 	insertion_point: enum {
@@ -213,7 +214,7 @@ Manager :: struct {
 
 manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
 	m^ = Manager {
-		scroll_options = scroll_options_defaults(),
+		scroll_options = layout.scroll_options_defaults(),
 		tab_indicator_width = 4,
 		feedback_color = 0xffd75f5f,
 		focus_ring = {
@@ -252,7 +253,7 @@ manager_destroy :: proc(m: ^Manager) {
 	}
 	delete(m.windows)
 	for s in m.spaces {
-		view_destroy(&s.view)
+		layout.view_destroy(&s.view)
 		delete(s.overrides)
 		delete(s.uuid)
 		delete(s.label)
@@ -304,7 +305,7 @@ add_space :: proc(
 	s.id = id
 	s.display = display
 	s.index = index
-	view_init(&s.view, frame, m.default_layout)
+	layout.view_init(&s.view, frame, m.default_layout)
 	s.view.tab_indicator_top = m.tab_indicator_top
 	s.view.tab_indicator_width = m.tab_indicator_width
 	s.view.padding = m.padding
@@ -375,14 +376,14 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 	}
 	apply_rules(m, w, initial = true)
 	if s := space_by_id(m, w.space); s != nil && layout_admitted(w) {
-		add(&s.view, w.id, window_insertion(m, &s.view))
+		layout.add(&s.view, w.id, window_insertion(m, &s.view))
 	}
 	return w
 }
 
-window_insertion :: proc(m: ^Manager, v: ^View) -> u32 {
+window_insertion :: proc(m: ^Manager, v: ^layout.View) -> u32 {
 	if m.insertion_point != .Focused {
-		n := m.insertion_point == .First ? first(v.root) : last(v.root)
+		n := m.insertion_point == .First ? layout.first(v.root) : layout.last(v.root)
 		if n != nil && n.count > 0 {
 			return n.order[0]
 		}
@@ -398,7 +399,7 @@ remove_window :: proc(m: ^Manager, id: u32) {
 			}
 		}
 		if s := space_by_id(m, w.space); s != nil {
-			remove(&s.view, id)
+			layout.remove(&s.view, id)
 		}
 		if m.focused == id {
 			m.focused = 0
@@ -418,32 +419,32 @@ sync_window_membership :: proc(
 ) -> string {
 	if previous := space_by_id(m, previous_space);
 	   previous != nil && (previous_space != w.space || !managed(w)) {
-		remove(&previous.view, w.id)
+		layout.remove(&previous.view, w.id)
 	}
 	if current := space_by_id(m, w.space);
 	   current != nil &&
 	   !current.fullscreen &&
 	   layout_admitted(w) &&
 	   current.view.layout != .Float &&
-	   find(current.view.root, w.id) == nil {
+	   layout.find(current.view.root, w.id) == nil {
 		w.scroll_frame = {}
 		restored := scroll_return_restore(w, current)
-		if !restored && !add(&current.view, w.id, m.focused) {
+		if !restored && !layout.add(&current.view, w.id, m.focused) {
 			return "destination tiling tree is full"
 		}
 	}
 	return ""
 }
 
-scroll_return_remember :: proc(w: ^Window, space: ^Space, node: ^Node) {
+scroll_return_remember :: proc(w: ^Window, space: ^Space, node: ^layout.Node) {
 	if space.view.layout != .Scroll || w.scroll_return != nil { return }
 	r := Scroll_Return {
 		space = space.id, width = node.column_width, size = node.column_size,
 		preset = node.column_preset, full = node.column_full, tabbed = node.column_tabbed,
 	}
-	for n := first(space.view.root); n != nil && n != node; n = next(n) { r.column_index += 1 }
-	if n := previous(node); n != nil && n.count > 0 { r.previous = n.windows[0] }
-	if n := next(node); n != nil && n.count > 0 { r.next = n.windows[0] }
+	for n := layout.first(space.view.root); n != nil && n != node; n = layout.next(n) { r.column_index += 1 }
+	if n := layout.previous(node); n != nil && n.count > 0 { r.previous = n.windows[0] }
+	if n := layout.next(node); n != nil && n.count > 0 { r.next = n.windows[0] }
 	for i in 0 ..< node.count {
 		if node.windows[i] == w.id { r.row = i; continue }
 		r.peers[r.peer_count] = node.windows[i]; r.peer_count += 1
@@ -459,9 +460,9 @@ scroll_return_restore :: proc(w: ^Window, space: ^Space) -> bool {
 	}
 	v := &space.view
 	for id in r.peers[:r.peer_count] {
-		n := find(v.root, id)
-		if n == nil || n.count == MAX_STACK { continue }
-		if !stack_push(n, w.id) { continue }
+		n := layout.find(v.root, id)
+		if n == nil || n.count == layout.MAX_STACK { continue }
+		if !layout.stack_push(n, w.id) { continue }
 		// stack_push inserts after the active row; restore the saved row order.
 		at := 0
 		for n.windows[at] != w.id { at += 1 }
@@ -471,24 +472,24 @@ scroll_return_restore :: proc(w: ^Window, space: ^Space) -> bool {
 		n.windows[row] = w.id
 		w.scroll_return = nil; return true
 	}
-	anchor := find(v.root, r.previous)
+	anchor := layout.find(v.root, r.previous)
 	before := false
-	if anchor == nil { anchor = find(v.root, r.next); before = anchor != nil }
+	if anchor == nil { anchor = layout.find(v.root, r.next); before = anchor != nil }
 	if anchor == nil {
-		anchor = first(v.root)
+		anchor = layout.first(v.root)
 		index := 0
-		for index < r.column_index && next(anchor) != nil { anchor = next(anchor); index += 1 }
+		for index < r.column_index && layout.next(anchor) != nil { anchor = layout.next(anchor); index += 1 }
 		before = anchor != nil && anchor.count > 0 && index == r.column_index
 	}
 	if anchor == nil { return false }
 	anchor_id := anchor.windows[0]
 	insert_first, insert_stack, insertion := anchor.insert_first, anchor.insert_stack, v.insertion
 	anchor.insert_first, anchor.insert_stack = before, false
-	ok := add(v, w.id, anchor_id)
-	if old := find(v.root, anchor_id); old != nil { old.insert_first, old.insert_stack = insert_first, insert_stack }
+	ok := layout.add(v, w.id, anchor_id)
+	if old := layout.find(v.root, anchor_id); old != nil { old.insert_first, old.insert_stack = insert_first, insert_stack }
 	v.insertion = insertion
 	if !ok { return false }
-	n := find(v.root, w.id)
+	n := layout.find(v.root, w.id)
 	n.column_width, n.column_resolved = r.width, r.width
 	n.column_size, n.column_preset = r.size, r.preset
 	n.column_full, n.column_tabbed = r.full, r.tabbed
@@ -501,7 +502,7 @@ scroll_return_restore :: proc(w: ^Window, space: ^Space) -> bool {
 reconcile_window_memberships :: proc(m: ^Manager) -> string {
 	for space in m.spaces {
 		remove_ids := make([dynamic]u32, context.temp_allocator)
-		for node := first(space.view.root); node != nil; node = next(node) {
+		for node := layout.first(space.view.root); node != nil; node = layout.next(node) {
 			for i in 0 ..< node.count {
 				id := node.windows[i]
 				window := m.windows[id]
@@ -536,7 +537,7 @@ reconcile_window_memberships :: proc(m: ^Manager) -> string {
 				}
 			}
 		}
-		for id in remove_ids { remove(&space.view, id) }
+		for id in remove_ids { layout.remove(&space.view, id) }
 	}
 	ids := make([dynamic]u32, context.temp_allocator)
 	for id in m.windows { append(&ids, id) }
@@ -563,7 +564,7 @@ focus_window :: proc(m: ^Manager, id: u32) {
 	if w, ok := m.windows[id]; ok {
 		w.focused = true
 		if s := space_by_id(m, w.space); s != nil {
-			focus_order(find(s.view.root, id), id)
+			layout.focus_order(layout.find(s.view.root, id), id)
 		}
 	}
 }
@@ -627,15 +628,15 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		m.native_resize_window == 0
 	if s.view.layout == .Scroll {
 		scroll_constraints(m, &s.view)
-		for n := first(s.view.root);
+		for n := layout.first(s.view.root);
 		    n != nil;
-		    n = next(n) { n.column_observed = 0 }
+		    n = layout.next(n) { n.column_observed = 0 }
 	}
-	view_update(&s.view)
+	layout.view_update(&s.view)
 	if s.view.layout == .Scroll {
 		scroll_rows(m, &s.view)
 		scroll_feedback_prepare(m, s)
-		scroll_update(&s.view)
+		layout.scroll_update(&s.view)
 		scroll_rows(m, &s.view, true)
 	}
 	if s.view.layout == .Scroll &&
@@ -646,12 +647,12 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		// Floating focus and the gap between close and the next AX focus event
 		// must not discard this Space's active scrolling column.
 		target := m.focused
-		if find(s.view.root, target) == nil {
+		if layout.find(s.view.root, target) == nil {
 			target = s.view.scroll.focused
 		}
 		if !s.view.scroll.dragging &&
 		   (s.view.scroll.reveal || s.view.scroll.focused != target) {
-			scroll_reveal(&s.view, target)
+			layout.scroll_reveal(&s.view, target)
 			s.view.scroll.focused = target
 			s.view.scroll.reveal = false
 		}
@@ -667,7 +668,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		}
 	}
 	deferred := make([dynamic]Deferred_Frame, 0, 16, context.temp_allocator)
-	for n := first(s.view.root); n != nil; n = next(n) {
+	for n := layout.first(s.view.root); n != nil; n = layout.next(n) {
 		for i in 0 ..< n.count {
 			w := m.windows[n.windows[i]]
 			if w == nil || !managed(w) {
@@ -676,7 +677,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			if w.windowed_frame != nil {
 				continue
 			}
-			r := frame_for(n)
+			r := layout.frame_for(n)
 			if s.view.layout == .Scroll {
 				if m.scroll_animate {
 					r = w.scroll_frame.current
@@ -685,13 +686,13 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 					r =
 						n.zoom != nil \
 							? size_feedback_frame(w, s.view.scroll.viewport) \
-							: scroll_park_frame(&s.view, r)
+							: layout.scroll_park_frame(&s.view, r)
 				} else {
-					r = scroll_park_frame(
+					r = layout.scroll_park_frame(
 						&s.view,
 						size_feedback_frame(
 							w,
-							scroll_window_frame(&s.view, n, w.id, false),
+							layout.scroll_window_frame(&s.view, n, w.id, false),
 						),
 					)
 				}
@@ -838,11 +839,11 @@ select_window :: proc(
 		if active == nil {
 			return nil
 		}
-		best: ^Node
+		best: ^layout.Node
 		best_area: f64
-		for candidate := first(active.view.root);
+		for candidate := layout.first(active.view.root);
 		    candidate != nil;
-		    candidate = next(candidate) {
+		    candidate = layout.next(candidate) {
 			if candidate.count == 0 {
 				continue
 			}
@@ -865,7 +866,7 @@ select_window :: proc(
 	if s == nil {
 		return nil
 	}
-	n := find(s.view.root, w.id)
+	n := layout.find(s.view.root, w.id)
 	if s.view.layout == .Scroll &&
 	   (text == "north" ||
 			   text == "south" ||
@@ -873,24 +874,24 @@ select_window :: proc(
 			   text == "west") {
 		return scroll_direction(m, s, w, text)
 	}
-	target: ^Node
+	target: ^layout.Node
 	switch text {
 	case "first":
-		target = first(s.view.root)
+		target = layout.first(s.view.root)
 	case "last":
-		target = last(s.view.root)
+		target = layout.last(s.view.root)
 	case "next":
-		target = next(n)
+		target = layout.next(n)
 	case "prev":
-		target = previous(n)
+		target = layout.previous(n)
 	case "north":
-		target = neighbor(s.view.root, n, .North)
+		target = layout.neighbor(s.view.root, n, .North)
 	case "east":
-		target = neighbor(s.view.root, n, .East)
+		target = layout.neighbor(s.view.root, n, .East)
 	case "south":
-		target = neighbor(s.view.root, n, .South)
+		target = layout.neighbor(s.view.root, n, .South)
 	case "west":
-		target = neighbor(s.view.root, n, .West)
+		target = layout.neighbor(s.view.root, n, .West)
 	case "sibling",
 	     "first_nephew",
 	     "second_nephew",
@@ -921,7 +922,7 @@ select_window :: proc(
 				return nil
 			}; target = target.right
 		}
-		if target != nil && !leaf(target) {
+		if target != nil && !layout.leaf(target) {
 			return nil
 		}
 	case "stack.first":
@@ -959,14 +960,14 @@ select_window :: proc(
 	return nil
 }
 
-set_layout :: proc(m: ^Manager, s: ^Space, layout: Layout) {
-	if s.view.layout == layout {
+set_layout :: proc(m: ^Manager, s: ^Space, mode: layout.Layout) {
+	if s.view.layout == mode {
 		return
 	}
-	zooms := capture_zooms(&s.view)
-	defer restore_zooms(&s.view, zooms[:])
-	s.view.layout = layout
-	s.view.scroll = Scroll_State {
+	zooms := layout.capture_zooms(&s.view)
+	defer layout.restore_zooms(&s.view, zooms[:])
+	s.view.layout = mode
+	s.view.scroll = layout.Scroll_State {
 		reveal = true,
 	}
 	for _, w in m.windows {
@@ -974,8 +975,8 @@ set_layout :: proc(m: ^Manager, s: ^Space, layout: Layout) {
 			w.scroll_frame = {}
 		}
 	}
-	node_destroy(s.view.root)
-	s.view.root = new(Node)
+	layout.node_destroy(s.view.root)
+	s.view.root = new(layout.Node)
 	// Stable window-id order makes a layout rebuild deterministic.
 	ids: [dynamic]u32
 	defer delete(ids)
@@ -983,7 +984,7 @@ set_layout :: proc(m: ^Manager, s: ^Space, layout: Layout) {
 		// Choosing a tiled layout explicitly adopts existing eligible windows;
 		// a newcomer still preparing must continue through admission.
 		if w.space == s.id &&
-		   layout != .Float &&
+		   mode != .Float &&
 		   w.opening.phase == .Excluded &&
 		   managed(w) {
 			w.opening.phase = .Admitted
@@ -1000,10 +1001,10 @@ set_layout :: proc(m: ^Manager, s: ^Space, layout: Layout) {
 		}
 	}
 	for id, i in ids {
-		insertion := layout == .Scroll && i > 0 ? ids[i - 1] : u32(0)
-		add(&s.view, id, insertion)
+		insertion := mode == .Scroll && i > 0 ? ids[i - 1] : u32(0)
+		layout.add(&s.view, id, insertion)
 	}
-	view_update(&s.view)
+	layout.view_update(&s.view)
 }
 
 errorf :: proc(format: string, args: ..any) -> string {

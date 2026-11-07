@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
+import layout "layout"
 
 // Window commands
 // ------------------------------------------------------------------------
@@ -104,9 +105,9 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		return failure("too many window arguments")
 	}
 	s := space_by_id(m, w.space)
-	n: ^Node
+	n: ^layout.Node
 	if s != nil {
-		n = find(s.view.root, w.id)
+		n = layout.find(s.view.root, w.id)
 	}
 	switch op {
 	case "--cycle-column-width",
@@ -155,7 +156,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if operand != "next" && operand != "prev" {
 				return failure("cycle-column-width expects next or prev")
 			}
-			scroll_cycle_width(&s.view, n, operand == "prev")
+			layout.scroll_cycle_width(&s.view, n, operand == "prev")
 		case "--row-height":
 			if err := scroll_set_row(m, &s.view, w, operand); err != "" {
 				return failure(err)
@@ -183,13 +184,13 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if op == "--consume-or-expel" {
 				return result(scroll_transfer(m, s, w, op, operand))
 			}
-			scroll_move_column(&s.view, n, operand == "west")
+			layout.scroll_move_column(&s.view, n, operand == "west")
 		}
 	case "--column-width":
 		if s == nil || s.view.layout != .Scroll {
 			return failure("column-width requires scroll layout")
 		}
-		if err := scroll_set_width(&s.view, w.id, operand); err != "" {
+		if err := layout.scroll_set_width(&s.view, w.id, operand); err != "" {
 			return failure(err)
 		}
 	case "--center":
@@ -199,8 +200,8 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		if operand != "" {
 			return failure("center takes no operand")
 		}
-		view_update(&s.view)
-		scroll_reveal(&s.view, w.id, true)
+		layout.view_update(&s.view)
+		layout.scroll_reveal(&s.view, w.id, true)
 		s.view.scroll.focused = m.focused; s.view.scroll.reveal = false
 	case "--scratchpad":
 		return result(scratchpad_assign(m, w, operand))
@@ -272,9 +273,9 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			}
 			w.scroll_frame = {}
 			if w.floating {
-				remove(&s.view, w.id)
+				layout.remove(&s.view, w.id)
 			} else if layout_admitted(w) {
-				add(&s.view, w.id, m.focused)
+				layout.add(&s.view, w.id, m.focused)
 			}
 		case "zoom-parent", "zoom-fullscreen":
 			if s != nil &&
@@ -390,13 +391,13 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		if target_space == nil {
 			return failure("target window has no space")
 		}
-		other := find(target_space.view.root, target.id)
+		other := layout.find(target_space.view.root, target.id)
 		if n == nil || other == nil {
 			return failure("both windows must be managed")
 		}
 		if op == "--warp" &&
 		   other != n &&
-		   !can_add(&target_space.view, target.id) {
+		   !layout.can_add(&target_space.view, target.id) {
 			return failure("target stack is full")
 		}
 		if target_space != s {
@@ -418,10 +419,10 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 						m,
 						Action{kind = .Space, window = w.id, space = s.id},
 					); rollback != "" {
-						remove(&s.view, w.id)
+						layout.remove(&s.view, w.id)
 						w.space, w.display =
 							target_space.id, target_space.display
-						add(&target_space.view, w.id, target.id)
+						layout.add(&target_space.view, w.id, target.id)
 						return failure(
 							errorf("%s; rollback failed: %s", err, rollback),
 						)
@@ -435,8 +436,8 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 				replace_window_id(n, w.id, target.id)
 				replace_window_id(other, target.id, w.id)
 			} else {
-				remove(&s.view, w.id)
-				add(&target_space.view, w.id, target.id)
+				layout.remove(&s.view, w.id)
+				layout.add(&target_space.view, w.id, target.id)
 			}
 			if err := flush(m, s); err != "" {
 				return failure(err)
@@ -462,7 +463,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 				n.windows[a], n.windows[b] = n.windows[b], n.windows[a]
 				return result(flush(m, s))
 			}
-			if !swap(n, other) {
+			if !layout.swap(n, other) {
 				return failure("windows are already in the same stack")
 			}
 			if s.view.layout == .Scroll { s.view.scroll.fill_after_removal = true }
@@ -471,26 +472,26 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			s.view.scroll.reveal = true
 		}
 		if op == "--stack" {
-			if other == n || n.count == MAX_STACK {
+			if other == n || n.count == layout.MAX_STACK {
 				return failure("invalid or full stack")
 			}
-			remove(&s.view, target.id)
-			n = find(s.view.root, w.id)
-			stack_push(n, target.id)
+			layout.remove(&s.view, target.id)
+			n = layout.find(s.view.root, w.id)
+			layout.stack_push(n, target.id)
 		}
 		if op == "--warp" {
 			width := n.column_width
 			size, preset, full := n.column_size, n.column_preset, n.column_full
-			remove(&s.view, w.id)
+			layout.remove(&s.view, w.id)
 			if s.view.layout == .Scroll {
-				if anchor := find(s.view.root, target.id); anchor != nil {
+				if anchor := layout.find(s.view.root, target.id); anchor != nil {
 					anchor.insert_first =
 						operand == "west" || operand == "prev"
 				}
 			}
-			add(&s.view, w.id, target.id)
+			layout.add(&s.view, w.id, target.id)
 			if s.view.layout == .Scroll {
-				if placed := find(s.view.root, w.id); placed != nil {
+				if placed := layout.find(s.view.root, w.id); placed != nil {
 					placed.column_width, placed.column_resolved = width, width
 					placed.column_size, placed.column_preset, placed.column_full =
 						size, preset, full
@@ -541,8 +542,8 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 							(operand == "west" || operand == "north") &&
 						n.split ==
 							((operand == "east" || operand == "west") \
-										? Split.Vertical \
-										: Split.Horizontal))
+										? layout.Split.Vertical \
+										: layout.Split.Horizontal))
 			if matches {
 				n.insert_stack = false; n.insert_first = nil
 				s.view.insertion = 0
@@ -656,7 +657,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		if target != s &&
 		   layout_admitted(w) &&
 		   target.view.layout != .Float &&
-		   !can_add(&target.view) {
+		   !layout.can_add(&target.view) {
 			return failure("target stack is full")
 		}
 		// Tile in the destination first so the move can carry its landing
@@ -666,11 +667,11 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			m,
 			Action{kind = .Space, window = w.id, space = target.id, frame = landing},
 		); err != "" {
-			if staged {remove(&target.view, w.id)}
+			if staged {layout.remove(&target.view, w.id)}
 			return failure(err)
 		}
 		if s != nil {
-			remove(&s.view, w.id)
+			layout.remove(&s.view, w.id)
 		}
 		w.space = target.id
 		w.display = target.display
@@ -678,7 +679,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			w.opening.phase = .Admitted
 		}
 		if layout_admitted(w) && !staged {
-			add(&target.view, w.id)
+			layout.add(&target.view, w.id)
 		}
 		if err := flush(m, target); err != "" {
 			return failure(err)
@@ -730,7 +731,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 	return result(flush(m, s))
 }
 
-replace_window_id :: proc(n: ^Node, old, fresh: u32) {
+replace_window_id :: proc(n: ^layout.Node, old, fresh: u32) {
 	for i in 0 ..< n.count {
 		if n.windows[i] == old {
 			n.windows[i] = fresh
@@ -748,14 +749,14 @@ resize_window :: proc(
 	dx, dy: f64,
 ) -> string {
 	if s := space_by_id(m, w.space);
-	   s != nil && s.view.layout == .Scroll && find(s.view.root, w.id) != nil {
+	   s != nil && s.view.layout == .Scroll && layout.find(s.view.root, w.id) != nil {
 		if (handle != "left" && handle != "right") || dy != 0 {
 			return(
 				"scroll resize supports left/right width changes; use --column-width for an absolute width" \
 			)
 		}
 		delta := handle == "left" ? -dx : dx
-		if err := scroll_set_width(
+		if err := layout.scroll_set_width(
 			&s.view,
 			w.id,
 			fmt.tprintf("rel:%g", delta),
@@ -768,7 +769,7 @@ resize_window :: proc(
 		s := space_by_id(m, w.space)
 		if s != nil &&
 		   s.view.layout != .Float &&
-		   find(s.view.root, w.id) != nil {
+		   layout.find(s.view.root, w.id) != nil {
 			return "absolute resize requires a floating window"
 		}
 		if dx <= 0 || dy <= 0 {
