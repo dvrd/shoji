@@ -1,4 +1,4 @@
-package payload
+package windowserver_payload
 
 // Exact-build WindowServer payload: ordering hook, transaction-table gate and
 // the authenticated Mach gate that Shoji drives. Loaded by `shoji --ws-attach`
@@ -12,7 +12,7 @@ import "base:runtime"
 import "core:sys/posix"
 import mach "core:sys/darwin"
 import loader "../../dock"
-import hook "../window_server"
+import gate "../../windowserver/gate"
 
 foreign import system "system:System"
 
@@ -63,9 +63,9 @@ Install_Result :: struct {
 	barrier_run_state, barrier_suspend_count: i64,
 }
 
-STATUS_PATH :: hook.OBSERVER_STATUS_PATH
-STARTED_PATH :: hook.OBSERVER_STARTED_PATH
-RESPONSE_PATH :: hook.OBSERVER_RESPONSE_PATH
+STATUS_PATH :: gate.OBSERVER_STATUS_PATH
+STARTED_PATH :: gate.OBSERVER_STARTED_PATH
+RESPONSE_PATH :: gate.OBSERVER_RESPONSE_PATH
 
 @(default_calling_convention = "c")
 foreign system {
@@ -93,11 +93,11 @@ observer_events: [OBSERVER_EVENTS]Observer_Event
 
 // ===== Transaction table gate (A2) =====
 // Static model: PKGTransactionCommit dispatches ops through a
-// per-build global table (hook.TABLE_UNSLID), 140 entries of 16 bytes, op
+// per-build global table (gate.TABLE_UNSLID), 140 entries of 16 bytes, op
 // types 1..0x8c. Handlers are PAC-signed pointers called via blraaz (key A,
 // discriminator 0) with a shared PKGTransactionContext* argument.
-TGATE_STATUS_PATH :: hook.TGATE_STATUS_PATH
-TABLE_UNSLID :: hook.TABLE_UNSLID
+TGATE_STATUS_PATH :: gate.TGATE_STATUS_PATH
+TABLE_UNSLID :: gate.TABLE_UNSLID
 TABLE_OP_MAX :: 0x8c
 GATED_OPS :: [14]u64{0x01, 0x03, 0x06, 0x0b, 0x18, 0x19, 0x21, 0x22, 0x2a, 0x33, 0x34, 0x35, 0x36, 0x41}
 GATE_EVENT_FLAG :: 0x54474154 // 'TGAT'
@@ -108,13 +108,13 @@ Gate_Expected_Op :: struct {
 }
 // gate_expected_ops (all 139 named ops) lives in gate_expected.odin.
 
-Tgate_Status :: hook.Tgate_Status
+Tgate_Status :: gate.Tgate_Status
 
 // Unslid address of _WSCurrentSessionBootstrapPort for the selected build.
 // No arguments. Loads the session object and returns the mach_port_t at
 // +0x64. A missing session, or an unset port word, returns 0. The
 // bootstrap_port global is not the session port inside WindowServer.
-WS_SESSION_BP_UNSLID :: hook.SESSION_BOOTSTRAP_PORT_UNSLID
+WS_SESSION_BP_UNSLID :: gate.SESSION_BOOTSTRAP_PORT_UNSLID
 
 gate_originals: [TABLE_OP_MAX + 1]u64
 gate_stubs: u64
@@ -122,11 +122,11 @@ gate_stubs: u64
 // Hold state machine (B2): one bounded slot for both hold scopes. Armed
 // only through the control thread (gate Arm or the file fallback); claims
 // happen on WindowServer threads in the two forwarding callbacks.
-hold: hook.Hold_Slot
+hold: gate.Hold_Slot
 
 // Ordering receipt (C2): once-only completion signal for a watched window's
 // order-in, recorded by the forwarding callback without sleeping.
-watch: hook.Receipt_Slot
+watch: gate.Receipt_Slot
 
 // Mach gate service (B1). The service port is registered with the bootstrap
 // server; commands are accepted only from the registered owner process,
@@ -137,7 +137,7 @@ gate_owner_pid, gate_owner_pidversion: u32
 GATE_CLIENT_CDHASH :: #config(SHOJI_GATE_CLIENT_CDHASH, "")
 GATE_CLIENTS_DIR :: "/Library/GPUBundles/ShojiWindowServerProbe"
 GATE_CLIENTS_PATH :: GATE_CLIENTS_DIR + "/clients"
-gate_clients: [hook.GATE_CLIENTS_LIMIT]u8
+gate_clients: [gate.GATE_CLIENTS_LIMIT]u8
 gate_clients_len: int
 
 // Reread on every HELLO (gate thread only), so a root installer's update
@@ -151,7 +151,7 @@ gate_clients_reload :: proc() {
 	defer posix.close(fd)
 	file: posix.stat_t
 	if posix.fstat(fd, &file) != .OK {return}
-	if !hook.gate_allowlist_trusted(
+	if !gate.gate_allowlist_trusted(
 		u32(file.st_uid), u32(transmute(u16)file.st_mode), i64(file.st_size),
 		u32(dir.st_uid), u32(transmute(u16)dir.st_mode),
 	) {return}
@@ -176,11 +176,11 @@ gate_register_service :: proc(task: u32, slide: u64) {
 	// WindowServer (1100 BOOTSTRAP_NOT_PRIVILEGED), so the client registers
 	// GATE_RENDEZVOUS_NAME and the payload hands over a send right through a
 	// port-descriptor handshake. See mach.odin.
-	if code := hook.gate_mach_port_allocate(task, hook.MACH_PORT_RIGHT_RECEIVE, &gate_mach_port); code != 0 {
+	if code := gate.gate_mach_port_allocate(task, gate.MACH_PORT_RIGHT_RECEIVE, &gate_mach_port); code != 0 {
 		gate_mach_register_code = code
 		return
 	}
-	if code := hook.gate_mach_port_insert_right(task, gate_mach_port, gate_mach_port, hook.MACH_MSG_TYPE_MAKE_SEND); code != 0 {
+	if code := gate.gate_mach_port_insert_right(task, gate_mach_port, gate_mach_port, gate.MACH_MSG_TYPE_MAKE_SEND); code != 0 {
 		gate_mach_register_code = code
 		return
 	}
@@ -208,12 +208,12 @@ gate_register_service :: proc(task: u32, slide: u64) {
 gate_try_handshake :: proc() {
 	if gate_bootstrap_port == 0 {return}
 	client: u32
-	if hook.gate_bootstrap_look_up(gate_bootstrap_port, hook.GATE_RENDEZVOUS_NAME, &client) != 0 {return}
-	defer hook.gate_mach_port_deallocate(loader.mach_task_self(), client)
+	if gate.gate_bootstrap_look_up(gate_bootstrap_port, gate.GATE_RENDEZVOUS_NAME, &client) != 0 {return}
+	defer gate.gate_mach_port_deallocate(loader.mach_task_self(), client)
 	message: struct #align(16) {bytes: [128]u8}
-	n, ok := hook.gate_pack_handshake(message.bytes[:], client, gate_service_send)
+	n, ok := gate.gate_pack_handshake(message.bytes[:], client, gate_service_send)
 	if !ok {return}
-	if hook.gate_mach_msg(&message.bytes[0], hook.MACH_MSG_SEND, u32(n), 0, 0, 0, 0) == 0 {
+	if gate.gate_mach_msg(&message.bytes[0], gate.MACH_MSG_SEND, u32(n), 0, 0, 0, 0) == 0 {
 		intrinsics.atomic_store_explicit(&gate_handshake_sent, 1, .Release)
 	}
 }
@@ -221,41 +221,41 @@ gate_try_handshake :: proc() {
 // Reply to a received request. The kernel leaves the send-once right in
 // msgh_remote_port; msgh_local_port is the gate's own receive right.
 gate_reply :: proc(buffer: ^[128]u8, command: u32, status: i32, data0, data1: u64) {
-	reply_right, right_ok := hook.gate_received_reply_right(buffer[:])
+	reply_right, right_ok := gate.gate_received_reply_right(buffer[:])
 	if !right_ok {return}
-	n, ok := hook.gate_pack_reply(buffer[:], reply_right, command, status, data0, data1)
+	n, ok := gate.gate_pack_reply(buffer[:], reply_right, command, status, data0, data1)
 	if !ok {return}
-	hook.gate_mach_msg(buffer, hook.MACH_MSG_SEND, u32(n), 0, 0, 0, 0)
+	gate.gate_mach_msg(buffer, gate.MACH_MSG_SEND, u32(n), 0, 0, 0, 0)
 }
 
 gate_handle_message :: proc(buffer: ^[128]u8) {
-	request, request_ok := hook.gate_unpack_request(buffer[:])
+	request, request_ok := gate.gate_unpack_request(buffer[:])
 	if !request_ok {
 		gate_reply(buffer, 0, 1, 0, 0)
 		return
 	}
-	token, audit_ok := hook.gate_audit_token(buffer[:])
-	pid := hook.gate_audit_pid(&token)
-	pidversion := hook.gate_audit_pidversion(&token)
-	if request.magic != hook.GATE_MAGIC {
+	token, audit_ok := gate.gate_audit_token(buffer[:])
+	pid := gate.gate_audit_pid(&token)
+	pidversion := gate.gate_audit_pidversion(&token)
+	if request.magic != gate.GATE_MAGIC {
 		gate_reply(buffer, request.command, 1, 0, 0)
 		return
 	}
-	if request.command == u32(hook.Gate_Command.Hello) {gate_clients_reload()}
-	if !audit_ok || !hook.gate_client_identity(&token, GATE_CLIENT_CDHASH, string(gate_clients[:gate_clients_len])) {
+	if request.command == u32(gate.Gate_Command.Hello) {gate_clients_reload()}
+	if !audit_ok || !gate.gate_client_identity(&token, GATE_CLIENT_CDHASH, string(gate_clients[:gate_clients_len])) {
 		gate_reply(buffer, request.command, 4, 0, 0)
 		return
 	}
 	// Owner-death reclaim: a verified-identity HELLO may take over only when
 	// the registered owner is confirmed gone (ESRCH). The new owner starts
 	// with no armed hold or watch inherited from the dead one.
-	if request.command == u32(hook.Gate_Command.Hello) && gate_owner_pid != 0 &&
-	   hook.gate_should_reclaim(gate_owner_pid, gate_owner_pidversion, pid, pidversion, gate_owner_alive(gate_owner_pid)) {
+	if request.command == u32(gate.Gate_Command.Hello) && gate_owner_pid != 0 &&
+	   gate.gate_should_reclaim(gate_owner_pid, gate_owner_pidversion, pid, pidversion, gate_owner_alive(gate_owner_pid)) {
 		gate_owner_pid, gate_owner_pidversion = 0, 0
 		gate_cancel_staged()
-		hook.receipt_cancel(&watch)
+		gate.receipt_cancel(&watch)
 	}
-	status := hook.gate_decide(&gate_owner_pid, &gate_owner_pidversion, audit_ok, pid, pidversion, request.version, request.command)
+	status := gate.gate_decide(&gate_owner_pid, &gate_owner_pidversion, audit_ok, pid, pidversion, request.version, request.command)
 	if status != 0 {
 		gate_reply(buffer, request.command, status, u64(gate_owner_pid), request.arg0)
 		return
@@ -263,28 +263,28 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 	command := request.command
 	arg0 := request.arg0
 	arg1 := request.arg1
-	switch hook.Gate_Command(command) {
+	switch gate.Gate_Command(command) {
 	case .LayoutBegin, .LayoutAdd, .LayoutArm:
-		if target, generation, busy := hook.hold_busy(&hold); busy {
+		if target, generation, busy := gate.hold_busy(&hold); busy {
 			gate_reply(buffer, command, 6, target, u64(generation))
 			return
 		}
-		#partial switch hook.Gate_Command(command) {
+		#partial switch gate.Gate_Command(command) {
 		case .LayoutBegin:
-			hook.layout_begin(&layout_plan)
+			gate.layout_begin(&layout_plan)
 			gate_reply(buffer, command, 0, 0, 0)
 		case .LayoutAdd:
-			x, y := hook.placement_unpack(arg1)
-			if !hook.layout_add(&layout_plan, arg0, x, y) {gate_reply(buffer, command, 1, 0, 0); return}
+			x, y := gate.placement_unpack(arg1)
+			if !gate.layout_add(&layout_plan, arg0, x, y) {gate_reply(buffer, command, 1, 0, 0); return}
 			gate_reply(buffer, command, 0, u64(layout_plan.count), arg0)
 		case .LayoutArm:
 			if observer_timebase.numer == 0 || observer_timebase.denom == 0 {gate_reply(buffer, command, 8, 0, 0); return}
-			if !hook.layout_seal(&layout_plan, arg0, arg1) {gate_reply(buffer, command, 1, 0, 0); return}
+			if !gate.layout_seal(&layout_plan, arg0, arg1) {gate_reply(buffer, command, 1, 0, 0); return}
 			layout_budget_us = arg1
 			layout_generation = hold.generation + 1
 			if layout_generation == 0 {layout_generation = 1}
 			intrinsics.atomic_store_explicit(&layout_complete, 0, .Release)
-			generation, _ := hook.hold_arm(&hold, arg0, hook.HOLD_SCOPE_INLINE)
+			generation, _ := gate.hold_arm(&hold, arg0, gate.HOLD_SCOPE_INLINE)
 			gate_reply(buffer, command, 0, arg0, u64(generation))
 		}
 	case .LayoutStatus:
@@ -294,12 +294,12 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 			gate_reply(buffer, command, layout_result, u64(layout_generation), u64(layout_elapsed_us) << 32 | u64(layout_applied))
 		}
 	case .ArmPlace:
-		x, y := hook.placement_unpack(arg1)
-		if !hook.placement_coordinates_valid(arg0, i64(x), i64(y)) {
+		x, y := gate.placement_unpack(arg1)
+		if !gate.placement_coordinates_valid(arg0, i64(x), i64(y)) {
 			gate_reply(buffer, command, 1, 0, 0)
 			return
 		}
-		if target, generation, busy := hook.hold_busy(&hold); busy {
+		if target, generation, busy := gate.hold_busy(&hold); busy {
 			gate_reply(buffer, command, 6, target, u64(generation))
 			return
 		}
@@ -309,18 +309,18 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 		intrinsics.atomic_store_explicit(&placement_space_only, 0, .Release)
 		intrinsics.atomic_store_explicit(&placement_auto, 0, .Release)
 		intrinsics.atomic_store_explicit(&placement_complete, 0, .Release)
-		generation, _ := hook.hold_arm(&hold, arg0, hook.HOLD_SCOPE_INLINE)
+		generation, _ := gate.hold_arm(&hold, arg0, gate.HOLD_SCOPE_INLINE)
 		gate_reply(buffer, command, 0, arg0, u64(generation))
 	case .SpacePlace, .SpaceApply:
 		// Same staged placement, claimed by the transaction-table channel
 		// (space ops). The shim applies it with the context's connection;
 		// SpaceApply applies on claim instead of waiting for Release.
-		x, y := hook.placement_unpack(arg1)
-		if !hook.placement_coordinates_valid(arg0, i64(x), i64(y)) {
+		x, y := gate.placement_unpack(arg1)
+		if !gate.placement_coordinates_valid(arg0, i64(x), i64(y)) {
 			gate_reply(buffer, command, 1, 0, 0)
 			return
 		}
-		if target, generation, busy := hook.hold_busy(&hold); busy {
+		if target, generation, busy := gate.hold_busy(&hold); busy {
 			gate_reply(buffer, command, 6, target, u64(generation))
 			return
 		}
@@ -328,9 +328,9 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 		placement_generation = hold.generation + 1
 		if placement_generation == 0 {placement_generation = 1}
 		intrinsics.atomic_store_explicit(&placement_space_only, 1, .Release)
-		intrinsics.atomic_store_explicit(&placement_auto, command == u32(hook.Gate_Command.SpaceApply) ? 1 : 0, .Release)
+		intrinsics.atomic_store_explicit(&placement_auto, command == u32(gate.Gate_Command.SpaceApply) ? 1 : 0, .Release)
 		intrinsics.atomic_store_explicit(&placement_complete, 0, .Release)
-		generation, _ := hook.hold_arm(&hold, arg0, hook.HOLD_SCOPE_TABLE)
+		generation, _ := gate.hold_arm(&hold, arg0, gate.HOLD_SCOPE_TABLE)
 		gate_reply(buffer, command, 0, arg0, u64(generation))
 	case .PlacementStatus:
 		if placement_generation == 0 {
@@ -346,11 +346,11 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 			gate_reply(buffer, command, 0, arg0, arg1)
 			return
 		}
-		if target, generation, busy := hook.hold_busy(&hold); busy {
+		if target, generation, busy := gate.hold_busy(&hold); busy {
 			gate_reply(buffer, command, 6, target, u64(generation))
 			return
 		}
-		generation, _ := hook.hold_arm(&hold, arg0, u32(arg1))
+		generation, _ := gate.hold_arm(&hold, arg0, u32(arg1))
 		gate_reply(buffer, command, 0, arg0, u64(generation))
 	case .Release:
 		target, release_status := gate_release(u32(arg0))
@@ -364,11 +364,11 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 		gate_reply(buffer, command, 0, intrinsics.atomic_load_explicit(&observer_calls, .Acquire), 0)
 	case .Watch:
 		if arg0 == 0 {
-			hook.receipt_cancel(&watch)
+			gate.receipt_cancel(&watch)
 			gate_reply(buffer, command, 0, 0, u64(watch.generation))
 			return
 		}
-		generation, armed := hook.receipt_arm(&watch, arg0)
+		generation, armed := gate.receipt_arm(&watch, arg0)
 		if !armed {
 			// A pending watch is busy; cancel it explicitly with Watch 0.
 			gate_reply(buffer, command, 6, u64(watch.target), u64(generation))
@@ -376,7 +376,7 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 		}
 		gate_reply(buffer, command, 0, arg0, u64(generation))
 	case .WatchStatus:
-		receipt_status, receipt_result, receipt_ticks := hook.receipt_take(&watch, u32(arg0))
+		receipt_status, receipt_result, receipt_ticks := gate.receipt_take(&watch, u32(arg0))
 		gate_reply(buffer, command, receipt_status, u64(u32(receipt_result)), receipt_ticks)
 	case .Hello:
 		gate_reply(buffer, command, 0, u64(gate_owner_pid), arg0)
@@ -386,11 +386,11 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 // Release by generation (0 = unconditional). An unclaimed placement or
 // layout completes as cancelled (8) so its status never stays pending.
 gate_release :: proc(generation: u32) -> (target: u64, status: i32) {
-	target, status = hook.hold_release(&hold, generation)
-	if _, _, busy := hook.hold_busy(&hold); !busy && status == 0 && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 {
+	target, status = gate.hold_release(&hold, generation)
+	if _, _, busy := gate.hold_busy(&hold); !busy && status == 0 && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 {
 		finish_placement(8, 0)
 	}
-	if _, _, busy := hook.hold_busy(&hold); !busy && status == 0 && layout_generation == hold.generation && intrinsics.atomic_load_explicit(&layout_complete, .Acquire) == 0 {
+	if _, _, busy := gate.hold_busy(&hold); !busy && status == 0 && layout_generation == hold.generation && intrinsics.atomic_load_explicit(&layout_complete, .Acquire) == 0 {
 		layout_result = 8
 		layout_applied, layout_elapsed_us = 0, 0
 		intrinsics.atomic_store_explicit(&layout_complete, 1, .Release)
@@ -494,7 +494,7 @@ gate_shim_impl :: proc "c" (ctx: rawptr, op: u64) -> u64 {
 	space_armed := intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 &&
 		intrinsics.atomic_load_explicit(&placement_space_only, .Acquire) != 0
 	claimable := !space_armed || (op >= SPACE_OP_MIN && op <= SPACE_OP_MAX)
-	claimed := wid_ok && op <= TABLE_OP_MAX && claimable && hook.hold_try_claim(&hold, u64(wid), false)
+	claimed := wid_ok && op <= TABLE_OP_MAX && claimable && gate.hold_try_claim(&hold, u64(wid), false)
 	if claimed && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_auto, .Acquire) != 0 {
 		// SpaceApply: frame-scale; the owner's own commit is blocked on us.
 		// held=3 matches the C1 automatic layout callback.
@@ -505,10 +505,10 @@ gate_shim_impl :: proc "c" (ctx: rawptr, op: u64) -> u64 {
 		held = 1
 		deadline := gate_deadline(before)
 		for mach_absolute_time() < deadline {
-			if hook.hold_released(&hold, false) {break}
+			if gate.hold_released(&hold, false) {break}
 			usleep(1_000)
 		}
-		if !hook.hold_released(&hold, false) {held = 2}
+		if !gate.hold_released(&hold, false) {held = 2}
 		if placement_generation == hold.generation {
 			if held == 1 {
 				// The transaction context holds its connection
@@ -525,7 +525,7 @@ gate_shim_impl :: proc "c" (ctx: rawptr, op: u64) -> u64 {
 	if op <= TABLE_OP_MAX && gate_originals[op] != 0 {
 		result = gate_call_handler(gate_originals[op], ctx)
 	}
-	if held != 0 {hook.hold_finish(&hold)}
+	if held != 0 {gate.hold_finish(&hold)}
 	after := mach_absolute_time()
 	sequence := intrinsics.atomic_add_explicit(&observer_calls, 1, .Relaxed)
 	event := &observer_events[sequence % OBSERVER_EVENTS]
@@ -557,10 +557,10 @@ gate_write_stub :: proc(slot: u64, op, impl: u64) {
 	(^u64)(uintptr(slot) + 12)^ = impl
 }
 
-install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32, deallocate: hook.Deallocate, protect: Mach_Protect, page_size: u64) {
+install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32, deallocate: gate.Deallocate, protect: Mach_Protect, page_size: u64) {
 	result := Tgate_Status {
-		magic = hook.TGATE_MAGIC,
-		version = hook.TGATE_VERSION,
+		magic = gate.TGATE_MAGIC,
+		version = gate.TGATE_VERSION,
 		status = 1,
 	}
 	result.windowserver_pid = u64(posix.getpid())
@@ -584,9 +584,9 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 		}
 	}
 	// Exact-build gate for the dispatcher instructions that will be redirected.
-	result.dispatch_site = hook.DISPATCH_SITE_UNSLID + slide
+	result.dispatch_site = gate.DISPATCH_SITE_UNSLID + slide
 	site_words := ([^]u32)(uintptr(result.dispatch_site))
-	expected_site := hook.DISPATCH_SITE_WORDS
+	expected_site := gate.DISPATCH_SITE_WORDS
 	if site_words[0] != expected_site[0] || site_words[1] != expected_site[1] {
 		result.status = 10
 		return
@@ -600,7 +600,7 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 	for op, index in GATED_OPS {
 		gate_write_stub(stub_page + u64(index) * 32, op, impl)
 	}
-	hook.hook_sys_icache_invalidate(rawptr(uintptr(stub_page)), uint(page_size))
+	gate.hook_sys_icache_invalidate(rawptr(uintptr(stub_page)), uint(page_size))
 	if code := protect(task, stub_page, page_size, 0, 1 | 4); code != 0 {
 		result.status = 4
 		return
@@ -643,8 +643,8 @@ prepare_table_copy :: proc(
 	page_size: u64,
 	result: ^Tgate_Status,
 ) -> (copy_page: u64, words: [2]u32, ok: bool) {
-	table_bytes := (hook.DISPATCH_OP_LIMIT + 1) * 16
-	#assert(hook.DISPATCH_OP_LIMIT >= TABLE_OP_MAX)
+	table_bytes := (gate.DISPATCH_OP_LIMIT + 1) * 16
+	#assert(gate.DISPATCH_OP_LIMIT >= TABLE_OP_MAX)
 	if table_bytes > page_size {
 		result.status = 4
 		return
@@ -661,7 +661,7 @@ prepare_table_copy :: proc(
 		gate_originals[op] = source[op * 2]
 		target[op * 2] = loader.sign_function(stub_page + u64(index) * 32)
 	}
-	encoded, in_range := hook.encode_adrp_add(result.dispatch_site, copy_page, 24)
+	encoded, in_range := gate.encode_adrp_add(result.dispatch_site, copy_page, 24)
 	if !in_range {
 		result.status = 9
 		return
@@ -680,23 +680,23 @@ prepare_table_copy :: proc(
 redirect_dispatch_site :: proc(
 	task: u32,
 	words: [2]u32,
-	deallocate: hook.Deallocate,
+	deallocate: gate.Deallocate,
 	protect: Mach_Protect,
 	page_size: u64,
 	result: ^Tgate_Status,
 ) -> bool {
 	site := result.dispatch_site
-	expected := hook.DISPATCH_SITE_WORDS
+	expected := gate.DISPATCH_SITE_WORDS
 	page := site & ~(page_size - 1)
 	initial, region_ok := region_info(page, page_size)
 	if !region_ok || initial.protection != 5 {
 		result.status = 10
 		return false
 	}
-	barrier: hook.Execution_Barrier
-	if !hook.enter_execution_barrier_avoiding(&barrier, deallocate, site, 8, 64) {
+	barrier: gate.Execution_Barrier
+	if !gate.enter_execution_barrier_avoiding(&barrier, deallocate, site, 8, 64) {
 		result.status = 6
-		result.threads = u64(hook.barrier_last_count)
+		result.threads = u64(gate.barrier_last_count)
 		return false
 	}
 	result.threads = u64(barrier.count)
@@ -704,7 +704,7 @@ redirect_dispatch_site :: proc(
 	if code != 0 {
 		result.status = 7
 		result.protect_code = i64(code)
-		if !hook.leave_execution_barrier(&barrier) {result.protect_code = -1}
+		if !gate.leave_execution_barrier(&barrier) {result.protect_code = -1}
 		return false
 	}
 	// Storing the unchanged words forces the private copy, as the ordering hook does.
@@ -717,8 +717,8 @@ redirect_dispatch_site :: proc(
 		for {intrinsics.cpu_relax()}
 	}
 	replacement := words
-	written := hook.write_words_via_alias(site, expected[:], replacement[:], deallocate)
-	if !hook.leave_execution_barrier(&barrier) || !written {
+	written := gate.write_words_via_alias(site, expected[:], replacement[:], deallocate)
+	if !gate.leave_execution_barrier(&barrier) || !written {
 		result.status = 8
 		return false
 	}
@@ -776,7 +776,7 @@ region_info :: proc(page, page_size: u64) -> (info: Region_Info, ok: bool) {
 running_in_windowserver :: proc() -> bool {
 	buffer: [4096]u8
 	if proc_pidpath(i32(posix.getpid()), &buffer[0], u32(len(buffer))) <= 0 {return false}
-	return hook.valid_path(string(cstring(&buffer[0])))
+	return gate.valid_path(string(cstring(&buffer[0])))
 }
 
 ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i32, relative: [^]u32, count: u32, flag: u32) -> i32 {
@@ -784,7 +784,7 @@ ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i
 	held := u32(0)
 	// Claim exactly once: a concurrent matching call must not double-hold.
 	if count > 0 && ids != nil && operations != nil && operations[0] == 1 &&
-	   hook.hold_try_claim(&hold, u64(ids[0]), true) {
+	   gate.hold_try_claim(&hold, u64(ids[0]), true) {
 		if layout_generation == hold.generation {
 			// held=3 is an automatic bounded layout callback, distinct from
 			// external release (1) and fail-open timeout (2).
@@ -801,21 +801,21 @@ ordering_observer :: proc "c" (connection: rawptr, ids: [^]u32, operations: [^]i
 				deadline += 72_000_000
 			}
 			for mach_absolute_time() < deadline {
-				if hook.hold_released(&hold, true) {break}
+				if gate.hold_released(&hold, true) {break}
 				usleep(1_000)
 			}
-			if !hook.hold_released(&hold, true) {held = 2}
+			if !gate.hold_released(&hold, true) {held = 2}
 			if placement_generation == hold.generation {
 				if held == 1 {apply_server_placement(connection, ids[0])} else {finish_placement(9, 0)}
 			}
 		}
 	}
 	result := observer_original(connection, ids, operations, relative, count, flag)
-	if held != 0 {hook.hold_finish(&hold)}
+	if held != 0 {gate.hold_finish(&hold)}
 	after := mach_absolute_time()
 	// The receipt fires on the forwarded order-in, never delaying it.
 	if count > 0 && ids != nil && operations != nil && operations[0] == 1 {
-		hook.receipt_fire(&watch, u64(ids[0]), result, after)
+		gate.receipt_fire(&watch, u64(ids[0]), result, after)
 	}
 	sequence := intrinsics.atomic_add_explicit(&observer_calls, 1, .Relaxed)
 	event := &observer_events[sequence % OBSERVER_EVENTS]
@@ -857,7 +857,7 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 				}
 			}
 			gate_try_handshake()
-			code := hook.gate_mach_msg(&buffer.bytes[0], hook.gate_receive_audit_options(), 0, len(buffer.bytes), gate_mach_port, 10, 0)
+			code := gate.gate_mach_msg(&buffer.bytes[0], gate.gate_receive_audit_options(), 0, len(buffer.bytes), gate_mach_port, 10, 0)
 			if code == 0 {
 				gate_handle_message(&buffer.bytes)
 			}
@@ -882,7 +882,7 @@ install_observer :: proc() {
 	info: Image_Info
 	if dladdr(server, &info) == 0 {result.status = 22; return}
 	result.image_base = u64(uintptr(info.base))
-	location, image_ok := hook.inspect_ordering_image(info.base)
+	location, image_ok := gate.inspect_ordering_image(info.base)
 	if !image_ok {result.status = 23; return}
 	entry := location.candidate
 	bytes := ([^]u8)(uintptr(entry))
@@ -890,7 +890,7 @@ install_observer :: proc() {
 	result.slide = location.slide
 	result.candidate = entry
 	for index in 0 ..< 16 {result.entry_bytes[index] = bytes[index]}
-	if !hook.matches_ordering_entry(location, bytes[:16]) {result.status = 24; return}
+	if !gate.matches_ordering_entry(location, bytes[:16]) {result.status = 24; return}
 	if !verify_placement_helpers(location.slide) {result.status = 25; return}
 	page_size := mach.vm_page_size
 	if page_size == 0 || page_size & (page_size - 1) != 0 {result.status = 3; return}
@@ -903,7 +903,7 @@ install_observer :: proc() {
 	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {result.status = 3; return}
 	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)loader.raw_symbol(kernel, "mach_vm_allocate")
-	deallocate := cast(hook.Deallocate)loader.raw_symbol(kernel, "mach_vm_deallocate")
+	deallocate := cast(gate.Deallocate)loader.raw_symbol(kernel, "mach_vm_deallocate")
 	protect := cast(Mach_Protect)loader.raw_symbol(kernel, "mach_vm_protect")
 	if allocate == nil || deallocate == nil || protect == nil {result.status = 3; return}
 
@@ -920,7 +920,7 @@ install_observer :: proc() {
 		return
 	}
 	replacement := loader.strip_function(u64(uintptr(rawptr(ordering_observer))))
-	plan, plan_ok := hook.plan_inline(entry, trampoline, replacement, expected)
+	plan, plan_ok := gate.plan_inline(entry, trampoline, replacement, expected)
 	if !plan_ok {
 		deallocate(task, trampoline, page_size)
 		result.setup_code = 2
@@ -932,7 +932,7 @@ install_observer :: proc() {
 		trampoline_code[index] = plan.displaced[index]
 		trampoline_code[4 + index] = plan.resume_jump[index]
 	}
-	hook.hook_sys_icache_invalidate(rawptr(uintptr(trampoline)), uint(page_size))
+	gate.hook_sys_icache_invalidate(rawptr(uintptr(trampoline)), uint(page_size))
 	region_protect_code := protect(task, trampoline, page_size, 0, 1 | 4)
 	result.allocation_code = i64(region_protect_code)
 	if region_protect_code != 0 {
@@ -949,28 +949,28 @@ install_observer :: proc() {
 	hold = {}
 	watch = {}
 
-	barrier: hook.Execution_Barrier
-	state: hook.Inline_State
+	barrier: gate.Execution_Barrier
+	state: gate.Inline_State
 	parked := false
 	for _ in 0 ..< 64 {
 		entered := false
 		for _ in 0 ..< 64 {
-			if hook.enter_execution_barrier(&barrier, deallocate) {entered = true; break}
+			if gate.enter_execution_barrier(&barrier, deallocate) {entered = true; break}
 			usleep(10_000)
 		}
 		if !entered {
 			result.status = 5
-			result.threads = u64(hook.barrier_last_count)
-			result.setup_code = i64(hook.barrier_last_failure)
-			result.barrier_run_state = i64(hook.barrier_last_run_state)
-			result.barrier_suspend_count = i64(hook.barrier_last_suspend_count)
+			result.threads = u64(gate.barrier_last_count)
+			result.setup_code = i64(gate.barrier_last_failure)
+			result.barrier_run_state = i64(gate.barrier_last_run_state)
+			result.barrier_suspend_count = i64(gate.barrier_last_suspend_count)
 			return
 		}
 		result.threads = u64(barrier.count)
 		result.privatize_code = i64(protect(task, page, page_size, 0, 1 | 2 | 16))
 		if result.privatize_code != 0 {
 			result.status = 6
-			if !hook.leave_execution_barrier(&barrier) {result.barrier_leave_code = 1}
+			if !gate.leave_execution_barrier(&barrier) {result.barrier_leave_code = 1}
 			return
 		}
 		for index in 0 ..< 4 {intrinsics.volatile_store(&entry_words[index], expected[index])}
@@ -981,13 +981,13 @@ install_observer :: proc() {
 			write_file(STATUS_PATH, &result, size_of(result))
 			for {intrinsics.cpu_relax()}
 		}
-		if !hook.write_inline_loop_via_alias(entry, expected, deallocate) {
+		if !gate.write_inline_loop_via_alias(entry, expected, deallocate) {
 			result.install_code = 1
-			if !hook.leave_execution_barrier(&barrier) {result.barrier_leave_code = 1}
+			if !gate.leave_execution_barrier(&barrier) {result.barrier_leave_code = 1}
 			result.status = 8
 			return
 		}
-		if !hook.leave_execution_barrier(&barrier) {
+		if !gate.leave_execution_barrier(&barrier) {
 			result.barrier_leave_code = 1
 			write_file(STATUS_PATH, &result, size_of(result))
 			for {intrinsics.cpu_relax()}
@@ -995,31 +995,31 @@ install_observer :: proc() {
 		for _ in 0 ..< 100_000 {intrinsics.cpu_relax()}
 		reentered := false
 		for _ in 0 ..< 64 {
-			if hook.enter_execution_barrier(&barrier, deallocate) {reentered = true; break}
+			if gate.enter_execution_barrier(&barrier, deallocate) {reentered = true; break}
 			usleep(10_000)
 		}
 		if !reentered {
-			if !hook.restore_inline_loop_via_alias(entry, expected, deallocate) {
+			if !gate.restore_inline_loop_via_alias(entry, expected, deallocate) {
 				write_file(STATUS_PATH, &result, size_of(result))
 				for {intrinsics.cpu_relax()}
 			}
 			result.status = 5
-			result.threads = u64(hook.barrier_last_count)
-			result.setup_code = i64(hook.barrier_last_failure)
-			result.barrier_run_state = i64(hook.barrier_last_run_state)
-			result.barrier_suspend_count = i64(hook.barrier_last_suspend_count)
+			result.threads = u64(gate.barrier_last_count)
+			result.setup_code = i64(gate.barrier_last_failure)
+			result.barrier_run_state = i64(gate.barrier_last_run_state)
+			result.barrier_suspend_count = i64(gate.barrier_last_suspend_count)
 			return
 		}
-		inside, checked := hook.barrier_has_pc_in_range(&barrier, entry + 4, hook.INLINE_PATCH_BYTES - 4)
+		inside, checked := gate.barrier_has_pc_in_range(&barrier, entry + 4, gate.INLINE_PATCH_BYTES - 4)
 		if checked && !inside {
 			parked = true
 			break
 		}
-		if !hook.restore_inline_loop_via_alias(entry, expected, deallocate) {
+		if !gate.restore_inline_loop_via_alias(entry, expected, deallocate) {
 			write_file(STATUS_PATH, &result, size_of(result))
 			for {intrinsics.cpu_relax()}
 		}
-		if !hook.leave_execution_barrier(&barrier) {
+		if !gate.leave_execution_barrier(&barrier) {
 			result.barrier_leave_code = 1
 			write_file(STATUS_PATH, &result, size_of(result))
 			for {intrinsics.cpu_relax()}
@@ -1030,12 +1030,12 @@ install_observer :: proc() {
 		result.status = 8
 		return
 	}
-	if hook.install_inline_after_loop(&state, entry, replacement, expected, deallocate) {
+	if gate.install_inline_after_loop(&state, entry, replacement, expected, deallocate) {
 		result.install_code = 0
 	} else {
 		result.install_code = 3
-		hook.teardown_inline_quiescent(&state)
-		if !hook.restore_inline_loop_via_alias(entry, expected, deallocate) {
+		gate.teardown_inline_quiescent(&state)
+		if !gate.restore_inline_loop_via_alias(entry, expected, deallocate) {
 			write_file(STATUS_PATH, &result, size_of(result))
 			for {intrinsics.cpu_relax()}
 		}
@@ -1045,7 +1045,7 @@ install_observer :: proc() {
 		result.final_current = i64(final.protection)
 		result.final_max = i64(final.max_protection)
 	}
-	if !hook.leave_execution_barrier(&barrier) {result.barrier_leave_code = 1}
+	if !gate.leave_execution_barrier(&barrier) {result.barrier_leave_code = 1}
 	if barrier.active {
 		write_file(STATUS_PATH, &result, size_of(result))
 		for {intrinsics.cpu_relax()}

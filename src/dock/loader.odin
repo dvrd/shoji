@@ -1,6 +1,6 @@
 package dock
 
-import target "../experimental/window_server"
+import gate "../windowserver/gate"
 import "base:intrinsics"
 import "core:fmt"
 import "core:os"
@@ -705,7 +705,7 @@ remote_c_string :: proc(task: u32, address: uintptr) -> string {
 	return strings.clone(string(buf[:n]), context.temp_allocator)
 }
 
-// Experimental WindowServer integration
+// WindowServer injection (used by `shoji --ws-attach`)
 // ------------------------------------------------------------------------
 
 foreign sys {
@@ -721,20 +721,20 @@ windowserver_process_path :: proc(pid: i32) -> string {
 }
 
 inject_windowserver :: proc(payload_path: string, pid: i32) -> string {
-	if !target.valid_pid(pid) {
-		return target.validate_target(pid, "")
+	if !gate.valid_pid(pid) {
+		return gate.validate_target(pid, "")
 	}
 	path, err := filepath.abs(payload_path, context.temp_allocator)
 	if err != nil || !os.exists(path) {
 		return "WindowServer payload library does not exist"
 	}
-	if message := target.validate_target(pid, windowserver_process_path(pid)); message != "" {
+	if message := gate.validate_target(pid, windowserver_process_path(pid)); message != "" {
 		return message
 	}
-	if os.get_env(target.EXPERIMENT_ENV, context.temp_allocator) != "1" {
+	if os.get_env(gate.EXPERIMENT_ENV, context.temp_allocator) != "1" {
 		return fmt.tprintf(
-			"WindowServer injection is disabled; set %s=1 only inside the recoverable test VM",
-			target.EXPERIMENT_ENV,
+			"WindowServer injection is disabled; it runs through `shoji --ws-attach`, which sets %s=1",
+			gate.EXPERIMENT_ENV,
 		)
 	}
 	when ODIN_ARCH == .arm64 && !#config(SHOJI_ODIN_LOADER, false) {

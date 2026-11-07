@@ -290,7 +290,7 @@ State :: struct {
 	event_user: rawptr,
 	workspace_events: Workspace_State,
 	close_focus: Close_Focus_Recovery,
-	// Experimental WindowServer gate (C4). Opt-in; never required by native paths.
+	// WindowServer gate (C4). Opt-in; never required by native paths.
 	ws: Ws_Adapter,
 	mouse: Mouse_State,
 	stack_touch: Stack_Touch_State,

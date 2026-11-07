@@ -1,7 +1,7 @@
 package main
 
 import bridge "../../../../src/dock"
-import hook "../../../../src/experimental/window_server"
+import gate "../../../../src/windowserver/gate"
 import "core:fmt"
 import "core:os"
 import mach "core:sys/darwin"
@@ -70,7 +70,7 @@ main :: proc() {
 	search:
 	for distance := page; distance <= 0x08000000 - 3 * page; distance += page {
 		for below in ([]bool{false, true}) {
-			candidate, valid := hook.nearby_region_base(base, distance, 3 * page, page, below)
+			candidate, valid := gate.nearby_region_base(base, distance, 3 * page, page, below)
 			if valid && allocate(self, &candidate, 3 * page, 0) == 0 {
 				region = candidate
 				break search
@@ -81,11 +81,11 @@ main :: proc() {
 	defer deallocate(self, region, 3 * page)
 	entry, trampoline, relay := region, region + page, region + 2 * page
 	target := ([^]u32)(uintptr(entry))
-	target[0] = hook.PACIBSP
+	target[0] = gate.PACIBSP
 	for index in 1 ..= 5 {target[index] = 0x0b000000 | u32(index << 16)}
 	target[6] = 0x11001c00 // add w0, w0, #7
 	target[7] = 0xd65f0fff // retab
-	plan, ok := hook.plan(entry, trampoline, relay, target[0])
+	plan, ok := gate.plan(entry, trampoline, relay, target[0])
 	if !ok {fail("cannot plan verified branch")}
 	trampoline_code := ([^]u32)(uintptr(trampoline))
 	trampoline_code[0], trampoline_code[1] = plan.displaced, plan.resume_branch
@@ -117,7 +117,7 @@ main :: proc() {
 		alias_code := ([^]u32)(uintptr(alias))
 		alias_code[0] = 0xd503201f
 		shared := target[0] == 0xd503201f
-		alias_code[0] = hook.PACIBSP
+		alias_code[0] = gate.PACIBSP
 		sys_icache_invalidate(rawptr(uintptr(entry)), 4)
 		fmt.printf("writable alias modifies executable mapping: %v\n", shared)
 		if !shared {os.exit(1)}
@@ -129,13 +129,13 @@ main :: proc() {
 	if target_fn(1, 2, 3, 4, 5, 6) != 28 {fail("baseline result incorrect")}
 	// Patch through the reusable alias installer. The executable mapping never
 	// loses execute permission during the transaction.
-	state: hook.Hook_State
-	if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {
+	state: gate.Hook_State
+	if !gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) {
 		fail("cannot install branch through writable alias")
 	}
 	result := target_fn(1, 2, 3, 4, 5, 6)
 	if result != 31 || calls != 1 {fail("forwarding result incorrect", result)}
-	if hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {
+	if gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) {
 		fail("installer accepted an already-patched entry")
 	}
 	alias := state.alias_page
@@ -145,47 +145,47 @@ main :: proc() {
 	patch^ = 0xd503201f // nop
 	sys_icache_invalidate(rawptr(uintptr(entry)), 4)
 	state.deallocate = reject_release
-	if hook.teardown_quiescent(&state) || !state.installed || state.alias_page != alias ||
+	if gate.teardown_quiescent(&state) || !state.installed || state.alias_page != alias ||
 	   patch^ != 0xd503201f || target[0] != 0xd503201f || release_attempts != 0 {
 		fail("conflicting instruction was overwritten or ownership lost")
 	}
 	// Only the fixture knows how to remove its simulated conflict.
 	patch^ = state.branch_word
 	sys_icache_invalidate(rawptr(uintptr(entry)), 4)
-	if hook.teardown_quiescent(&state) || state.installed || state.alias_page != alias || release_attempts != 1 {
+	if gate.teardown_quiescent(&state) || state.installed || state.alias_page != alias || release_attempts != 1 {
 		fail("failed release lost alias ownership")
 	}
 	before_release := calls
 	if target_fn(1, 2, 3, 4, 5, 6) != 28 || calls != before_release {fail("release failure did not restore original")}
-	if hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) || state.alias_page != alias {
+	if gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) || state.alias_page != alias {
 		fail("installer accepted pending alias cleanup")
 	}
 	state.deallocate = deallocate
-	if !hook.teardown_quiescent(&state) || state.alias_page != 0 {fail("release retry failed")}
-	if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {fail("install after cleanup failed")}
+	if !gate.teardown_quiescent(&state) || state.alias_page != 0 {fail("release retry failed")}
+	if !gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) {fail("install after cleanup failed")}
 	// Model the already-restored state left by a failed post-write read-back.
 	// Retry must release the retained alias rather than requiring another branch.
 	patch^ = state.original_word
 	sys_icache_invalidate(rawptr(uintptr(entry)), 4)
-	if !hook.teardown_quiescent(&state) || state.installed || state.alias_page != 0 {
+	if !gate.teardown_quiescent(&state) || state.installed || state.alias_page != 0 {
 		fail("completed-restore retry retained the alias or lost the restored word")
 	}
 	if target_fn(1, 2, 3, 4, 5, 6) != 28 {fail("completed-restore retry did not call original")}
-	if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {fail("install after completed-restore retry failed")}
+	if !gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) {fail("install after completed-restore retry failed")}
 	// This fixture has one thread and no outstanding calls: quiescence is known,
 	// not inferred from an active-call counter that could race with a new entry.
 	for cycle in 0 ..< 100 {
-		if !hook.teardown_quiescent(&state) {fail("alias teardown failed")}
+		if !gate.teardown_quiescent(&state) {fail("alias teardown failed")}
 		if state.alias_page != 0 || state.installed {fail("alias ownership not cleared")}
 		before := calls
 		if target_fn(1, 2, 3, 4, 5, 6) != 28 || calls != before {fail("original not restored")}
-		if !hook.teardown_quiescent(&state) {fail("empty teardown not idempotent")}
-		if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {
+		if !gate.teardown_quiescent(&state) {fail("empty teardown not idempotent")}
+		if !gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) {
 			fail("reinstallation failed", i32(cycle))
 		}
 		if target_fn(1, 2, 3, 4, 5, 6) != 31 || calls != before + 1 {fail("reinstalled forwarding failed")}
 	}
-	if !hook.teardown_quiescent(&state) {fail("final alias teardown failed")}
+	if !gate.teardown_quiescent(&state) {fail("final alias teardown failed")}
 	before_stress := calls
 	workers: [4]posix.pthread_t
 	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(bridge.sign_function(u64(uintptr(rawptr(stress_worker)))))
@@ -199,7 +199,7 @@ main :: proc() {
 		intrinsics.cpu_relax()
 	}
 	if !observed {fail("stress workers did not reach baseline")}
-	if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {fail("concurrent installation failed")}
+	if !gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) {fail("concurrent installation failed")}
 	for thread in workers {
 		if posix.pthread_join(thread, nil) != nil {fail("stress worker join failed")}
 	}
@@ -208,7 +208,7 @@ main :: proc() {
 		fail("concurrent callers returned unexpected results")
 	}
 	// Joining every caller establishes the fixture's teardown barrier.
-	if !hook.teardown_quiescent(&state) {fail("post-stress teardown failed")}
+	if !gate.teardown_quiescent(&state) {fail("post-stress teardown failed")}
 	if target_fn(1, 2, 3, 4, 5, 6) != 28 {fail("post-stress original not restored")}
 	fmt.printf("PASS: 4,000,000 concurrent calls (%d original, %d hooked); conflict/retry and 100 alias lifecycle cycles\n", stress_original, stress_hooked)
 }

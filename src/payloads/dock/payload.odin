@@ -1,9 +1,9 @@
-package payload
+package dock_payload
 
-import m "../native"
+import m "../../native"
 import "base:intrinsics"
 import objc "core:sys/darwin/Foundation"
-import docklib "../dock"
+import docklib "../../dock"
 import "core:fmt"
 import "core:math"
 import "core:time"

@@ -1,4 +1,4 @@
-package experimental
+package gate
 
 // Mach gate protocol (B1). The payload inside WindowServer registers a
 // bootstrap service and answers versioned commands; only the registered

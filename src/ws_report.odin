@@ -12,13 +12,13 @@ import "core:os"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
-import ws "experimental/window_server"
+import gate "windowserver/gate"
 
 WS_PAYLOAD_DIR :: "/Library/GPUBundles/ShojiWindowServerProbe"
 WS_PAYLOAD_PATH :: WS_PAYLOAD_DIR + "/shoji-ws.dylib"
 WS_CLIENTS_PATH :: WS_PAYLOAD_DIR + "/clients"
-WS_RING_PATH :: ws.OBSERVER_RESPONSE_PATH
-WS_SUPPORTED_BUILD :: ws.BUILD
+WS_RING_PATH :: gate.OBSERVER_RESPONSE_PATH
+WS_SUPPORTED_BUILD :: gate.BUILD
 
 // ------------------------------------------------------------------------
 // Event ring (observer V3 snapshot; mirrors lifecycle/report.py)
@@ -117,15 +117,15 @@ ws_clients_evaluate :: proc(
 	dir_uid, dir_mode: u32, self_cdhash: []u8,
 ) -> Ws_Clients_Report {
 	r := Ws_Clients_Report{present = true}
-	r.trusted = ws.gate_allowlist_trusted(file_uid, file_mode, file_size, dir_uid, dir_mode)
+	r.trusted = gate.gate_allowlist_trusted(file_uid, file_mode, file_size, dir_uid, dir_mode)
 	start := 0
 	for i in 0 ..= len(content) {
-		if i == len(content) || ws.gate_allowlist_separator(content[i]) {
+		if i == len(content) || gate.gate_allowlist_separator(content[i]) {
 			if i - start == 40 {r.entries += 1}
 			start = i + 1
 		}
 	}
-	r.listed = r.trusted && len(self_cdhash) == 20 && ws.gate_identity_matches_any(content, self_cdhash, 0)
+	r.listed = r.trusted && len(self_cdhash) == 20 && gate.gate_identity_matches_any(content, self_cdhash, 0)
 	return r
 }
 
@@ -211,7 +211,7 @@ ws_report_cli :: proc(args: []string) -> int {
 	self_ok := csops(i32(posix.getpid()), 5, &self, len(self)) == 0
 	fmt.printf("this binary CDHash: %s\n", self_ok ? hex(self[:]) : "unavailable (unsigned?)")
 	dir: posix.stat_t
-	content, file, clients_ok := read_limited(WS_CLIENTS_PATH, ws.GATE_CLIENTS_LIMIT)
+	content, file, clients_ok := read_limited(WS_CLIENTS_PATH, gate.GATE_CLIENTS_LIMIT)
 	if clients_ok && posix.lstat(WS_PAYLOAD_DIR, &dir) == .OK {
 		r := ws_clients_evaluate(
 			string(content), u32(file.st_uid), u32(transmute(u16)file.st_mode), i64(file.st_size),

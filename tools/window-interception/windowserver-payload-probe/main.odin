@@ -5,7 +5,7 @@ import "base:runtime"
 import "core:sys/posix"
 import mach "core:sys/darwin"
 import loader "../../../src/dock"
-import hook "../../../src/experimental/window_server"
+import gate "../../../src/windowserver/gate"
 
 foreign import system "system:System"
 
@@ -30,7 +30,7 @@ Probe_Result :: struct {
 	flags, threads: u64,
 }
 
-RESULT_PATH :: "/private/tmp/shoji-ws-permission-probe-" + hook.BUILD + ".bin"
+RESULT_PATH :: "/private/tmp/shoji-ws-permission-probe-" + gate.BUILD + ".bin"
 FLAG_SIGNATURE :: u64(1)
 FLAG_PAGE_UNCHANGED :: u64(2)
 FLAG_BARRIER_ENTER :: u64(4)
@@ -79,7 +79,7 @@ region_info :: proc(page, page_size: u64) -> (info: Region_Info, ok: bool) {
 running_in_windowserver :: proc() -> bool {
 	buffer: [4096]u8
 	if proc_pidpath(i32(posix.getpid()), &buffer[0], u32(len(buffer))) <= 0 {return false}
-	return hook.valid_path(string(cstring(&buffer[0])))
+	return gate.valid_path(string(cstring(&buffer[0])))
 }
 
 permission_probe :: proc() {
@@ -96,14 +96,14 @@ permission_probe :: proc() {
 	server := loader.raw_symbol(handle, "SLXServer")
 	info: Image_Info
 	if server == nil || dladdr(server, &info) == 0 {result.status = 2; return}
-	location, image_ok := hook.inspect_ordering_image(info.base)
+	location, image_ok := gate.inspect_ordering_image(info.base)
 	if !image_ok {result.status = 2; return}
 	result.flags |= FLAG_IMAGE
 	result.uuid = location.uuid
 	result.slide = location.slide
 	result.candidate = location.candidate
 	bytes := ([^]u8)(uintptr(location.candidate))
-	if !hook.matches_ordering_entry(location, bytes[:16]) {result.status = 2; return}
+	if !gate.matches_ordering_entry(location, bytes[:16]) {result.status = 2; return}
 	result.flags |= FLAG_SIGNATURE
 	page_size := mach.vm_page_size
 	if page_size == 0 || page_size & (page_size - 1) != 0 {result.status = 3; return}
@@ -121,15 +121,15 @@ permission_probe :: proc() {
 	kernel := loader.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {result.status = 3; return}
 	protect := cast(proc "c" (_: u32, _: u64, _: u64, _: i32, _: i32) -> i32)loader.raw_symbol(kernel, "mach_vm_protect")
-	deallocate := cast(hook.Deallocate)loader.raw_symbol(kernel, "mach_vm_deallocate")
+	deallocate := cast(gate.Deallocate)loader.raw_symbol(kernel, "mach_vm_deallocate")
 	if protect == nil || deallocate == nil {result.status = 3; return}
 	result.status = 0
 
-	barrier: hook.Execution_Barrier
-	if !hook.enter_execution_barrier(&barrier, deallocate) {
+	barrier: gate.Execution_Barrier
+	if !gate.enter_execution_barrier(&barrier, deallocate) {
 		result.status = 4
 		result.barrier_leave_code = 1
-		if barrier.active && hook.leave_execution_barrier(&barrier) {result.barrier_leave_code = 0}
+		if barrier.active && gate.leave_execution_barrier(&barrier) {result.barrier_leave_code = 0}
 		if !barrier.active {
 			result.flags |= FLAG_BARRIER_LEAVE
 			result.barrier_leave_code = 0
@@ -155,10 +155,10 @@ permission_probe :: proc() {
 		if result.status != 0 {break}
 		result.privatize_code = i64(protect(task, result.page, page_size, 0, 1 | 2 | 16))
 		if result.privatize_code != 0 {result.status = 5; break}
-		intrinsics.volatile_store((^u32)(uintptr(location.candidate)), hook.PACIBSP)
+		intrinsics.volatile_store((^u32)(uintptr(location.candidate)), gate.PACIBSP)
 		result.execute_code = i64(protect(task, result.page, page_size, 0, region.protection))
 		if result.execute_code != 0 {result.status = 6; unrecoverable = true; break}
-		result.alias_remap_code = i64(hook.hook_mach_vm_remap(task, &alias, page_size, 0, 1,
+		result.alias_remap_code = i64(gate.hook_mach_vm_remap(task, &alias, page_size, 0, 1,
 			task, result.page, 0, &alias_current, &alias_maximum, 1))
 		if result.alias_remap_code != 0 {result.status = 7; break}
 		result.alias_protect_code = i64(protect(task, alias, page_size, 0, 1 | 2))
@@ -201,7 +201,7 @@ permission_probe :: proc() {
 	if page_unchanged {
 		result.flags |= FLAG_PAGE_UNCHANGED
 	} else if result.status == 0 {result.status = 11}
-	if !hook.leave_execution_barrier(&barrier) {
+	if !gate.leave_execution_barrier(&barrier) {
 		result.barrier_leave_code = 1
 		if result.status == 0 {result.status = 12}
 	} else {

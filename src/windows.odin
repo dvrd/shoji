@@ -194,7 +194,7 @@ Manager :: struct {
 	},
 	backend: Backend,
 	backend_user: rawptr,
-	// Experimental frame-atomic position batch (C1). Called with backend_user;
+	// Frame-atomic position batch through the WindowServer gate (C1). Called with backend_user;
 	// true only when every move was applied. Nil → per-window frames.
 	layout_batch: Layout_Batch,
 	// Daemon-only WindowServer diagnostics (`debug ws`); nil elsewhere.

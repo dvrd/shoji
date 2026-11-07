@@ -3,7 +3,7 @@ package tests
 import "core:testing"
 import "core:time"
 import shoji "../src"
-import ws "../src/experimental/window_server"
+import gate "../src/windowserver/gate"
 
 @(test)
 ws_gate_classification_only_rises_with_evidence :: proc(t: ^testing.T) {
@@ -33,7 +33,7 @@ Fake_Gate :: struct {
 	data1:     [32]u64,
 	count:     int,
 	calls:     int,
-	commands:  [32]ws.Gate_Command,
+	commands:  [32]gate.Gate_Command,
 	fail_at:   int, // 1-based call index whose transport fails; 0 = never
 	bad_magic: bool,
 }
@@ -45,15 +45,15 @@ fake_push :: proc(g: ^Fake_Gate, status: i32, data0: u64 = 0, data1: u64 = 0) {
 	g.count += 1
 }
 
-fake_exchange :: proc(user: rawptr, command: ws.Gate_Command, arg0, arg1: u64) -> (ws.Gate_Reply, bool) {
+fake_exchange :: proc(user: rawptr, command: gate.Gate_Command, arg0, arg1: u64) -> (gate.Gate_Reply, bool) {
 	g := (^Fake_Gate)(user)
 	index := g.calls
 	g.commands[index] = command
 	g.calls += 1
 	if g.fail_at == g.calls || index >= g.count {return {}, false}
-	magic := u32(ws.GATE_REPLY_MAGIC)
+	magic := u32(gate.GATE_REPLY_MAGIC)
 	if g.bad_magic {magic = 0}
-	return {magic, ws.GATE_VERSION, u32(command), g.statuses[index], g.data0[index], g.data1[index]}, true
+	return {magic, gate.GATE_VERSION, u32(command), g.statuses[index], g.data0[index], g.data1[index]}, true
 }
 
 fake_adapter :: proc(g: ^Fake_Gate) -> shoji.Ws_Adapter {
@@ -122,13 +122,13 @@ ws_adapter_space_place_round_trip :: proc(t: ^testing.T) {
 	g: Fake_Gate
 	fake_push(&g, 0) // hello
 	fake_push(&g, 0, 42, 5) // space place → generation 5
-	fake_push(&g, 0, 5, ws.placement_pack(-600, 400)) // placement status
+	fake_push(&g, 0, 5, gate.placement_pack(-600, 400)) // placement status
 	a := fake_adapter(&g)
 	testing.expect_value(t, a.state, shoji.Ws_Adapter_State.Serving)
 	generation, handled := shoji.ws_space_place(&a, 42, -600, 400)
 	testing.expect(t, handled)
 	testing.expect_value(t, generation, 5)
-	testing.expect_value(t, g.commands[1], ws.Gate_Command.SpacePlace)
+	testing.expect_value(t, g.commands[1], gate.Gate_Command.SpacePlace)
 	placement, ok := shoji.ws_placement_status(&a)
 	testing.expect(t, ok)
 	testing.expect_value(t, placement.status, 0)
@@ -201,7 +201,7 @@ ws_adapter_layout_stages_and_arms :: proc(t: ^testing.T) {
 	generation, handled := shoji.ws_layout_stage(&a, {{10, 0, 0}, {11, 800, 0}}, 99, 8000)
 	testing.expect(t, handled)
 	testing.expect_value(t, generation, 3)
-	testing.expect_value(t, g.commands[4], ws.Gate_Command.LayoutArm)
+	testing.expect_value(t, g.commands[4], gate.Gate_Command.LayoutArm)
 	result, ok := shoji.ws_layout_status(&a)
 	testing.expect(t, ok)
 	testing.expect_value(t, result.applied, 2)
@@ -213,7 +213,7 @@ ws_adapter_layout_rejects_before_any_call :: proc(t: ^testing.T) {
 	g: Fake_Gate
 	fake_push(&g, 0)
 	a := fake_adapter(&g)
-	too_many: [ws.LAYOUT_LIMIT + 1]shoji.Ws_Layout_Move
+	too_many: [gate.LAYOUT_LIMIT + 1]shoji.Ws_Layout_Move
 	for &move, index in too_many {move = {u32(index + 1), 0, 0}}
 	cases := []struct {
 		moves:  []shoji.Ws_Layout_Move,
@@ -291,12 +291,12 @@ ws_space_move_places_inside_the_commit :: proc(t: ^testing.T) {
 	g: Fake_Gate
 	fake_push(&g, 0) // hello
 	fake_push(&g, 0, 42, 9) // SpaceApply → generation 9
-	fake_push(&g, 0, 9, ws.placement_pack(500, 30)) // placement applied
+	fake_push(&g, 0, 9, gate.placement_pack(500, 30)) // placement applied
 	a := fake_adapter(&g)
 	d: Fake_Dock
 	move := shoji.ws_space_move(&a, 42, 4, 1, 500, 30, fake_dock_send, &d)
 	testing.expect(t, move.moved && move.placed)
-	testing.expect_value(t, g.commands[1], ws.Gate_Command.SpaceApply)
+	testing.expect_value(t, g.commands[1], gate.Gate_Command.SpaceApply)
 	testing.expect_value(t, d.target, 4)
 	testing.expect_value(t, d.source, 1)
 	testing.expect_value(t, d.wid, 42)
@@ -314,7 +314,7 @@ ws_space_move_unclaimed_stage_is_released :: proc(t: ^testing.T) {
 	d: Fake_Dock
 	move := shoji.ws_space_move(&a, 42, 4, 1, 500, 30, fake_dock_send, &d)
 	testing.expect(t, move.moved && !move.placed)
-	testing.expect_value(t, g.commands[3], ws.Gate_Command.Release)
+	testing.expect_value(t, g.commands[3], gate.Gate_Command.Release)
 }
 
 @(test)
@@ -327,7 +327,7 @@ ws_space_move_dock_failure_releases_and_falls_back :: proc(t: ^testing.T) {
 	d := Fake_Dock{err = "Dock payload lacks transactional Space moves"}
 	move := shoji.ws_space_move(&a, 42, 4, 1, 500, 30, fake_dock_send, &d)
 	testing.expect(t, !move.moved && !move.placed)
-	testing.expect_value(t, g.commands[2], ws.Gate_Command.Release)
+	testing.expect_value(t, g.commands[2], gate.Gate_Command.Release)
 }
 
 @(test)
@@ -389,7 +389,7 @@ ws_layout_run_unclaimed_plan_is_released :: proc(t: ^testing.T) {
 	a := fake_adapter(&g)
 	order_count = 0
 	testing.expect(t, !shoji.ws_layout_run(&a, {{10, 0, 0}}, 99, 7, fake_order))
-	testing.expect_value(t, g.commands[5], ws.Gate_Command.Release)
+	testing.expect_value(t, g.commands[5], gate.Gate_Command.Release)
 	// Partial application is not success either.
 	g2: Fake_Gate
 	fake_push(&g2, 0)
@@ -442,7 +442,7 @@ ws_focus_receipt_resolves_on_later_ticks_without_blocking :: proc(t: ^testing.T)
 	testing.expect_value(t, window, 42)
 	testing.expect_value(t, outcome, shoji.Ws_Receipt.Fired)
 	testing.expect_value(t, waited, 30 * time.Millisecond)
-	testing.expect_value(t, g.commands[3], ws.Gate_Command.Watch) // watch cancelled
+	testing.expect_value(t, g.commands[3], gate.Gate_Command.Watch) // watch cancelled
 	_, _, _, again := shoji.ws_focus_tick(&a, time.time_add(start, 40 * time.Millisecond))
 	testing.expect(t, !again) // nothing armed: no gate call
 	testing.expect_value(t, g.calls, 4)
@@ -464,5 +464,5 @@ ws_focus_receipt_times_out_and_cancel_supersedes :: proc(t: ^testing.T) {
 	testing.expect_value(t, shoji.ws_focus_cancel(&a), 0) // nothing left
 	shoji.ws_focus_pending(&a, 8, 43, start)
 	testing.expect_value(t, shoji.ws_focus_cancel(&a), 43)
-	testing.expect_value(t, g.commands[3], ws.Gate_Command.Watch)
+	testing.expect_value(t, g.commands[3], gate.Gate_Command.Watch)
 }

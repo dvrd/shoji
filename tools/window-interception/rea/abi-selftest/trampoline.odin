@@ -1,7 +1,7 @@
 package main
 
 import bridge "../../../../src/dock"
-import hook "../../../../src/experimental/window_server"
+import gate "../../../../src/windowserver/gate"
 import "core:fmt"
 import "core:os"
 import "core:sys/posix"
@@ -54,14 +54,14 @@ concurrent_failure :: proc(reason: string, barrier_active: bool) -> bool {
 }
 
 run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ordering_Callback,
-	protect: Trampoline_Protect, immediate_exit: Trampoline_Exit, deallocate: hook.Deallocate,
+	protect: Trampoline_Protect, immediate_exit: Trampoline_Exit, deallocate: gate.Deallocate,
 	initial_region: Trampoline_Region, inline_mode: bool, expected: [4]u32) -> bool {
-	state: hook.Hook_State
-	inline_state: hook.Inline_State
+	state: gate.Hook_State
+	inline_state: gate.Inline_State
 	defer {
-		if inline_mode {hook.teardown_inline_quiescent(&inline_state)} else {hook.teardown_quiescent(&state)}
+		if inline_mode {gate.teardown_inline_quiescent(&inline_state)} else {gate.teardown_quiescent(&state)}
 	}
-	barrier: hook.Execution_Barrier
+	barrier: gate.Execution_Barrier
 	workers: [4]posix.pthread_t
 	started := 0
 	defer {
@@ -70,7 +70,7 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 		trampoline_original = nil
 	}
 	defer {
-		if barrier.active && !hook.leave_execution_barrier(&barrier) {immediate_exit(1)}
+		if barrier.active && !gate.leave_execution_barrier(&barrier) {immediate_exit(1)}
 	}
 	intrinsics.atomic_store_explicit(&concurrent_start, 0, .Relaxed)
 	intrinsics.atomic_store_explicit(&concurrent_stop, 0, .Relaxed)
@@ -95,9 +95,9 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 	   intrinsics.atomic_load_explicit(&forward_calls, .Acquire) != 0 {
 		return concurrent_failure("baseline calls/errors/forwarding", barrier.active)
 	}
-	if !hook.enter_execution_barrier(&barrier, deallocate) {
+	if !gate.enter_execution_barrier(&barrier, deallocate) {
 		fmt.eprintf("barrier diagnostics: run_state=%d suspend_count=%d\n",
-			hook.barrier_last_run_state, hook.barrier_last_suspend_count)
+			gate.barrier_last_run_state, gate.barrier_last_suspend_count)
 		return concurrent_failure("thread barrier enter", barrier.active)
 	}
 	calls_before := intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire)
@@ -111,43 +111,43 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 	if inline_mode {
 		for index in 0 ..< 4 {intrinsics.volatile_store(&entry_patch[index], expected[index])}
 	} else {
-		intrinsics.volatile_store(&entry_patch[0], hook.PACIBSP)
+		intrinsics.volatile_store(&entry_patch[0], gate.PACIBSP)
 	}
 	if protect(task, base, mach.vm_page_size, 0, initial_region.protection) != 0 {immediate_exit(1)}
 	installed := false
 	if inline_mode {
-		if !hook.write_inline_loop_via_alias(entry, expected, deallocate) {
+		if !gate.write_inline_loop_via_alias(entry, expected, deallocate) {
 			return concurrent_failure("inline parking branch", barrier.active)
 		}
-		if !hook.leave_execution_barrier(&barrier) {
+		if !gate.leave_execution_barrier(&barrier) {
 			return concurrent_failure("thread barrier parking leave", barrier.active)
 		}
 		for _ in 0 ..< 100_000 {intrinsics.cpu_relax()}
 		parked := false
 		for _ in 0 ..< 64 {
-			if !hook.enter_execution_barrier(&barrier, deallocate) {
+			if !gate.enter_execution_barrier(&barrier, deallocate) {
 				return concurrent_failure("thread barrier re-enter", barrier.active)
 			}
 			calls_before = intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire)
 			for _ in 0 ..< 10_000 {intrinsics.cpu_relax()}
-			inside, checked := hook.barrier_has_pc_in_range(&barrier, entry + 4, hook.INLINE_PATCH_BYTES - 4)
+			inside, checked := gate.barrier_has_pc_in_range(&barrier, entry + 4, gate.INLINE_PATCH_BYTES - 4)
 			if checked && !inside && intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire) == calls_before {
 				parked = true
 				break
 			}
-			if !hook.leave_execution_barrier(&barrier) {
+			if !gate.leave_execution_barrier(&barrier) {
 				return concurrent_failure("thread barrier retry leave", barrier.active)
 			}
 		}
 		if !parked {return concurrent_failure("inline callers did not park", barrier.active)}
-		installed = hook.install_inline_after_loop(&inline_state, entry, relay, expected, deallocate)
+		installed = gate.install_inline_after_loop(&inline_state, entry, relay, expected, deallocate)
 	} else {
-		installed = hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate)
+		installed = gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate)
 	}
 	if !installed {
 		return concurrent_failure("install", barrier.active)
 	}
-	if !hook.leave_execution_barrier(&barrier) {
+	if !gate.leave_execution_barrier(&barrier) {
 		return concurrent_failure("thread barrier leave", barrier.active)
 	}
 	observed := false
@@ -162,9 +162,9 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 	trampoline_original = nil
 	teardown_ok := false
 	if inline_mode {
-		teardown_ok = hook.teardown_inline_quiescent(&inline_state)
+		teardown_ok = gate.teardown_inline_quiescent(&inline_state)
 	} else {
-		teardown_ok = hook.teardown_quiescent(&state)
+		teardown_ok = gate.teardown_quiescent(&state)
 	}
 	if !teardown_ok {
 		return concurrent_failure("teardown", barrier.active)
@@ -202,7 +202,7 @@ trampoline_region :: proc(page, page_size: u64) -> (info: Trampoline_Region, ok:
 	return {}, false
 }
 
-diagnose_alias :: proc(entry: u64, deallocate: hook.Deallocate) {
+diagnose_alias :: proc(entry: u64, deallocate: gate.Deallocate) {
 	page := mach.vm_page_size
 	base := entry & ~(page - 1)
 	self := bridge.mach_task_self()
@@ -232,7 +232,7 @@ run_inline_trampoline :: proc(callback: Ordering_Callback) {
 		entry, expected[0], expected[1], expected[2], expected[3], replacement)
 	if code := shoji_abi_run(callback); code != 0 {trampoline_fail("direct forwarding baseline", code)}
 	if code := shoji_abi_run(target_callback); code != 0 {trampoline_fail("native baseline", code)}
-	if expected[0] != hook.PACIBSP {trampoline_fail("native target does not start with PACIBSP")}
+	if expected[0] != gate.PACIBSP {trampoline_fail("native target does not start with PACIBSP")}
 	fmt.eprintln("inline stage: baselines")
 
 	kernel := bridge.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
@@ -252,7 +252,7 @@ run_inline_trampoline :: proc(callback: Ordering_Callback) {
 	trampoline: u64
 	if code := allocate(self, &trampoline, page, 1); code != 0 {trampoline_fail("trampoline allocation", code)}
 	defer deallocate(self, trampoline, page)
-	plan, plan_ok := hook.plan_inline(entry, trampoline, replacement, expected)
+	plan, plan_ok := gate.plan_inline(entry, trampoline, replacement, expected)
 	if !plan_ok {trampoline_fail("cannot plan inline absolute jump")}
 	code := ([^]u32)(uintptr(trampoline))
 	for index in 0 ..< 4 {
@@ -276,9 +276,9 @@ run_inline_trampoline :: proc(callback: Ordering_Callback) {
 	fmt.eprintln("inline stage: privatized")
 
 	for cycle in 0 ..< 16 {
-		state: hook.Inline_State
-		if !hook.install_inline_via_alias(&state, entry, replacement, expected, deallocate) {
-			hook.teardown_inline_quiescent(&state)
+		state: gate.Inline_State
+		if !gate.install_inline_via_alias(&state, entry, replacement, expected, deallocate) {
+			gate.teardown_inline_quiescent(&state)
 			trampoline_fail("inline installation", i32(cycle))
 		}
 		if cycle == 0 {fmt.eprintln("inline stage: installed")}
@@ -288,7 +288,7 @@ run_inline_trampoline :: proc(callback: Ordering_Callback) {
 		if cycle == 0 {fmt.eprintln("inline stage: invocation returned")}
 		if result != 0 {trampoline_fail("C -> Odin -> inline trampoline -> C", result)}
 		if cycle == 0 {fmt.eprintln("inline stage: teardown")}
-		if !hook.teardown_inline_quiescent(&state) {trampoline_fail("inline quiescent teardown", i32(cycle))}
+		if !gate.teardown_inline_quiescent(&state) {trampoline_fail("inline quiescent teardown", i32(cycle))}
 		if cycle == 0 {fmt.eprintln("inline stage: teardown returned")}
 		for index in 0 ..< 4 {if entry_words[index] != expected[index] {trampoline_fail("inline entry restoration", i32(cycle))}}
 	}
@@ -322,7 +322,7 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	if code := shoji_abi_run(callback); code != 0 {
 		trampoline_fail("direct forwarding baseline", code)
 	}
-	if (^u32)(uintptr(entry))^ != hook.PACIBSP {
+	if (^u32)(uintptr(entry))^ != gate.PACIBSP {
 		trampoline_fail("native target does not start with PACIBSP")
 	}
 	fmt.eprintln("trampoline stage: native baseline")
@@ -349,7 +349,7 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	search:
 	for distance := page; distance <= 0x08000000 - 2 * page; distance += page {
 		for below in ([]bool{false, true}) {
-			candidate, valid := hook.nearby_region_base(base, distance, 2 * page, page, below)
+			candidate, valid := gate.nearby_region_base(base, distance, 2 * page, page, below)
 			if valid && allocate(self, &candidate, 2 * page, 0) == 0 {
 				region = candidate
 				break search
@@ -359,7 +359,7 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	if region == 0 {trampoline_fail("no nearby trampoline/relay allocation")}
 	defer deallocate(self, region, 2 * page)
 	trampoline, relay := region, region + page
-	plan, ok := hook.plan(entry, trampoline, relay, hook.PACIBSP)
+	plan, ok := gate.plan(entry, trampoline, relay, gate.PACIBSP)
 	if !ok {trampoline_fail("cannot plan native branch")}
 	trampoline_code := ([^]u32)(uintptr(trampoline))
 	trampoline_code[0], trampoline_code[1] = plan.displaced, plan.resume_branch
@@ -378,7 +378,7 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	fmt.eprintln("trampoline stage: privatize")
 	privatize_code := protect(self, base, page, 0, 1 | 2 | 16)
 	if privatize_code != 0 {immediate_exit(1)}
-	intrinsics.volatile_store((^u32)(uintptr(entry)), hook.PACIBSP)
+	intrinsics.volatile_store((^u32)(uintptr(entry)), gate.PACIBSP)
 	// No call through this image's stubs is safe here: they share the target
 	// page. Only inline storage and raw libsystem calls may run before RX is back.
 	execute_code := protect(self, base, page, 0, initial_region.protection)
@@ -389,12 +389,12 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	}
 	fmt.printf("owned native text: privatized current=0x%x maximum=0x%x\n", private_region.protection, private_region.max_protection)
 
-	state: hook.Hook_State
-	defer hook.teardown_quiescent(&state)
+	state: gate.Hook_State
+	defer gate.teardown_quiescent(&state)
 	for cycle in 0 ..< 16 {
 		if cycle == 0 {fmt.eprintln("trampoline stage: install")}
-		if !hook.install_entry_via_alias(&state, entry, relay, hook.PACIBSP, deallocate) {
-			hook.teardown_quiescent(&state)
+		if !gate.install_entry_via_alias(&state, entry, relay, gate.PACIBSP, deallocate) {
+			gate.teardown_quiescent(&state)
 			diagnose_alias(entry, deallocate)
 			trampoline_fail("installation", i32(cycle))
 		}
@@ -404,12 +404,12 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 		trampoline_original = nil
 		if cycle == 0 {fmt.eprintln("trampoline stage: invocation returned")}
 		if code != 0 {trampoline_fail("C -> Odin -> trampoline -> C", code)}
-		if !hook.teardown_quiescent(&state) {trampoline_fail("quiescent teardown", i32(cycle))}
-		if state.alias_page != 0 || (^u32)(uintptr(entry))^ != hook.PACIBSP {
+		if !gate.teardown_quiescent(&state) {trampoline_fail("quiescent teardown", i32(cycle))}
+		if state.alias_page != 0 || (^u32)(uintptr(entry))^ != gate.PACIBSP {
 			trampoline_fail("entry or alias restoration", i32(cycle))
 		}
 	}
-	old_expected := [4]u32{hook.PACIBSP, 0, 0, 0}
+	old_expected := [4]u32{gate.PACIBSP, 0, 0, 0}
 	if !run_concurrent(entry, base, trampoline, relay, target_callback, protect, immediate_exit, deallocate, initial_region, false, old_expected) {
 		trampoline_fail("concurrent barrier/forwarding")
 	}

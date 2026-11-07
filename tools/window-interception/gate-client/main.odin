@@ -9,7 +9,7 @@ import "core:sys/posix"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import hook "../../../src/experimental/window_server"
+import gate "../../../src/windowserver/gate"
 
 foreign import sls "system:SkyLight.framework"
 
@@ -92,7 +92,7 @@ handle_line :: proc(state: ^Controller_State, raw: []u8) -> (shutdown: bool, res
 	id, verb := fields[0], fields[1]
 	switch verb {
 	case "layout-begin", "layout-status":
-		command := hook.Gate_Command.LayoutBegin
+		command := gate.Gate_Command.LayoutBegin
 		if verb == "layout-status" {command = .LayoutStatus}
 		p, ok := exchange(state.task, state.service, command, 0, 0)
 		if !ok {return false, fmt.tprintf("%s status=1 err=exchange", id)}
@@ -102,8 +102,8 @@ handle_line :: proc(state: ^Controller_State, raw: []u8) -> (shutdown: bool, res
 		wid, wok := strconv.parse_u64(fields[2])
 		x, xok := strconv.parse_i64(fields[3])
 		y, yok := strconv.parse_i64(fields[4])
-		if !wok || !xok || !yok || !hook.placement_coordinates_valid(wid, x, y) {return false, fmt.tprintf("%s status=1 err=args", id)}
-		p, ok := exchange(state.task, state.service, .LayoutAdd, wid, hook.placement_pack(i32(x), i32(y)))
+		if !wok || !xok || !yok || !gate.placement_coordinates_valid(wid, x, y) {return false, fmt.tprintf("%s status=1 err=args", id)}
+		p, ok := exchange(state.task, state.service, .LayoutAdd, wid, gate.placement_pack(i32(x), i32(y)))
 		if !ok {return false, fmt.tprintf("%s status=1 err=exchange", id)}
 		return false, fmt.tprintf("%s status=%d count=%d target=%d", id, p.status, p.data0, p.data1)
 	case "layout-arm":
@@ -119,16 +119,16 @@ handle_line :: proc(state: ^Controller_State, raw: []u8) -> (shutdown: bool, res
 		wid, wok := strconv.parse_u64(fields[2])
 		x, xok := strconv.parse_i64(fields[3])
 		y, yok := strconv.parse_i64(fields[4])
-		if !wok || !xok || !yok || !hook.placement_coordinates_valid(wid, x, y) {return false, fmt.tprintf("%s status=1 err=args", id)}
-		command := hook.Gate_Command.ArmPlace
+		if !wok || !xok || !yok || !gate.placement_coordinates_valid(wid, x, y) {return false, fmt.tprintf("%s status=1 err=args", id)}
+		command := gate.Gate_Command.ArmPlace
 		if verb == "space-place" {command = .SpacePlace}
-		p, ok := exchange(state.task, state.service, command, wid, hook.placement_pack(i32(x), i32(y)))
+		p, ok := exchange(state.task, state.service, command, wid, gate.placement_pack(i32(x), i32(y)))
 		if !ok {return false, fmt.tprintf("%s status=1 err=exchange", id)}
 		return false, fmt.tprintf("%s status=%d target=%d gen=%d", id, p.status, p.data0, p.data1)
 	case "placement":
 		p, ok := exchange(state.task, state.service, .PlacementStatus, 0, 0)
 		if !ok {return false, fmt.tprintf("%s status=1 err=exchange", id)}
-		x, y := hook.placement_unpack(p.data1)
+		x, y := gate.placement_unpack(p.data1)
 		return false, fmt.tprintf("%s status=%d gen=%d x=%d y=%d", id, p.status, p.data0, x, y)
 	case "arm":
 		if len(fields) < 4 {return false, fmt.tprintf("%s status=1 err=args", id)}
@@ -146,7 +146,7 @@ handle_line :: proc(state: ^Controller_State, raw: []u8) -> (shutdown: bool, res
 		if !ok {return false, fmt.tprintf("%s status=1 err=exchange", id)}
 		return false, fmt.tprintf("%s status=%d target=%d gen=%d", id, p.status, p.data0, p.data1)
 	case "status", "dump":
-		command := hook.Gate_Command.Status
+		command := gate.Gate_Command.Status
 		if verb == "dump" {command = .Dump}
 		p, ok := exchange(state.task, state.service, command, 0, 0)
 		if !ok {return false, fmt.tprintf("%s status=1 err=exchange", id)}
@@ -218,7 +218,7 @@ run_serve :: proc(task, service: u32) -> int {
 		// A WindowServer restart leaves a dead name. Stop serving the shared
 		// driver files instead of competing with the replacement controller.
 		port_type: u32
-		if hook.gate_mach_port_type(task, service, &port_type) != 0 || port_type & hook.MACH_PORT_TYPE_SEND == 0 {
+		if gate.gate_mach_port_type(task, service, &port_type) != 0 || port_type & gate.MACH_PORT_TYPE_SEND == 0 {
 			fmt.eprintln("gate disconnected; controller exiting")
 			return 1
 		}
@@ -271,8 +271,8 @@ connect_handoff :: proc(task: u32) -> (service: u32, ok: bool) {
 	request: [32]u8
 	n := len(strconv.write_int(request[:], i64(pid), 10))
 	request[n] = '\n'
-	request_path := fmt.tprintf("%s.%d", hook.GATE_HANDOFF_REQUEST_PATH, pid)
-	response_path := fmt.tprintf("%s.%d", hook.GATE_HANDOFF_RESPONSE_PATH, pid)
+	request_path := fmt.tprintf("%s.%d", gate.GATE_HANDOFF_REQUEST_PATH, pid)
+	response_path := fmt.tprintf("%s.%d", gate.GATE_HANDOFF_RESPONSE_PATH, pid)
 	fd := posix.open(strings.unsafe_string_to_cstring(request_path), {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
 	if fd < 0 {return}
 	written := posix.write(fd, &request[0], uint(n + 1))
@@ -301,8 +301,8 @@ connect_handoff :: proc(task: u32) -> (service: u32, ok: bool) {
 		if !owner_ok || !name_ok || i64(owner) != i64(pid) || name == 0 {continue}
 		candidate := u32(name)
 		type: u32
-		if code := hook.gate_mach_port_type(task, candidate, &type); code != 0 {continue}
-		if type & hook.MACH_PORT_TYPE_SEND == 0 {continue}
+		if code := gate.gate_mach_port_type(task, candidate, &type); code != 0 {continue}
+		if type & gate.MACH_PORT_TYPE_SEND == 0 {continue}
 		return candidate, true
 	}
 	return
@@ -312,28 +312,28 @@ connect_handoff :: proc(task: u32) -> (service: u32, ok: bool) {
 // bootstrap_look_up; on macOS 27 that call is denied (1100), so the handoff
 // above is the live path there.
 connect_bootstrap :: proc(task: u32) -> (service: u32, ok: bool) {
-	bp, bp_ok := hook.gate_process_bootstrap_port()
+	bp, bp_ok := gate.gate_process_bootstrap_port()
 	if !bp_ok {
 		fmt.eprintln("FAIL: bootstrap_port")
 		return
 	}
 	rendezvous: u32
-	if code := hook.gate_mach_port_allocate(task, hook.MACH_PORT_RIGHT_RECEIVE, &rendezvous); code != 0 {
+	if code := gate.gate_mach_port_allocate(task, gate.MACH_PORT_RIGHT_RECEIVE, &rendezvous); code != 0 {
 		fmt.eprintf("FAIL: rendezvous allocate (%d)\n", code)
 		return
 	}
-	defer hook.gate_mach_port_destroy(task, rendezvous)
-	if code := hook.gate_bootstrap_register(bp, hook.GATE_RENDEZVOUS_NAME, rendezvous); code != 0 {
+	defer gate.gate_mach_port_destroy(task, rendezvous)
+	if code := gate.gate_bootstrap_register(bp, gate.GATE_RENDEZVOUS_NAME, rendezvous); code != 0 {
 		fmt.eprintf("FAIL: rendezvous register (%d); another client holding it?\n", code)
 		return
 	}
 	handshake: Mach_Buffer
-	hcode := hook.gate_mach_msg(&handshake.bytes[0], hook.MACH_MSG_RECEIVE|hook.MACH_RCV_TIMEOUT, 0, len(handshake.bytes), rendezvous, 3000, 0)
+	hcode := gate.gate_mach_msg(&handshake.bytes[0], gate.MACH_MSG_RECEIVE|gate.MACH_RCV_TIMEOUT, 0, len(handshake.bytes), rendezvous, 3000, 0)
 	if hcode != 0 {
 		fmt.eprintf("FAIL: handshake receive (%#x); is the observer payload installed?\n", u32(hcode))
 		return
 	}
-	service, ok = hook.gate_handshake_send_right(handshake.bytes[:])
+	service, ok = gate.gate_handshake_send_right(handshake.bytes[:])
 	if !ok {
 		fmt.eprintln("FAIL: handshake carried no send right")
 	}
@@ -341,7 +341,7 @@ connect_bootstrap :: proc(task: u32) -> (service: u32, ok: bool) {
 }
 
 connect :: proc() -> (task, service: u32, ok: bool) {
-	task = hook.gate_mach_task_self()
+	task = gate.gate_mach_task_self()
 	if handoff, handoff_ok := connect_handoff(task); handoff_ok {
 		return task, handoff, true
 	}
@@ -351,38 +351,38 @@ connect :: proc() -> (task, service: u32, ok: bool) {
 
 // Send a prebuilt message; the reply port is allocated here and stamped over
 // whatever the buffer carries so fuzz cases cannot lose the reply channel.
-send_raw :: proc(task, service: u32, msg: ^Mach_Buffer, n: int) -> (parsed: hook.Gate_Reply, ok: bool) {
+send_raw :: proc(task, service: u32, msg: ^Mach_Buffer, n: int) -> (parsed: gate.Gate_Reply, ok: bool) {
 	reply: u32
-	if code := hook.gate_mach_port_allocate(task, hook.MACH_PORT_RIGHT_RECEIVE, &reply); code != 0 {
+	if code := gate.gate_mach_port_allocate(task, gate.MACH_PORT_RIGHT_RECEIVE, &reply); code != 0 {
 		fmt.eprintf("FAIL: reply port allocate (%d)\n", code)
 		return
 	}
-	defer hook.gate_mach_port_destroy(task, reply)
-	if !hook.gate_store_u32(msg.bytes[:], 12, reply) {
+	defer gate.gate_mach_port_destroy(task, reply)
+	if !gate.gate_store_u32(msg.bytes[:], 12, reply) {
 		fmt.eprintln("FAIL: stamp reply right")
 		return
 	}
-	options := u32(hook.MACH_MSG_SEND) | u32(hook.MACH_MSG_RECEIVE) | u32(hook.MACH_RCV_TIMEOUT)
-	if code := hook.gate_mach_msg(&msg.bytes[0], options, u32(n), len(msg.bytes), reply, 1000, 0); code != 0 {
+	options := u32(gate.MACH_MSG_SEND) | u32(gate.MACH_MSG_RECEIVE) | u32(gate.MACH_RCV_TIMEOUT)
+	if code := gate.gate_mach_msg(&msg.bytes[0], options, u32(n), len(msg.bytes), reply, 1000, 0); code != 0 {
 		fmt.eprintf("FAIL: mach_msg (%#x)\n", u32(code))
 		return
 	}
-	parsed, ok = hook.gate_unpack_reply(msg.bytes[:])
+	parsed, ok = gate.gate_unpack_reply(msg.bytes[:])
 	if !ok {
 		fmt.eprintln("FAIL: short reply")
 	}
 	return
 }
 
-exchange :: proc(task, service: u32, command: hook.Gate_Command, arg0, arg1: u64) -> (parsed: hook.Gate_Reply, ok: bool) {
+exchange :: proc(task, service: u32, command: gate.Gate_Command, arg0, arg1: u64) -> (parsed: gate.Gate_Reply, ok: bool) {
 	msg: Mach_Buffer
-	n, packed := hook.gate_pack_request(msg.bytes[:], service, 1, command, arg0, arg1)
+	n, packed := gate.gate_pack_request(msg.bytes[:], service, 1, command, arg0, arg1)
 	if !packed {
 		fmt.eprintln("FAIL: pack request")
 		return
 	}
 	parsed, ok = send_raw(task, service, &msg, n)
-	if ok && (parsed.magic != hook.GATE_REPLY_MAGIC || parsed.version != hook.GATE_VERSION || parsed.command != u32(command)) {
+	if ok && (parsed.magic != gate.GATE_REPLY_MAGIC || parsed.version != gate.GATE_VERSION || parsed.command != u32(command)) {
 		fmt.eprintln("FAIL: reply identity/version/command mismatch")
 		ok = false
 	}
@@ -398,20 +398,20 @@ run_fuzz :: proc(task, service: u32) -> bool {
 		off:   int,
 		value: u32,
 	}{
-		{"bad magic", hook.GATE_OFF_MAGIC, 0xdeadbeef},
-		{"bad version", hook.GATE_OFF_VERSION, 2},
-		{"unknown command", hook.GATE_OFF_COMMAND, 0xff},
-		{"zero command", hook.GATE_OFF_COMMAND, 0},
+		{"bad magic", gate.GATE_OFF_MAGIC, 0xdeadbeef},
+		{"bad version", gate.GATE_OFF_VERSION, 2},
+		{"unknown command", gate.GATE_OFF_COMMAND, 0xff},
+		{"zero command", gate.GATE_OFF_COMMAND, 0},
 	}
 	all_ok := true
 	for c in cases {
 		msg: Mach_Buffer
-		n, packed := hook.gate_pack_request(msg.bytes[:], service, 1, .Hello, 0, 0)
+		n, packed := gate.gate_pack_request(msg.bytes[:], service, 1, .Hello, 0, 0)
 		if !packed {
 			fmt.eprintln("FAIL: pack request")
 			return false
 		}
-		hook.gate_store_u32(msg.bytes[:], c.off, c.value)
+		gate.gate_store_u32(msg.bytes[:], c.off, c.value)
 		parsed, ok := send_raw(task, service, &msg, n)
 		if !ok {
 			fmt.eprintf("%s: no reply\n", c.name)
@@ -424,19 +424,19 @@ run_fuzz :: proc(task, service: u32) -> bool {
 	return all_ok
 }
 
-report :: proc(parsed: hook.Gate_Reply) {
+report :: proc(parsed: gate.Gate_Reply) {
 	fmt.printf("reply: magic=%#x version=%d command=%d status=%d data0=%#x data1=%#x\n",
 		parsed.magic, parsed.version, parsed.command, parsed.status, parsed.data0, parsed.data1)
 }
 
-accepted :: proc(parsed: hook.Gate_Reply) -> bool {
-	return parsed.magic == hook.GATE_REPLY_MAGIC && parsed.status == 0
+accepted :: proc(parsed: gate.Gate_Reply) -> bool {
+	return parsed.magic == gate.GATE_REPLY_MAGIC && parsed.status == 0
 }
 
 // Hold state machine (B2) battery. Runs as the gate owner right after the
 // classic prove steps; the slot must be free again when it ends.
 prove_hold_battery :: proc(task, service: u32) -> bool {
-	expect :: proc(parsed: hook.Gate_Reply, label: string, good: bool) -> bool {
+	expect :: proc(parsed: gate.Gate_Reply, label: string, good: bool) -> bool {
 		report(parsed)
 		if !good {fmt.eprintf("FAIL: %s\n", label)}
 		return good
@@ -472,12 +472,12 @@ prove_hold_battery :: proc(task, service: u32) -> bool {
 main :: proc() {
 	if len(os.args) < 2 {usage()}
 	if os.args[1] == "axcheck" {
-		handle := hook.gate_dlopen(HISERVICES_PATH, 2)
+		handle := gate.gate_dlopen(HISERVICES_PATH, 2)
 		if handle == nil {
 			fmt.eprintln("FAIL: dlopen HIServices")
 			os.exit(1)
 		}
-		symbol := hook.gate_dlsym(handle, "AXIsProcessTrusted")
+		symbol := gate.gate_dlsym(handle, "AXIsProcessTrusted")
 		if symbol == nil {
 			fmt.eprintln("FAIL: dlsym AXIsProcessTrusted")
 			os.exit(1)
@@ -549,7 +549,7 @@ main :: proc() {
 		fmt.println()
 		return
 	}
-	command: hook.Gate_Command
+	command: gate.Gate_Command
 	arg0, arg1: u64
 	prove := false
 	fuzz := false
@@ -612,7 +612,7 @@ main :: proc() {
 
 	task, service, connected := connect()
 	if !connected {os.exit(1)}
-	defer hook.gate_mach_port_deallocate(task, service)
+	defer gate.gate_mach_port_deallocate(task, service)
 
 	if serve {os.exit(run_serve(task, service))}
 
@@ -632,7 +632,7 @@ main :: proc() {
 	if prove {
 		// Scope 0 arms neither hold. This checks ownership across commands
 		// without stalling a compositor transaction.
-		steps := [4]struct {command: hook.Gate_Command, arg0, arg1: u64}{
+		steps := [4]struct {command: gate.Gate_Command, arg0, arg1: u64}{
 			{.Hello, 0x53484f4a, 0},
 			{.Status, 0, 0},
 			{.Arm, 1, 0},
