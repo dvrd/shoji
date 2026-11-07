@@ -1,10 +1,11 @@
-package main
+package payload
 
-// Exact 26A434 server helpers. Called only from the ordering callback, on
-// its serialized server thread and with that callback's connection context.
+// Exact per-build server helpers (hook.PLACEMENT_HELPERS). Called only from
+// the ordering callback, on its serialized server thread and with that
+// callback's connection context.
 // Never call these from the independent IPC/control thread.
 import "base:intrinsics"
-import hook "../../../src/experimental/window_server"
+import hook "../window_server"
 
 Placement_Rect :: struct {x, y, w, h: f64}
 Placement_Lookup :: proc "c" (wid: u32) -> rawptr
@@ -27,21 +28,16 @@ SPACE_OP_MIN, SPACE_OP_MAX :: 0x18, 0x19
 placement_auto: u32
 
 verify_placement_helpers :: proc(slide: u64) -> bool {
-	addresses := [3]u64{0x1873e91c8, 0x18732e534, 0x187333594}
-	expected := [3][4]u32{
-		{0x34000160, 0x902e8d48, 0xf942d508, 0xb4000108},
-		{0xf02c7408, 0xf944c908, 0x6d400500, 0x6d410d02},
-		{0xd503237f, 0xd10203ff, 0x6d0323e9, 0xa9045ff8},
-	}
-	for address, index in addresses {
-		words := ([^]u32)(uintptr(address + slide))
-		for word in 0 ..< 4 {if words[word] != expected[index][word] {return false}}
+	helpers := hook.PLACEMENT_HELPERS
+	for helper in helpers {
+		words := ([^]u32)(uintptr(helper.unslid + slide))
+		for word in 0 ..< 4 {if words[word] != helper.signature[word] {return false}}
 	}
 	// Odin's indirect calls emit BLR and require raw addresses. Sign only
 	// pointers handed to native C code which authenticates them with BLRAA.
-	placement_lookup = transmute(Placement_Lookup)uintptr(addresses[0] + slide)
-	placement_bounds = transmute(Placement_Bounds)uintptr(addresses[1] + slide)
-	placement_move = transmute(Placement_Move)uintptr(addresses[2] + slide)
+	placement_lookup = transmute(Placement_Lookup)uintptr(helpers[0].unslid + slide)
+	placement_bounds = transmute(Placement_Bounds)uintptr(helpers[1].unslid + slide)
+	placement_move = transmute(Placement_Move)uintptr(helpers[2].unslid + slide)
 	return true
 }
 

@@ -203,6 +203,12 @@ execute :: proc(m: ^Manager, args: []string) -> Response {
 		return rule_command(m, args[1:])
 	case "signal":
 		return signal_command(m, args[1:])
+	case "notify":
+		if len(args) != 2 || args[1] != "test" {return failure("usage: notify test")}
+		if m.health_notify_test == nil {
+			return failure("notifications are posted only by the daemon")
+		}
+		return m.health_notify_test(m.health_user)
 	}
 	return failure(errorf("unknown command domain '%s'", args[0]))
 }
@@ -415,6 +421,10 @@ sort_ids :: proc(ids: []u32) {
 }
 
 query :: proc(m: ^Manager, args: []string) -> Response {
+	if len(args) == 1 && args[0] == "--health" {
+		if m.health_report == nil {return failure("health is reported only by the daemon")}
+		return success(m.health_report(m.health_user))
+	}
 	if len(args) < 2 || strings.has_prefix(args[1], "--") {return query_full(m, args)}
 	fields := strings.split(args[1], ",", context.temp_allocator)
 	schema: string

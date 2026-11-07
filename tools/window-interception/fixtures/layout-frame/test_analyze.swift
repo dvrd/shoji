@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Black-box test for analyze.swift (layout-frame). Run: swift fixtures/layout-frame/test_analyze.swift
 import Foundation
 
@@ -64,7 +64,7 @@ func save(_ e: Evidence) {
     write(e.dir + "/fixture-events.jsonl", jsonl(e.events))
 }
 func analyze(_ dir: String) -> [String: Any] {
-    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/env"); p.arguments = ["swift", tool, dir]
+    let p = Process(); p.executableURL = URL(fileURLWithPath: tool); p.arguments = [dir]
     let o = Pipe(); p.standardOutput = o; p.standardError = Pipe()
     try? p.run(); let out = String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""; p.waitUntilExit()
     return ((try? JSONSerialization.jsonObject(with: Data(out.utf8))) as? [String: Any]) ?? [:]

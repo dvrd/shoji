@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Diff two per-build port models (A3). Compares
 // artifacts/macos_versions/<tag>/model/model.json pairs and prints a porting
 // report: identity, hooked function, dispatch table base, and the op map.

@@ -30,7 +30,7 @@ Probe_Result :: struct {
 	flags, threads: u64,
 }
 
-RESULT_PATH :: "/private/tmp/shoji-ws-permission-probe-26A434.bin"
+RESULT_PATH :: "/private/tmp/shoji-ws-permission-probe-" + hook.BUILD + ".bin"
 FLAG_SIGNATURE :: u64(1)
 FLAG_PAGE_UNCHANGED :: u64(2)
 FLAG_BARRIER_ENTER :: u64(4)

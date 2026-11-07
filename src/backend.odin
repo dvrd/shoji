@@ -1,5 +1,3 @@
-#+build darwin
-
 package shoji
 
 import n "native"
@@ -284,6 +282,8 @@ State :: struct {
 	focus_scroll_pending: u32,
 	focus_scroll_deadline: f64,
 	read_only: bool,
+	// Hides focus feedback until startup configuration applies its style.
+	focus_ring_held: bool,
 	animations: map[u32]Animation_Job,
 	animation_backend: Animation_Backend,
 	event_sink: proc(user: rawptr, event: Event),

@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Check saved placement evidence; bounds polling cannot prove frame atomicity.
 // usage: analyze-placement.swift DIRECTORY [--expected-position X Y]
 import Foundation

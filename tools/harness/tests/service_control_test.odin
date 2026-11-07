@@ -60,20 +60,19 @@ native_service_first_start_installs_and_preserves_configuration :: proc(t: ^test
 	m := s.Service_Manager{root, 501, c.executor}
 	exe := s.join(root, "shoji"); _ = s.write(exe, "fixture")
 	_ = os.chmod(exe, {.Read_User, .Write_User, .Execute_User})
-	testing.expect_value(t, s.service_start_configured(m, exe, "", ""), "")
+	testing.expect_value(t, s.service_start_configured(m, exe, "", false), "")
 	testing.expect(t, r.loaded)
 	before, _ := s.read(s.plist_path(m))
 	testing.expect(t, strings.contains(before, exe))
 	testing.expect_value(t, s.stop(m), "")
-	testing.expect_value(t, s.service_start_configured(m, "invalid", "", ""), "")
+	testing.expect_value(t, s.service_start_configured(m, "invalid", "", false), "")
 	after, _ := s.read(s.plist_path(m))
 	testing.expect_value(t, after, before)
 	testing.expect_value(t, s.uninstall(m), "")
-	payload := s.join(root, "shoji-sa.dylib"); _ = s.write(payload, "payload")
-	testing.expect_value(t, s.service_start_configured(m, exe, "", payload), "")
+	testing.expect_value(t, s.service_start_configured(m, exe, "", true), "")
 	with_payload, _ := s.read(s.plist_path(m))
-	testing.expect(t, strings.contains(with_payload, "--sa"))
-	testing.expect(t, strings.contains(with_payload, payload))
+	// The daemon resolves the payload beside its binary; no path is recorded.
+	testing.expect(t, strings.contains(with_payload, "<string>--sa</string></array>"))
 }
 
 @(test)
@@ -89,12 +88,11 @@ native_service_lifecycle_preserves_literal_paths_and_launchd_configuration :: pr
 	r: Tool_Recorder; c := tool_context(root, &r)
 	m := s.Service_Manager{root, 501, c.executor}
 	exe := s.join(root, "shoji $(touch never) & <app>")
-	payload := s.join(root, "payload $(touch never).dylib")
-	config := s.join(root, "config")
+	config := s.join(root, "config $(touch never)")
 	testing.expect_value(t, s.write(exe, "fixture"), "")
 	_ = os.chmod(exe, {.Read_User, .Write_User, .Execute_User})
-	_ = s.write(payload, "payload"); _ = s.write(config, "")
-	testing.expect_value(t, s.install(m, exe, config, payload), "")
+	_ = s.write(config, "")
+	testing.expect_value(t, s.install(m, exe, config, true), "")
 	testing.expect(t, !r.loaded)
 	xml, _ := s.read(s.plist_path(m))
 	testing.expect(t, strings.contains(xml, "&amp; &lt;app&gt;"))
@@ -143,15 +141,13 @@ native_service_refuses_foreign_plists_symlinks_and_invalid_inputs :: proc(
 	exe := s.join(root, "shoji"); _ = s.write(exe, "fixture")
 	_ = os.chmod(exe, {.Read_User, .Write_User, .Execute_User})
 	_, e := s.configuration(exe, root, root); testing.expect(t, e != "")
-	_, e = s.configuration(exe, root, "", root)
-	testing.expect(t, e != "")
 	_ = s.mkdir(s.join(root, "Library/LaunchAgents"))
 	_ = s.write(
 		s.plist_path(m),
 		`<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>somebody-else</string></dict></plist>`,
 	)
 	testing.expect(t, s.service_start(m) != "")
-	testing.expect(t, s.service_start_configured(m, exe, "", "") != "")
+	testing.expect(t, s.service_start_configured(m, exe, "", false) != "")
 	testing.expect(t, s.uninstall(m) != "")
 	testing.expect(t, s.install(m, exe) != "")
 	testing.expect(t, s.exists(s.plist_path(m)))
@@ -159,7 +155,7 @@ native_service_refuses_foreign_plists_symlinks_and_invalid_inputs :: proc(
 	_, e = s.checked({}, []string{"/bin/ln", "-s", exe, s.plist_path(m)})
 	testing.expect_value(t, e, "")
 	testing.expect(t, s.service_start(m) != "")
-	testing.expect(t, s.service_start_configured(m, exe, "", "") != "")
+	testing.expect(t, s.service_start_configured(m, exe, "", false) != "")
 	testing.expect(t, s.uninstall(m) != "")
 	testing.expect(t, s.regular(exe))
 }

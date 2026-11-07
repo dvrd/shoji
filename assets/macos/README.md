@@ -10,7 +10,7 @@ physical thickness, rounded bevels, top-left highlights, a restrained shadow,
 and a transparent outer background. No text or additional background tile.
 
 Run `task build:app` to build and package `bin/Shoji.app`. To package the existing
-signed executable without rebuilding, run `task build:app` (or `swift tools/macos/bundle.swift`).
+signed executable without rebuilding, run `task build:app` (or `tools/macos/bundle.swift`).
 The bundle uses the persistent local signing identity and the existing
 `tech.shoji.window-manager` identifier. It is a background app with no Dock tile.
 
@@ -18,22 +18,24 @@ For the icon to appear for the daemon, launch the executable inside the bundle:
 `bin/Shoji.app/Contents/MacOS/shoji`. Grant **Shoji.app** Accessibility access in
 System Settings → Privacy & Security → Accessibility before switching services.
 Existing executable permission may need to be approved again for the bundle.
-Update any noninteractive sudo rule for `--load-sa` to match the bundled
-executable's absolute path before switching a service that uses `--sa`.
-Use `sudo visudo` (or `sudo visudo -f /etc/sudoers.d/FILE` for the file containing
-the existing Shoji rule) and replace only the executable path in that rule.
-For this checkout, the updated rule is:
+The bundle carries the Dock payload in `Contents/Resources/shoji-sa.dylib`;
+`--load-sa` and `--ws-attach` take no arguments, so each sudo rule pins only the
+bundled executable. Use `sudo visudo -f /etc/sudoers.d/shoji`. For this
+checkout the rules are:
 
 ```sudoers
-kakurega ALL=(root) NOPASSWD: /Users/kakurega/dev/projects/shoji/bin/Shoji.app/Contents/MacOS/shoji --load-sa /Users/kakurega/dev/projects/shoji/bin/shoji-sa.dylib
+kakurega ALL=(root) NOPASSWD: /Users/kakurega/dev/projects/shoji/bin/Shoji.app/Contents/MacOS/shoji --load-sa
+kakurega ALL=(root) NOPASSWD: /Users/kakurega/dev/projects/shoji/bin/Shoji.app/Contents/MacOS/shoji --ws-attach
 ```
 
-Keep the existing config and payload paths when reinstalling the service:
+The second rule is needed only for `config windowserver_gate on`; see
+`task install:windowserver`. Keep the existing config when reinstalling the
+service:
 
 ```sh
 ./bin/shoji service stop
 ./bin/shoji service install --binary "$PWD/bin/Shoji.app/Contents/MacOS/shoji" \
-  --config "$HOME/.config/shoji/shojirc" --sa "$PWD/bin/shoji-sa.dylib"
+  --config "$HOME/.config/shoji/shojirc" --sa
 ./bin/shoji service start
 ```
 

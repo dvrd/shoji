@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Decode a saved V3 observer ring; never contacts or mutates WindowServer.
 // usage: report.swift PATH/response.bin
 import Foundation

@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Evaluate two-window pixel transitions in one ScreenCaptureKit stream.
 // usage: analyze.swift DIRECTORY
 import Foundation

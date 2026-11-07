@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Fixture placement diagnostic (B7). Release independently of synchronous SLS
 // calls: they may queue behind the globally serializing hold. Saved bounds and
 // successful command submission do not prove atomic placement.
@@ -22,7 +22,7 @@ func sh(_ launch: String, _ args: [String], toFile: String? = nil, background: B
     p.waitUntilExit(); return (p.terminationStatus, o, p)
 }
 func out1(_ launch: String, _ args: [String]) -> String { sh(launch, args).1.trimmingCharacters(in: .whitespacesAndNewlines) }
-func gateCtl(_ args: [String]) -> String { sh("swift", [src + "/gate-ctl.swift"] + args).1 }
+func gateCtl(_ args: [String]) -> String { sh(src + "/gate-ctl.swift", args).1 }
 func tee(_ path: String, _ s: String) { print(s, terminator: s.hasSuffix("\n") ? "" : "\n"); try? s.write(toFile: path, atomically: true, encoding: .utf8) }
 func grepLast(_ s: String, _ pat: String, _ g: Int = 1) -> String? {
     guard let re = try? NSRegularExpression(pattern: pat) else { return nil }

@@ -1,5 +1,3 @@
-#+build darwin
-
 package shoji
 
 // D2: user-facing WindowServer diagnostics. `shoji --ws-report [DIR]` prints
@@ -17,10 +15,10 @@ import "core:time"
 import ws "experimental/window_server"
 
 WS_PAYLOAD_DIR :: "/Library/GPUBundles/ShojiWindowServerProbe"
-WS_PAYLOAD_PATH :: WS_PAYLOAD_DIR + "/shoji-ws-observer-cctor22.dylib"
+WS_PAYLOAD_PATH :: WS_PAYLOAD_DIR + "/shoji-ws.dylib"
 WS_CLIENTS_PATH :: WS_PAYLOAD_DIR + "/clients"
-WS_RING_PATH :: "/private/tmp/shoji-ws-observer-response-26A434.bin"
-WS_SUPPORTED_BUILD :: "26A434"
+WS_RING_PATH :: ws.OBSERVER_RESPONSE_PATH
+WS_SUPPORTED_BUILD :: ws.BUILD
 
 // ------------------------------------------------------------------------
 // Event ring (observer V3 snapshot; mirrors lifecycle/report.py)
@@ -140,14 +138,12 @@ foreign system {
 	csops :: proc "c" (pid: i32, ops: u32, useraddr: rawptr, usersize: uintptr) -> i32 ---
 }
 
-@(private = "file")
 hex :: proc(bytes: []u8) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	for v in bytes {fmt.sbprintf(&b, "%02x", v)}
 	return strings.to_string(b)
 }
 
-@(private = "file")
 os_build :: proc() -> string {
 	build: [32]u8
 	length := uintptr(len(build))
@@ -155,7 +151,6 @@ os_build :: proc() -> string {
 	return strings.clone(string(build[:length - 1]), context.temp_allocator)
 }
 
-@(private = "file")
 read_limited :: proc(path: string, limit: int) -> (data: []u8, st: posix.stat_t, ok: bool) {
 	fd := posix.open(strings.clone_to_cstring(path, context.temp_allocator), {.NOFOLLOW, .CLOEXEC})
 	if fd < 0 {return}

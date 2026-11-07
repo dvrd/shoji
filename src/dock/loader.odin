@@ -67,6 +67,7 @@ foreign sys {
 	task_for_pid :: proc(self: u32, pid: i32, task: ^u32) -> i32 ---
 	mach_task_self :: proc() -> u32 ---
 	mach_port_deallocate :: proc(task, port: u32) -> i32 ---
+	mach_port_type :: proc(task, name: u32, kind: ^u32) -> i32 ---
 	mach_vm_write :: proc(task: u32, address: u64, data: uintptr, count: u32) -> i32 ---
 	mach_vm_read_overwrite :: proc(task: u32, address, size: u64, data: uintptr, actual: ^u64) -> i32 ---
 	mach_vm_protect :: proc(task: u32, address, size: u64, maximum, protection: i32) -> i32 ---
@@ -519,7 +520,7 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 		count: u32 = size_of(state) / 4
 		code := convert(thread, 2, 6, &state, count, &converted, &count)
 		if code != 0 {
-			thread_terminate(thread); mach_port_deallocate(self, thread)
+			thread_terminate(thread); release_thread_port(self, thread)
 			return fmt.tprintf("cannot convert arm64 thread state (%d)", code)
 		}
 
@@ -530,7 +531,7 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 			"operatingSystemVersion",
 		)
 		if version.majorVersion > 14 || (version.majorVersion == 14 && version.minorVersion >= 4) {
-			thread_terminate(thread); mach_port_deallocate(self, thread); thread = 0
+			thread_terminate(thread); release_thread_port(self, thread); thread = 0
 			if code := thread_create_running(task, 6, &converted, count, &thread); code != 0 {
 				return fmt.tprintf("cannot start remote thread (%d)", code)
 			}
@@ -541,7 +542,7 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 			}
 
 			if code != 0 {
-				thread_terminate(thread); mach_port_deallocate(self, thread)
+				thread_terminate(thread); release_thread_port(self, thread)
 				return fmt.tprintf("cannot start remote thread (%d)", code)
 			}
 		}
@@ -562,7 +563,7 @@ inject_task_named :: proc(task: u32, path: string, target: string) -> string {
 		if thread_terminate(thread) != 0 {
 			safe_to_free = false
 		}
-		mach_port_deallocate(self, thread)
+		release_thread_port(self, thread)
 	}
 
 	failure_reason := ""
@@ -681,14 +682,26 @@ remote_c_string :: proc(task: u32, address: uintptr) -> string {
 	if address == 0 {
 		return ""
 	}
-	buf: [240]u8
-	actual: u64
-	if mach_vm_read_overwrite(task, u64(address), len(buf) - 1, uintptr(&buf), &actual) != 0 ||
-	   actual == 0 {
-		return ""
-	}
+	// dyld rejection messages exceed 240 bytes. Read bounded 128-byte chunks so
+	// a short string near the end of a mapping still succeeds.
+	REMOTE_STRING_CHUNK :: 128
+	buf: [1024]u8
 	n := 0
-	for n < int(actual) && buf[n] != 0 {n += 1}
+	for n < len(buf) - 1 {
+		want := min(REMOTE_STRING_CHUNK, len(buf) - 1 - n)
+		actual: u64
+		code := mach_vm_read_overwrite(
+			task,
+			u64(address) + u64(n),
+			u64(want),
+			uintptr(&buf[n]),
+			&actual,
+		)
+		if code != 0 || actual == 0 {break}
+		end := n + int(actual)
+		for n < end && buf[n] != 0 {n += 1}
+		if n < end {break}
+	}
 	return strings.clone(string(buf[:n]), context.temp_allocator)
 }
 
@@ -737,4 +750,14 @@ inject_windowserver :: proc(payload_path: string, pid: i32) -> string {
 	}
 	defer mach_port_deallocate(self, task)
 	return inject_task_named(task, path, "WindowServer")
+}
+
+// Release our send right to a remote thread after thread_terminate. On some
+// boot configurations termination already removes the name from our space,
+// and deallocating an absent name raises a fatal EXC_GUARD (INVALID_NAME).
+release_thread_port :: proc(self, thread: u32) {
+	if thread == 0 {return}
+	kind: u32
+	if mach_port_type(self, thread, &kind) != 0 {return}
+	mach_port_deallocate(self, thread)
 }

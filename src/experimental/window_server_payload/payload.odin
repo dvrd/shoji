@@ -1,14 +1,18 @@
-package main
+package payload
 
-// Disposable exact-build WindowServer ordering observer. The callback records a
-// bounded in-memory snapshot and forwards immediately; all file I/O runs on a
-// separate control thread after installation. There is no live unhook path.
+// Exact-build WindowServer payload: ordering hook, transaction-table gate and
+// the authenticated Mach gate that Shoji drives. Loaded by `shoji --ws-attach`
+// (root, pinned sudoers rule); the test harness builds this same source with
+// its gate client's CDHash pinned (SHOJI_GATE_CLIENT_CDHASH). The ordering
+// callback records a bounded in-memory snapshot and forwards immediately; file
+// I/O runs on a separate control thread after installation. There is no live
+// unhook path: the payload stays resident until WindowServer exits.
 import "base:intrinsics"
 import "base:runtime"
 import "core:sys/posix"
 import mach "core:sys/darwin"
-import loader "../../../src/dock"
-import hook "../../../src/experimental/window_server"
+import loader "../../dock"
+import hook "../window_server"
 
 foreign import system "system:System"
 
@@ -54,11 +58,14 @@ Install_Result :: struct {
 	first_candidate, image_base: u64,
 	entry_bytes: [16]u8,
 	threads: u64,
+	// Last thread the barrier could not park (status 5): Mach run state and
+	// suspend count. Appended so older readers of the prefix still work.
+	barrier_run_state, barrier_suspend_count: i64,
 }
 
-STATUS_PATH :: "/private/tmp/shoji-ws-observer-status-26A434.bin"
-STARTED_PATH :: "/private/tmp/shoji-ws-observer-started-26A434.bin"
-RESPONSE_PATH :: "/private/tmp/shoji-ws-observer-response-26A434.bin"
+STATUS_PATH :: hook.OBSERVER_STATUS_PATH
+STARTED_PATH :: hook.OBSERVER_STARTED_PATH
+RESPONSE_PATH :: hook.OBSERVER_RESPONSE_PATH
 
 @(default_calling_convention = "c")
 foreign system {
@@ -85,12 +92,12 @@ observer_timebase: Timebase_Info
 observer_events: [OBSERVER_EVENTS]Observer_Event
 
 // ===== Transaction table gate (A2) =====
-// Static model (DISPATCH.md): PKGTransactionCommit dispatches ops through a
-// global table at unslid 0x1e873d430, 140 entries of 16 bytes, op types
-// 1..0x8c. Handlers are PAC-signed pointers called via blraaz (key A,
+// Static model: PKGTransactionCommit dispatches ops through a
+// per-build global table (hook.TABLE_UNSLID), 140 entries of 16 bytes, op
+// types 1..0x8c. Handlers are PAC-signed pointers called via blraaz (key A,
 // discriminator 0) with a shared PKGTransactionContext* argument.
-TGATE_STATUS_PATH :: "/private/tmp/shoji-ws-observer-tgate-26A434.bin"
-TABLE_UNSLID :: 0x1e873d430
+TGATE_STATUS_PATH :: hook.TGATE_STATUS_PATH
+TABLE_UNSLID :: hook.TABLE_UNSLID
 TABLE_OP_MAX :: 0x8c
 GATED_OPS :: [14]u64{0x01, 0x03, 0x06, 0x0b, 0x18, 0x19, 0x21, 0x22, 0x2a, 0x33, 0x34, 0x35, 0x36, 0x41}
 GATE_EVENT_FLAG :: 0x54474154 // 'TGAT'
@@ -101,23 +108,13 @@ Gate_Expected_Op :: struct {
 }
 // gate_expected_ops (all 139 named ops) lives in gate_expected.odin.
 
-Tgate_Status :: struct {
-	magic:                                        [8]u8,
-	version, status:                              u64,
-	table_unslid, table_live, slide:              u64,
-	verify_failed_op, expected_raw, observed_raw: u64,
-	entries_written, threads, stubs:              u64,
-	protect_code:                                 i64,
-	mach_port, owner_pid:                         u64,
-	mach_code:                                    i64,
-	bootstrap_port, handshake_sent:               u64,
-}
+Tgate_Status :: hook.Tgate_Status
 
-// Unslid address of _WSCurrentSessionBootstrapPort in 26A434 SkyLight.
+// Unslid address of _WSCurrentSessionBootstrapPort for the selected build.
 // No arguments. Loads the session object and returns the mach_port_t at
 // +0x64. A missing session, or an unset port word, returns 0. The
 // bootstrap_port global is not the session port inside WindowServer.
-WS_SESSION_BP_UNSLID :: 0x1872b4afc
+WS_SESSION_BP_UNSLID :: hook.SESSION_BOOTSTRAP_PORT_UNSLID
 
 gate_originals: [TABLE_OP_MAX + 1]u64
 gate_stubs: u64
@@ -514,7 +511,7 @@ gate_shim_impl :: proc "c" (ctx: rawptr, op: u64) -> u64 {
 		if !hook.hold_released(&hold, false) {held = 2}
 		if placement_generation == hold.generation {
 			if held == 1 {
-				// DISPATCH.md: the transaction context holds its connection
+				// The transaction context holds its connection
 				// object at +0x08 (the +0x10/+0x18 stream offsets are already
 				// live-verified through tlv_peek). Nil fails placement closed.
 				connection := (^rawptr)(uintptr(ctx) + 0x8)^
@@ -562,10 +559,11 @@ gate_write_stub :: proc(slot: u64, op, impl: u64) {
 
 install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32, deallocate: hook.Deallocate, protect: Mach_Protect, page_size: u64) {
 	result := Tgate_Status {
-		magic = {'W', 'S', 'O', 'B', 'T', 'G', 'A', 'T'},
-		version = 2,
+		magic = hook.TGATE_MAGIC,
+		version = hook.TGATE_VERSION,
 		status = 1,
 	}
+	result.windowserver_pid = u64(posix.getpid())
 	defer gate_last_status = result
 	defer write_file(TGATE_STATUS_PATH, &result, size_of(result))
 	result.table_unslid = TABLE_UNSLID
@@ -585,6 +583,14 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 			return
 		}
 	}
+	// Exact-build gate for the dispatcher instructions that will be redirected.
+	result.dispatch_site = hook.DISPATCH_SITE_UNSLID + slide
+	site_words := ([^]u32)(uintptr(result.dispatch_site))
+	expected_site := hook.DISPATCH_SITE_WORDS
+	if site_words[0] != expected_site[0] || site_words[1] != expected_site[1] {
+		result.status = 10
+		return
+	}
 	impl := u64(uintptr(rawptr(gate_shim_impl)))
 	stub_page: u64
 	if code := allocate(task, &stub_page, page_size, 1); code != 0 {
@@ -600,42 +606,123 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 		return
 	}
 	result.stubs = stub_page
-	table_page := table_live & ~(page_size - 1)
-	region, region_ok := region_info(table_page, page_size)
-	if !region_ok {
-		result.status = 5
+	// The table lives in shared-cache __AUTH_CONST, which this kernel refuses
+	// to make writable (R|W and R|W|COPY both fail with KERN_PROTECTION_FAILURE
+	// on a 26B123 M1 Max). PKGTransactionCommit loads the table base with one
+	// adrp/add pair and calls entries with blraaz (zero discriminator), so a
+	// byte copy of the table stays valid. Point that pair at a private copy.
+	copy_page, words, prepared := prepare_table_copy(
+		task,
+		stub_page,
+		allocate,
+		protect,
+		page_size,
+		&result,
+	)
+	if !prepared {
 		return
 	}
-	barrier: hook.Execution_Barrier
-	entered := false
-	for _ in 0 ..< 64 {
-		if hook.enter_execution_barrier(&barrier, deallocate) {entered = true; break}
-		usleep(10_000)
-	}
-	if !entered {
-		result.status = 6
-		result.threads = u64(hook.barrier_last_count)
+	result.table_copy = copy_page
+	if !redirect_dispatch_site(task, words, deallocate, protect, page_size, &result) {
 		return
-	}
-	result.threads = u64(barrier.count)
-	result.protect_code = i64(protect(task, table_page, page_size, 0, 1 | 2 | 16))
-	if result.protect_code != 0 {
-		result.status = 7
-		if !hook.leave_execution_barrier(&barrier) {result.protect_code = -1}
-		return
-	}
-	for op, index in GATED_OPS {
-		entry := ([^]u64)(uintptr(table_live + op * 16))
-		gate_originals[op] = entry[0]
-		intrinsics.volatile_store(&entry[0], loader.sign_function(stub_page + u64(index) * 32))
 	}
 	result.entries_written = len(GATED_OPS)
-	protect(task, table_page, page_size, 0, region.protection)
-	if !hook.leave_execution_barrier(&barrier) {
-		result.status = 8
+	result.status = 0
+}
+
+// Copies the dispatch table (op 0 through DISPATCH_OP_LIMIT, as the
+// dispatcher indexes it) into a read-only private page, with gated entries
+// replaced by signed stub pointers, and encodes the adrp/add pair that loads
+// it. Status 4: allocation or protection failed; 9: copy out of adrp range.
+// Status 10 (set by the caller or here): dispatcher code differs from the build.
+prepare_table_copy :: proc(
+	task: u32,
+	stub_page: u64,
+	allocate: proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32,
+	protect: Mach_Protect,
+	page_size: u64,
+	result: ^Tgate_Status,
+) -> (copy_page: u64, words: [2]u32, ok: bool) {
+	table_bytes := (hook.DISPATCH_OP_LIMIT + 1) * 16
+	#assert(hook.DISPATCH_OP_LIMIT >= TABLE_OP_MAX)
+	if table_bytes > page_size {
+		result.status = 4
 		return
 	}
-	result.status = 0
+	if allocate(task, &copy_page, page_size, 1) != 0 {
+		result.status = 4
+		return
+	}
+	table_live := result.table_live
+	source := ([^]u64)(uintptr(table_live))
+	target := ([^]u64)(uintptr(copy_page))
+	for index in 0 ..< table_bytes / 8 {target[index] = source[index]}
+	for op, index in GATED_OPS {
+		gate_originals[op] = source[op * 2]
+		target[op * 2] = loader.sign_function(stub_page + u64(index) * 32)
+	}
+	encoded, in_range := hook.encode_adrp_add(result.dispatch_site, copy_page, 24)
+	if !in_range {
+		result.status = 9
+		return
+	}
+	if protect(task, copy_page, page_size, 0, 1) != 0 {
+		result.status = 4
+		return
+	}
+	return copy_page, encoded, true
+}
+
+// Rewrites the dispatcher's adrp/add pair while no thread sits between the two
+// instructions. A thread already past the pair keeps the original table for the
+// rest of its commit, which is safe: those ops run ungated. Status 6: barrier;
+// 7: the code page could not be privatized (protect_code); 8: write or resume.
+redirect_dispatch_site :: proc(
+	task: u32,
+	words: [2]u32,
+	deallocate: hook.Deallocate,
+	protect: Mach_Protect,
+	page_size: u64,
+	result: ^Tgate_Status,
+) -> bool {
+	site := result.dispatch_site
+	expected := hook.DISPATCH_SITE_WORDS
+	page := site & ~(page_size - 1)
+	initial, region_ok := region_info(page, page_size)
+	if !region_ok || initial.protection != 5 {
+		result.status = 10
+		return false
+	}
+	barrier: hook.Execution_Barrier
+	if !hook.enter_execution_barrier_avoiding(&barrier, deallocate, site, 8, 64) {
+		result.status = 6
+		result.threads = u64(hook.barrier_last_count)
+		return false
+	}
+	result.threads = u64(barrier.count)
+	code := protect(task, page, page_size, 0, 1 | 2 | 16)
+	if code != 0 {
+		result.status = 7
+		result.protect_code = i64(code)
+		if !hook.leave_execution_barrier(&barrier) {result.protect_code = -1}
+		return false
+	}
+	// Storing the unchanged words forces the private copy, as the ordering hook does.
+	live := ([^]u32)(uintptr(site))
+	for index in 0 ..< 2 {intrinsics.volatile_store(&live[index], expected[index])}
+	if protect(task, page, page_size, 0, initial.protection) != 0 {
+		// Never resume the server into a page that could not be made executable.
+		result.status = 7
+		write_file(TGATE_STATUS_PATH, result, size_of(result^))
+		for {intrinsics.cpu_relax()}
+	}
+	replacement := words
+	written := hook.write_words_via_alias(site, expected[:], replacement[:], deallocate)
+	if !hook.leave_execution_barrier(&barrier) || !written {
+		result.status = 8
+		return false
+	}
+	return true
 }
 
 write_file :: proc(path: cstring, data: rawptr, size: int) {
@@ -875,6 +962,8 @@ install_observer :: proc() {
 			result.status = 5
 			result.threads = u64(hook.barrier_last_count)
 			result.setup_code = i64(hook.barrier_last_failure)
+			result.barrier_run_state = i64(hook.barrier_last_run_state)
+			result.barrier_suspend_count = i64(hook.barrier_last_suspend_count)
 			return
 		}
 		result.threads = u64(barrier.count)
@@ -917,6 +1006,8 @@ install_observer :: proc() {
 			result.status = 5
 			result.threads = u64(hook.barrier_last_count)
 			result.setup_code = i64(hook.barrier_last_failure)
+			result.barrier_run_state = i64(hook.barrier_last_run_state)
+			result.barrier_suspend_count = i64(hook.barrier_last_suspend_count)
 			return
 		}
 		inside, checked := hook.barrier_has_pc_in_range(&barrier, entry + 4, hook.INLINE_PATCH_BYTES - 4)

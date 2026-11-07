@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Per-build port pipeline (A3). Produces a compact model.json for one macOS
 // build from its dyld shared cache, without Ghidra:
 //   carve SkyLight -> UUID/hash -> hooked-function address + entry bytes ->
@@ -103,7 +103,8 @@ if let adrp = rx(commitAsm, #"adrp\s+x24, (0x[0-9a-f]+)\s*\n\s*(0x[0-9a-f]+):\s+
    let addc = rx(commitAsm, #"adrp\s+x24, (0x[0-9a-f]+)\s*\n\s*(0x[0-9a-f]+):\s+[0-9a-f ]+\s+add\s+x24, x24, #(0x[0-9a-f]+)"#, 3, options: [.dotMatchesLineSeparators]),
    let a = Int(adrp.replacingOccurrences(of: "0x", with: ""), radix: 16),
    let b = Int(addc.replacingOccurrences(of: "0x", with: ""), radix: 16) {
-    table = String(format: "0x%x", a + b)
+    // %x is 32-bit and truncated 26B123's 0x1e22470a8; format the full value.
+    table = "0x" + String(a + b, radix: 16)
 }
 model["dispatch_table"] = ["base": table as Any]
 writeModel(model, to: out + "/model/identity.json")

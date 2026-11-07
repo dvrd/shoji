@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // C3: move a fixture window between two real spaces while the transaction gate
 // holds op 0x18; the shim applies the staged placement on release using the
 // context connection. Verified by placement status, sampler bounds and observer
@@ -26,7 +26,7 @@ func sh(_ launch: String, _ args: [String], toFile: String? = nil, background: B
     var o = ""; if let pipe = pipe { o = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "" }
     p.waitUntilExit(); return (p.terminationStatus, o, p)
 }
-func gateCtl(_ args: [String]) -> String { sh("swift", [src + "/gate-ctl.swift"] + args).1 }
+func gateCtl(_ args: [String]) -> String { sh(src + "/gate-ctl.swift", args).1 }
 func tee(_ path: String, _ s: String) { print(s, terminator: s.hasSuffix("\n") ? "" : "\n"); try? s.write(toFile: path, atomically: true, encoding: .utf8) }
 func lineValue(_ s: String, prefix: String) -> String? {   // first line starting `prefix`, digits after
     for l in s.split(separator: "\n") where l.hasPrefix(prefix) { return String(l.dropFirst(prefix.count).prefix { $0.isNumber }) }
@@ -41,7 +41,7 @@ func grepLast(_ s: String, _ pat: String, _ g: Int = 1) -> String? {
 func die(_ m: String) -> Never { print(m); exit(1) }
 
 try? fm.removeItem(atPath: out); try? fm.createDirectory(atPath: out, withIntermediateDirectories: true)
-let spaces = sh("swift", [src + "/spaces.swift"]).1
+let spaces = sh(src + "/spaces.swift", []).1
 try? spaces.write(toFile: out + "/spaces.txt", atomically: true, encoding: .utf8)
 print(spaces, terminator: spaces.hasSuffix("\n") ? "" : "\n")
 let active = lineValue(spaces, prefix: "ACTIVE ") ?? ""

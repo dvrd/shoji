@@ -4,13 +4,14 @@ import loader "dock"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
+import "core:strings"
 
 HELP_MESSAGE :: `
-Usage: shoji [-c CONFIG] [--sa PATH_TO_DYLIB]
+Usage: shoji [-c CONFIG] [--sa]
        shoji -m DOMAIN [ARGUMENTS...]
-       shoji --load-sa PATH_TO_DYLIB
+       shoji --load-sa
        shoji --check-sa
-       shoji --load-ws PID PATH_TO_DYLIB
+       shoji --ws-attach
        shoji --check-ws
        shoji --inspect
        shoji --version
@@ -21,7 +22,7 @@ Run without arguments to start the window manager.
 --sa FILE          Load/reload the Dock payload using noninteractive sudo.
 -m, --message      Send a command to the running shoji daemon.
 --inspect          Print a read-only macOS window/display/space snapshot.
---load-ws PID FILE Load the experimental WindowServer probe (requires an explicit opt-in).
+--ws-attach        Load the WindowServer gate and hand it to the caller (root).
 --check-ws         Check the experimental WindowServer probe handshake.
 --ws-report [DIR]        WindowServer payload install report; with DIR, export the event ring (bin + JSON).
 --ws-space-move W S X Y  Experimental (SHOJI_WS_ADAPTER=1): gated move of window W to Space S landing at X,Y.
@@ -42,36 +43,34 @@ main :: proc() {
 			   args[0] == "--validation-pid") {
 		config, payload: string
 		validation_pid: i32
-
-		for i := 0; i < len(args); i += 2 {
+		for i := 0; i < len(args); i += 1 {
+			if args[i] == "--sa" {
+				if payload != "" {fmt.eprintln("duplicate --sa option"); os.exit(1)}
+				resolved, err := addition_payload_path()
+				if err != "" {fmt.eprintln(err); os.exit(1)}
+				payload = resolved
+				// Plists written before --sa took no value still carry a path.
+				if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "-") {i += 1}
+				continue
+			}
 			if i + 1 >= len(args) || args[i + 1] == "" {
-        fmt.eprintln("daemon options require a path");
-        os.exit(1)
-      }
-
+				fmt.eprintln("daemon options require a value"); os.exit(1)
+			}
 			switch args[i] {
 			case "-c", "--config":
-				if config != "" {
-          fmt.eprintln("duplicate config option")
-          os.exit(1)
-        }
+				if config != "" {fmt.eprintln("duplicate config option"); os.exit(1)}
 				config = args[i + 1]
-			case "--sa":
-				if payload != "" {
-          fmt.eprintln("duplicate --sa option")
-          os.exit(1)
-        }
-				payload = args[i + 1]
 			case "--validation-pid":
 				pid, ok := strconv.parse_u64(args[i + 1])
 				if !ok || pid == 0 || pid > 0x7fffffff || validation_pid != 0 {
 					fmt.eprintln("--validation-pid requires one positive process ID")
-          os.exit(1)
+					os.exit(1)
 				}
 				validation_pid = i32(pid)
 			case:
 				fmt.eprintf("unknown daemon option: %s\n", args[i]); os.exit(1)
 			}
+			i += 1
 		}
 
 		if validation_pid != 0 && config == "" {
@@ -93,12 +92,13 @@ main :: proc() {
 			if !valid || pid == 0 || pid > 0x7fffffff {os.exit(2)}
 			os.exit(validate_window_sizes(i32(pid), args[0] == "--validate-swipe"))
 		case "--load-sa":
-			if len(args) != 2 {
-        fmt.eprintln("--load-sa requires the payload dylib path")
-        os.exit(1)
-      }
-
-			if err := loader.inject(args[1]); err != "" {
+			if len(args) != 1 {
+				fmt.eprintln("--load-sa takes no arguments; it loads the payload beside shoji")
+				os.exit(2)
+			}
+			payload, payload_err := addition_payload_path()
+			if payload_err != "" {fmt.eprintln(payload_err); os.exit(1)}
+			if err := loader.inject(payload); err != "" {
         fmt.eprintln(err)
         os.exit(1)
       }
@@ -115,22 +115,8 @@ main :: proc() {
       }
 			fmt.printf("Dock scripting addition: %v\n", caps)
       return
-		case "--load-ws":
-			if len(args) != 3 {
-				fmt.eprintln("--load-ws requires the WindowServer PID and payload dylib path")
-				os.exit(2)
-			}
-			pid, valid := strconv.parse_u64(args[1])
-			if !valid || pid == 0 || pid > 0x7fffffff {
-				fmt.eprintln("--load-ws requires a positive process ID")
-				os.exit(2)
-			}
-			if err := loader.inject_windowserver(args[2], i32(pid)); err != "" {
-				fmt.eprintln(err)
-				os.exit(1)
-			}
-			fmt.println("WindowServer loaded the experimental load probe. Run --check-ws as the desktop user.")
-			return
+		case "--ws-attach":
+			os.exit(ws_attach_cli(args[1:]))
 		case "--ws-space-move":
 			if len(args) != 5 {
 				fmt.eprintln("--ws-space-move takes WINDOW SPACE X Y")
@@ -153,14 +139,7 @@ main :: proc() {
 			if probe.level == .Serving {
 				fmt.printf("  owner pid %d, %d forwarded calls recorded\n", probe.owner_pid, probe.calls)
 			}
-			caps, err := windowserver_check()
-			if err == "" {
-				fmt.printf("legacy load-probe socket: %v\n", caps)
-			}
-			if probe.level == .Absent && err != "" {
-				fmt.eprintln(err)
-				os.exit(1)
-			}
+			if probe.level == .Absent {os.exit(1)}
 			return
 		case "--version", "-v":
 			fmt.println("shoji 0.1.0-dev")

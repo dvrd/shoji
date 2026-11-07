@@ -1,10 +1,10 @@
 # Investigating Dock compatibility
 
-This describes Shoji's current implementation and a repeatable process for a new macOS build. Source inspection date: 2026-10-25. It does not certify any additional OS version. See [macOS 27 findings](../MACOS_27.md) and [arm64e implementation details](ARM64E.md).
+This describes Shoji's current implementation and a repeatable process for a new macOS build. Source inspection date: 2026-10-25. It does not certify any additional OS version. See [arm64e implementation details](ARM64E.md).
 
 ## How Shoji injects
 
-The normal daemon runs outside Dock. On Apple silicon, an explicit `shoji --load-sa PATH` invocation delegates to the separate arm64e `shoji-loader` executable. The daemon's `--sa` recovery path can invoke loading through the configured noninteractive sudo command. The normal window manager does not become a root daemon.
+The normal daemon runs outside Dock. On Apple silicon, an explicit `shoji --load-sa` invocation (payload resolved beside the executable) delegates to the separate arm64e `shoji-loader` executable. The daemon's `--sa` recovery path can invoke loading through the configured noninteractive sudo command. The normal window manager does not become a root daemon.
 
 The loader locates the user's running Dock, obtains its task port with `task_for_pid`, and allocates memory in that process for bootstrap code, a stack and shared data. It copies the relocation-independent bootstrap and payload path there, makes the code executable, and creates a remote Mach thread. The arm64 implementation signs the initial thread-state pointers and converts the state for the target before starting it. These steps require the system's injection permissions; a normal Accessibility grant is insufficient.
 
@@ -18,11 +18,11 @@ Relevant source:
 
 | Responsibility | Source |
 | --- | --- |
-| CLI entry and loader delegation | [main](../src/main.odin), [injector](../src/dock/loader_darwin.odin) |
-| Code copied into the target | [bootstrap](../src/dock/loader_darwin.odin) |
+| CLI entry and loader delegation | [main](../src/main.odin), [injector](../src/dock/loader.odin) |
+| Code copied into the target | [bootstrap](../src/dock/loader.odin) |
 | arm64e thread-state handling | [state](../src/dock/state_arm64.odin) |
-| Library initialization and requests | [server](../src/dock_payload/payload_darwin.odin) |
-| Finding private Dock objects/functions | [discovery](../src/dock_payload/payload_darwin.odin), [patterns](../src/dock/patterns_arm64.odin) |
+| Library initialization and requests | [server](../src/dock_payload/payload.odin) |
+| Finding private Dock objects/functions | [discovery](../src/dock_payload/payload.odin), [patterns](../src/dock/patterns_arm64.odin) |
 | Swift calling-convention bridge | [bridge](../src/dock/calls_arm64.odin) |
 
 This is runtime code injection, not an Apple-supported extension point. It does not replace WindowServer or edit Dock's executable on disk. Discovery can additionally patch an animation instruction **in Dock's memory** when its signature resolves and memory protection changes succeed; that is separate from loading the library.

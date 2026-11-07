@@ -1,3 +1,4 @@
+#!/usr/bin/swift
 import Foundation
 
 // List managed-display spaces for the space-move fixture. Prints one line:

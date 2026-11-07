@@ -18,6 +18,7 @@ import "core:os"
 import "core:sys/posix"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import hook "../../../src/experimental/window_server"
 
 foreign import system "system:System"
@@ -46,7 +47,7 @@ Dir_Entry :: struct {
 	name:     [1024]u8,
 }
 
-STATUS_PATH :: "/private/tmp/shoji-ws-observer-tgate-26A434.bin"
+STATUS_PATH :: hook.TGATE_STATUS_PATH
 STATUS_PORT_OFF :: 104 // Tgate_Status.mach_port
 COPY_SEND :: 19 // MACH_MSG_TYPE_COPY_SEND
 
@@ -113,8 +114,11 @@ process_request :: proc(ws_task, gate_port: u32, name: string) -> (refused: bool
 	self := mach_task_self()
 	client_task: u32
 	if code := task_for_pid(self, pid, &client_task); code != 0 {
-		fmt.eprintf("refused %d (task_for_pid %#x)\n", pid, u32(code))
-		return true
+		// Observed on a physical M1 Max running 26B123: root obtains
+		// WindowServer's task port but not an ad-hoc arm64e client's (5).
+		// Deliver the right through the client's session rendezvous instead.
+		fmt.eprintf("task_for_pid(%d) %#x; trying session rendezvous\n", pid, u32(code))
+		return !bootstrap_handshake(ws_task, gate_port, pid)
 	}
 	send, send_type: u32
 	if code := mach_port_extract_right(ws_task, gate_port, u32(COPY_SEND), &send, &send_type); code != 0 {
@@ -196,4 +200,22 @@ main :: proc() {
 		os.exit(1)
 	}
 	if refused != 0 {os.exit(1)}
+}
+
+// Fallback delivery when the client's task port is unavailable. The client,
+// after its file handoff times out, registers hook.GATE_RENDEZVOUS_NAME in its
+// session bootstrap and waits for a handshake carrying the gate send right.
+// WindowServer cannot look that name up on macOS 27 (1100); this root helper
+// runs in the invoking user's session namespace and can. Authorization is
+// still the gate's audit-token HELLO; this only delivers a capability.
+RENDEZVOUS_WAIT :: 10 * time.Second // covers the client's 5 s handoff wait.
+
+bootstrap_handshake :: proc(ws_task, gate_port: u32, pid: i32) -> bool {
+	failure, code := hook.gate_deliver_to_rendezvous(ws_task, gate_port, RENDEZVOUS_WAIT)
+	if failure != .None {
+		fmt.eprintf("refused %d (%v %#x)\n", pid, failure, u32(code))
+		return false
+	}
+	fmt.printf("gate %#x client %d via session rendezvous\n", gate_port, pid)
+	return true
 }

@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Black-box test for report.swift: feed a hand-built observer ring and assert
 // decode + refusals. Run: swift lifecycle/test_report.swift
 import Foundation
@@ -13,7 +13,7 @@ func run(_ bytes: [UInt8]) -> (code: Int32, out: String) {
     try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
     let path = dir + "/ring.bin"
     fm.createFile(atPath: path, contents: Data(bytes))
-    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/env"); p.arguments = ["swift", tool, path]
+    let p = Process(); p.executableURL = URL(fileURLWithPath: tool); p.arguments = [path]
     let o = Pipe(); p.standardOutput = o; p.standardError = Pipe()
     try? p.run(); let out = String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""; p.waitUntilExit()
     try? fm.removeItem(atPath: dir)

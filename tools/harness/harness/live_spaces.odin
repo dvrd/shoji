@@ -43,7 +43,6 @@ live_spaces_run :: proc(
 				"-n",
 				tc.binary(c, "shoji"),
 				"--load-sa",
-				tc.binary(c, "shoji-sa.dylib"),
 			},
 		); err != "" {
 			return err

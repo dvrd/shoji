@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Resolve a bounded set of arm64e stub addresses against an exact local cache.
 // usage: resolve-stubs.swift CACHE WARNINGS.json OUTPUT.json [--limit N]
 import Foundation

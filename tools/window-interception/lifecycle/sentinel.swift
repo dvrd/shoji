@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // B3 sentinel toggle for the disposable guest. usage: sentinel.swift on|off
 // Run with sudo on the guest: the sentinel must be root-owned.
 import Foundation

@@ -1,5 +1,5 @@
---- a/src/dock_payload/payload_darwin.odin
-+++ b/src/dock_payload/payload_darwin.odin
+--- a/src/dock_payload/payload.odin
++++ b/src/dock_payload/payload.odin
 @@ -6,6 +6,7 @@
  import p "../patterns"
  import wire "../protocol"

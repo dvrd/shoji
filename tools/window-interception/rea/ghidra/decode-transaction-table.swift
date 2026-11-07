@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Decode the 26A434 SkyLight PKGTransaction dispatch table. Static evidence
 // only: reads the carved exact-build SkyLight image and prints the op-type ->
 // handler map for the table at unslid 0x1e873d430, whose runtime use was traced

@@ -14,19 +14,33 @@ vars:
   CPU_FLAGS:
     sh: 'test "$(uname -m)" != arm64 || echo -target-features:pauth'
   LINK_FLAGS: -F/System/Library/PrivateFrameworks
+  # One readable line per build step; failures print the command and output.
+  STEP: bin/step
 
 env:
   ODIN_ROOT: '{{.ODIN_LIBRARY_ROOT}}'
 
 tasks:
+  build:step:
+    # Every build step runs through bin/step; built once per invocation.
+    run: once
+    silent: true
+    desc: Build the step runner that formats build output
+    sources: ['tools/step/*.odin']
+    generates: [bin/step]
+    cmds:
+      - mkdir -p bin
+      - '{{.ODIN}} build tools/step -out:bin/step -o:speed -warnings-as-errors -vet-unused-imports -vet-unused-variables {{.CPU_FLAGS}}'
   build:dev:
+    deps: [build:step]
     desc: Build the native dev CLI
+    silent: true
     sources: [tools/dev/main.odin, 'tools/dev/dev/*.odin', 'tools/common/*.odin', 'src/*.odin', 'src/**/*.odin']
     generates: [bin/dev]
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/dev -out:bin/dev.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/dev.new'
+      - '{{.STEP}} dev-cli compile "bin/dev: signing and setup helper" -- {{.ODIN}} build tools/dev -out:bin/dev.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
+      - '{{.STEP}} dev-cli sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/dev.new'
       - mv -f bin/dev.new bin/dev
   build:dev:amd64:
     desc: Cross-build the dev CLI for Intel releases
@@ -35,13 +49,18 @@ tasks:
       - '{{.ODIN}} build tools/dev -target:darwin_amd64 -out:bin/dev-amd64 -o:speed -warnings-as-errors'
       - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.dev bin/dev-amd64'
   build:inspector:
+    deps: [build:step]
+    # Shared by parallel deps (addition, loader); one run per invocation
+    # so concurrent builds do not race on the same .new output.
+    run: once
     desc: Build the native inspector CLI
+    silent: true
     sources: [tools/inspector/main.odin, 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/*.odin', 'src/**/*.odin']
     generates: [bin/inspector]
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/inspector -out:bin/inspector.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/inspector.new'
+      - '{{.STEP}} inspector compile "bin/inspector: Mach-O checks used by later steps" -- {{.ODIN}} build tools/inspector -out:bin/inspector.new -o:speed -warnings-as-errors {{.CPU_FLAGS}}'
+      - '{{.STEP}} inspector sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/inspector.new'
       - mv -f bin/inspector.new bin/inspector
   build:inspector:amd64:
     desc: Cross-build the inspector CLI for Intel releases
@@ -50,6 +69,9 @@ tasks:
       - '{{.ODIN}} build tools/inspector -target:darwin_amd64 -out:bin/inspector-amd64 -o:speed -warnings-as-errors'
       - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.inspector bin/inspector-amd64'
   build:harness:
+    # Shared by parallel deps (addition, loader); one run per invocation
+    # so concurrent builds do not race on the same .new output.
+    run: once
     desc: Build the native harness CLI
     sources: [tools/harness/main.odin, 'tools/harness/harness/*.odin', 'tools/inspector/inspect/*.odin', 'tools/common/*.odin', 'src/*.odin', 'src/**/*.odin']
     generates: [bin/harness]
@@ -132,18 +154,21 @@ tasks:
     env:
       SHOJI_INSTALL_DIR: '{{.INSTALL_DIR}}'
   build:
-    deps: [addition, loader, dockscan, build:dev]
+    deps: [build:step, addition, loader, dockscan, build:dev]
     desc: Build the native macOS executable
+    silent: true
     cmds:
-      - ./bin/dev signing check
+      - '{{.STEP}} --show shoji identity "local signing certificate (keeps Accessibility approval)" -- ./bin/dev signing check'
       - mkdir -p bin
-      - '{{.ODIN}} build src -warnings-as-errors -out:{{.BINARY}}.new -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - './bin/dev signing sign {{.BINARY}}.new --install {{.BINARY}} --codesign {{.CODESIGN}}'
+      - '{{.STEP}} shoji compile "{{.BINARY}}: window manager daemon and CLI" -- {{.ODIN}} build src -warnings-as-errors -out:{{.BINARY}}.new -o:speed {{.CPU_FLAGS}} -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.STEP}} shoji sign "sign with the local identity, then install" -- ./bin/dev signing sign {{.BINARY}}.new --install {{.BINARY}} --codesign {{.CODESIGN}}'
   build:app:
-    deps: [build]
+    deps: [build:step, build]
     desc: Package the signed runtime with its macOS icon in bin/Shoji.app
+    silent: true
     cmds:
-      - swift tools/macos/bundle.swift
+      - '{{.STEP}} app bundle "bin/Shoji.app: shoji, loader, Dock payload, icon, signature" -- tools/macos/bundle.swift'
+      - 'printf "\n  Ready: bin/Shoji.app. Run it with: shoji service restart\n"'
   debug:
     deps: [addition, build:dev]
     desc: Build with debug information and runtime checks
@@ -180,11 +205,12 @@ tasks:
     cmds:
       - '{{.ODIN}} check src -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check src/dock_payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/experimental/window_server_payload -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/experimental/window_server_payload -warnings-as-errors -no-entry-point -target-features:pauth -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tests -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock/scanner -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/dev -vet-unused-imports -vet-unused-variables -warnings-as-errors'
+      - '{{.ODIN}} check tools/step -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/inspector -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/harness -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/harness/tests -no-entry-point -vet-unused-imports -vet-unused-variables -warnings-as-errors'
@@ -192,10 +218,12 @@ tasks:
       - '{{.ODIN}} check src/loader -define:SHOJI_ODIN_LOADER=true -no-thread-local -vet-unused-imports -vet-unused-variables -warnings-as-errors'
       - '{{.ODIN}} check tools/harness/fixtures/cancellation -vet-unused-imports -vet-unused-variables -warnings-as-errors'
   dockscan:
+    deps: [build:step]
     desc: Build the standalone Apple silicon Dock compatibility diagnostic
+    silent: true
     cmds:
       - mkdir -p bin
-      - '{{.ODIN}} build tools/shoji-dock -out:bin/shoji-dock.new -o:speed -warnings-as-errors'
+      - '{{.STEP}} dockscan compile "bin/shoji-dock: Dock compatibility diagnostic" -- {{.ODIN}} build tools/shoji-dock -out:bin/shoji-dock.new -o:speed -warnings-as-errors'
       - mv -f bin/shoji-dock.new bin/shoji-dock
   test:dockscan:
     desc: Test offline Dock parsing, scanning, comparison, and patch proposals
@@ -248,16 +276,17 @@ tasks:
       - '{{.ODIN}} build src -warnings-as-errors -target:darwin_amd64 -out:bin/shoji-amd64.new -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - './bin/dev signing sign bin/shoji-amd64.new --install bin/shoji-amd64 --codesign {{.CODESIGN}}'
   addition:
-    deps: [build:inspector]
+    deps: [build:step, build:inspector]
     desc: Build the Dock payload (does not load it)
+    silent: true
     env:
       ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build src/dock_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/inspector normalize-arm64e bin/shoji-sa.dylib
-      - '{{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
+      - '{{.STEP}} payload compile "bin/shoji-sa.dylib: arm64e code loaded into Dock" -- {{.ODIN_ARM64E}} build src/dock_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-sa.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.STEP}} payload normalize "mark arm64e ABI as preview so Dock accepts it" -- ./bin/inspector normalize-arm64e bin/shoji-sa.dylib'
+      - '{{.STEP}} payload sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - bin/shoji-sa.dylib'
   build:windowserver-hook-selftest:
     deps: [build:inspector]
     desc: Build the isolated arm64e hook self-test (does not run or inject it)
@@ -308,9 +337,23 @@ tasks:
         # through the root-owned clients file (lifecycle/trust-client.swift), so
         # rebuilding Shoji never requires a new payload.
         allow=$client_hash
-        {{.ODIN_ARM64E}} build tools/window-interception/windowserver-ordering-observer "-define:SHOJI_GATE_CLIENT_CDHASH=$allow" -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor22.dylib"
+        {{.ODIN_ARM64E}} build src/experimental/window_server_payload "-define:SHOJI_GATE_CLIENT_CDHASH=$allow" -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor23.dylib"
       - ./bin/inspector normalize-arm64e bin/shoji-ws-observer.dylib
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-observer.dylib'
+  build:windowserver-payload:
+    deps: [build:step, build:inspector]
+    desc: Build the WindowServer gate payload that `shoji --ws-attach` loads (does not load it)
+    silent: true
+    sources: ['src/experimental/window_server_payload/*.odin', 'src/experimental/window_server/*.odin', 'src/dock/*.odin']
+    generates: [bin/shoji-ws.dylib]
+    env:
+      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
+      ODIN_CLANG_PATH: /usr/bin/clang
+    cmds:
+      - mkdir -p bin
+      - '{{.STEP}} ws-payload compile "bin/shoji-ws.dylib: gate code loaded into WindowServer" -- {{.ODIN_ARM64E}} build src/experimental/window_server_payload -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws.dylib"'
+      - '{{.STEP}} ws-payload normalize "mark arm64e ABI as preview so WindowServer accepts it" -- ./bin/inspector normalize-arm64e bin/shoji-ws.dylib'
+      - '{{.STEP}} ws-payload sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - bin/shoji-ws.dylib'
   build:windowserver-ordering-trigger:
     deps: [build:inspector]
     desc: Build the disposable guest window-ordering trigger (does not run it)
@@ -328,6 +371,31 @@ tasks:
       - mkdir -p bin
       - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-ws-visibility-sampler tools/window-interception/fixtures/visibility-sampler/main.swift'
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-visibility-sampler'
+  install:windowserver:
+    deps: [build:windowserver-payload]
+    desc: Install the WindowServer gate payload (sudo) that `config windowserver_gate on` attaches
+    interactive: true
+    silent: true
+    cmds:
+      - sudo install -d -o root -g wheel -m 755 /Library/GPUBundles/ShojiWindowServerProbe
+      # install(1) writes a new file and renames it, so a WindowServer that
+      # mapped the previous payload keeps its pages intact.
+      - sudo install -o root -g wheel -m 644 bin/shoji-ws.dylib /Library/GPUBundles/ShojiWindowServerProbe/shoji-ws.dylib
+      - |
+        printf '  ✓ installed /Library/GPUBundles/ShojiWindowServerProbe/shoji-ws.dylib\n'
+        printf '  It loads into a WindowServer that does not have it yet. Logout does\n'
+        printf '  not restart WindowServer; a new payload needs: sudo killall -9 WindowServer\n'
+        printf '  (this logs you out). Allow the daemon to attach\n'
+        printf '  with this line in sudo visudo -f /etc/sudoers.d/shoji:\n\n'
+        printf '    %s ALL=(root) NOPASSWD: %s/bin/Shoji.app/Contents/MacOS/shoji --ws-attach\n\n' "$(id -un)" "$PWD"
+        printf '  Then add to shojirc: shoji -m config windowserver_gate on\n'
+  windowserver:live:
+    desc: 'Live gate acceptance on this machine (sudo). Mode after --: daemon (default), trust, controller, run'
+    # No build deps on purpose: rebuilding the gate client changes its CDHash,
+    # which the resident payload pins, so a rebuild needs a new injection.
+    interactive: true
+    cmds:
+      - sudo tools/window-interception/c4-live.swift --host {{.CLI_ARGS | default "daemon"}}
   build:gate-client:
     deps: [build:inspector]
     desc: Build the disposable guest Mach gate client (does not run it)
@@ -438,16 +506,17 @@ tasks:
       # the live in-process injectors.
       - ./bin/inspector check-bootstrap bin/shoji-amd64 bin/shoji-loader
   loader:
-    deps: [build:inspector]
+    deps: [build:step, build:inspector]
     desc: Build the Odin arm64e Dock loader used by task build on arm64
+    silent: true
     env:
       ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build src/loader -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_ODIN_LOADER=true -no-thread-local -out:bin/shoji-loader -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/inspector normalize-arm64e bin/shoji-loader
-      - '{{.CODESIGN}} --force --sign - bin/shoji-loader'
+      - '{{.STEP}} loader compile "bin/shoji-loader: injects the payload into Dock" -- {{.ODIN_ARM64E}} build src/loader -warnings-as-errors -target:darwin_arm64e -target-features:pauth -define:SHOJI_ODIN_LOADER=true -no-thread-local -out:bin/shoji-loader -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.STEP}} loader normalize "mark arm64e ABI as preview so it can run" -- ./bin/inspector normalize-arm64e bin/shoji-loader'
+      - '{{.STEP}} loader sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - bin/shoji-loader'
   test:loader:
     desc: Run the arm64e loader's in-process self-test
     deps: [loader]

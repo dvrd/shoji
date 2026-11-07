@@ -58,7 +58,29 @@ barrier_thread_stopped :: proc(thread: u32) -> bool {
 	if barrier_thread_info(thread, 3, &info, &count) == 0 && count == size_of(info) / 4 {
 		barrier_last_run_state = info.run_state
 		barrier_last_suspend_count = info.suspend_count
-		return (info.run_state == 2 || info.run_state == 3) && info.suspend_count > 0
+		return barrier_run_state_parked(info.run_state, info.suspend_count)
+	}
+	return false
+}
+
+// Mach thread run states (mach/thread_info.h).
+TH_STATE_RUNNING :: 1
+TH_STATE_STOPPED :: 2
+TH_STATE_WAITING :: 3
+TH_STATE_UNINTERRUPTIBLE :: 4
+TH_STATE_HALTED :: 5
+
+// A suspended thread is parked once it is off-core: stopped, or blocked in
+// the kernel. Blocked threads check their suspension before returning to
+// user space, so they cannot execute user code until resumed. Uninterruptible
+// waits must count: WindowServer keeps a thread in one (GPU/IOKit) for long
+// periods, and requiring STOPPED made every barrier attempt fail (status 5,
+// failure 8). Only RUNNING may still be executing user instructions.
+barrier_run_state_parked :: proc "contextless" (run_state, suspend_count: i32) -> bool {
+	if suspend_count <= 0 {return false}
+	switch run_state {
+	case TH_STATE_STOPPED, TH_STATE_WAITING, TH_STATE_UNINTERRUPTIBLE, TH_STATE_HALTED:
+		return true
 	}
 	return false
 }

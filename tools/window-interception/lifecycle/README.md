@@ -68,7 +68,7 @@ no compatibility claim is made for those configurations.
 
 Live: `shoji --ws-report [DIR]` (see [UPDATES.md](UPDATES.md#4-diagnostics-for-bug-reports-d2)).
 
-Run `swift tools/window-interception/lifecycle/report.swift PATH/response.bin`
+Run `tools/window-interception/lifecycle/report.swift PATH/response.bin`
 to export a V3 observer ring as JSON with its SHA-256, retained events, target
 IDs, results and timebase-correct durations. Truncated, torn and inconsistent
 snapshots are refused. This reads saved files only and does not establish live

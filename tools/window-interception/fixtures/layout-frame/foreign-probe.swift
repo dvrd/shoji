@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // C1 production prerequisite: does the staged layout apply to windows owned by
 // OTHER processes, triggered by a marker owned by a THIRD process (as a
 // Shoji-owned marker would be)? The C1 fixture proved same-owner only.
@@ -26,7 +26,7 @@ func sh(_ launch: String, _ args: [String], toFile: String? = nil, background: B
     var o = ""; if let pipe = pipe { o = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "" }
     p.waitUntilExit(); return (p.terminationStatus, o, p)
 }
-func ctl(_ args: [String]) -> String { sh("swift", [src + "/gate-ctl.swift"] + args).1 }
+func ctl(_ args: [String]) -> String { sh(src + "/gate-ctl.swift", args).1 }
 func tee(_ path: String, _ s: String, append: Bool = false) {
     print(s, terminator: s.hasSuffix("\n") ? "" : "\n")
     if append, let fh = FileHandle(forWritingAtPath: path) { fh.seekToEndOfFile(); fh.write(Data((s.hasSuffix("\n") ? s : s + "\n").utf8)); try? fh.close() }

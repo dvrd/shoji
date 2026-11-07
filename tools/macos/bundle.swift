@@ -1,6 +1,6 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Package the existing signed runtime as a macOS background application.
-// Run: swift tools/macos/bundle.swift   (task build:app)
+// Run: tools/macos/bundle.swift   (task build:app)
 import Foundation
 
 let fm = FileManager.default
@@ -70,6 +70,12 @@ for name in ["shoji", "shoji-loader"] {
         catch { fail("cannot copy \(name): \(error)") }
     }
 }
+// `shoji --load-sa` loads the Dock payload from Resources; the sudoers rule
+// pins only the executable, so the payload must travel inside the bundle.
+let payload = binDir.appendingPathComponent("shoji-sa.dylib")
+guard fm.fileExists(atPath: payload.path) else { fail("missing \(payload.path); run task addition") }
+do { try fm.copyItem(at: payload, to: resources.appendingPathComponent("shoji-sa.dylib")) }
+catch { fail("cannot copy Dock payload: \(error)") }
 do { try fm.copyItem(at: icon, to: resources.appendingPathComponent("Shoji.icns")) }
 catch { fail("cannot copy icon: \(error)") }
 

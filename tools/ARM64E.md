@@ -48,7 +48,7 @@ actually copy it into a target; the arm64 executable always spawns the loader
 and dead-strips its own copy.
 
 For a machine already configured to permit Dock injection, the live test is
-`sudo ./bin/shoji --load-sa "$PWD/bin/shoji-sa.dylib"`, followed by
+`sudo ./bin/shoji --load-sa`, followed by
 `./bin/shoji --check-sa` as the desktop user. The first live attempt
 (2026-09-23) was blocked before injection: `sudo -n` required a password, and
 the unprivileged helper returned `cannot obtain Dock task port (5)`. On
