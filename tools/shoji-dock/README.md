@@ -32,7 +32,7 @@ To retry discovery after package extraction, use `fetch --build BUILD --out DIR 
 
 MobileAsset ZIPs inside SharedSupport are recognized. The scanner visits numbered `AssetData/payloadv2/payload.NNN` members one at a time and asks Apple's `aa` to extract only Dock and its system version metadata. It excludes firmware, patch and ECC files. Shoji includes a pinned, statically linked 0BSD decoder for `pbzm` / LZRAVEN. The Odin container reader validates sizes, processes one chunk at a time with a 64 MiB per-chunk limit, rejects corrupt streams and removes partial output. This successfully extracted build 26A434's Dock on macOS 15.6; no additional decoder installation is required.
 
-**Validation limit:** download/package expansion and image mounting ran in the user's terminal; the new decoder was validated against the retained real MobileAsset ZIP. The agent environment cannot resolve Apple's download hosts or mount disk images. See [recorded evidence](../../docs/DOCK_SCANNER_VALIDATION.md) for the validation boundaries. Static scanning does not establish live injection compatibility.
+**Validation limit:** download/package expansion and image mounting ran in the user's terminal; the new decoder was validated against the retained real MobileAsset ZIP. The agent environment cannot resolve Apple's download hosts or mount disk images. Static scanning does not establish live injection compatibility.
 
 ## Reading scan results
 
