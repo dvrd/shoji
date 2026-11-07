@@ -1,13 +1,13 @@
 # C1: two-window layout and per-frame pixel experiment
 
-This is the next experiment after
-server-context placement. It targets
-only the disposable `Shoji Test` guest, build 26A434. It does not integrate
-the experimental payload into the production Shoji daemon.
+This experiment followed server-context placement and ran in the disposable
+`Shoji Test` VM, build 26A434. The layout batch it proved now serves the Shoji
+daemon on 26B123; see the
+[payload README](../../../../src/payloads/windowserver/README.md).
 
-**Fixture acceptance passed:** three matched repetitions, 18 gated layout
-changes, zero mixed frames in 852 change-interval frames, maximum complete
-callback 0.472 ms. See RESULTS.md for evidence and limitations.
+**Fixture acceptance passed (26A434):** three matched repetitions, 18 gated
+layout changes, zero mixed frames in 852 change-interval frames, maximum
+complete callback 0.472 ms.
 
 ## Question and acceptance
 
@@ -137,5 +137,5 @@ the authorized capture app unchanged while collecting a comparable run set.
 - WindowServer retained PID 50224 with no new crash report. Temporary fixture
   processes and capture jobs were cleaned up. Raw failed permission and
   sparse-capture attempts remain archived and excluded from accepted runs.
-- C1's bounded fixture experiment is complete. Production integration and
-  broader behavior remain unvalidated; see RESULTS.md.
+- C1's bounded fixture experiment is complete. Production integration has since
+  been live-verified through the daemon on 26B123.

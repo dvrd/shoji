@@ -25,4 +25,4 @@ After creating a package, verify it with `inspector check-archive ARCHIVE`.
 `task package` performs both steps. Cleanup preserves the runtime, all three CLIs,
 the arm64e compiler, unknown files, symlinks and research artifacts.
 
-See [the shared workflow](../../docs/DEVELOPMENT_TOOLS.md).
+See [the development guide](../../docs/DEVELOPMENT.md).

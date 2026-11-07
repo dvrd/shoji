@@ -18,12 +18,12 @@ Relevant source:
 
 | Responsibility | Source |
 | --- | --- |
-| CLI entry and loader delegation | [main](../src/main.odin), [injector](../src/dock/loader.odin) |
-| Code copied into the target | [bootstrap](../src/dock/loader.odin) |
-| arm64e thread-state handling | [state](../src/dock/state_arm64.odin) |
-| Library initialization and requests | [server](../src/dock_payload/payload.odin) |
-| Finding private Dock objects/functions | [discovery](../src/dock_payload/payload.odin), [patterns](../src/dock/patterns_arm64.odin) |
-| Swift calling-convention bridge | [bridge](../src/dock/calls_arm64.odin) |
+| CLI entry and loader delegation | [main](../src/main.odin), [injector](../src/inject/loader.odin) |
+| Code copied into the target | [bootstrap](../src/inject/loader.odin) |
+| arm64e thread-state handling | [state](../src/inject/state_arm64.odin) |
+| Library initialization and requests | [server](../src/payloads/dock/payload.odin) |
+| Finding private Dock objects/functions | [discovery](../src/payloads/dock/payload.odin), [patterns](../src/dock/patterns_arm64.odin) |
+| Swift calling-convention bridge | [bridge](../src/inject/calls_arm64.odin) |
 
 This is runtime code injection, not an Apple-supported extension point. It does not replace WindowServer or edit Dock's executable on disk. Discovery can additionally patch an animation instruction **in Dock's memory** when its signature resolves and memory protection changes succeed; that is separate from loading the library.
 
@@ -60,6 +60,25 @@ xcrun otool -l /System/Library/CoreServices/Dock.app/Contents/MacOS/Dock
 ```
 
 Do not copy a universal binary's raw offsets into a selected slice or assume file offsets equal runtime offsets. Private framework code may reside in the dyld shared cache; analysis of SkyLight can require matching cache images/symbols in addition to the Dock executable.
+
+## Transaction return values
+
+`SLSTransactionOrderWindowGroup`, `SLSTransactionSetWindowSystemAlpha` and
+`SLSTransactionCommit` return through a void cleanup call (`_Block_release`,
+`os_unfair_lock_unlock`) without assigning `w0`, so their return registers are
+not a `CGError` (disassembled on 24G84, 2026-10-25). Yabai declares them
+`CGError` but discards the results; reading them produced false failures in
+Shoji. The payload declares them without results. Validate the transaction,
+window ownership and existence before submitting, and treat an OK response as
+an acknowledgment of submission, not visual proof. Recheck on a new build.
+
+Argument conventions:
+
+| Function | Arguments |
+| --- | --- |
+| Order window group | `x0` transaction, `w1` window ID, `w2` order, `w3` relative window ID |
+| Set system alpha | `x0` transaction, `w1` window ID, `s0` f32 alpha |
+| Commit | `x0` transaction, `w1` synchronous selector |
 
 ## Tooling gap
 

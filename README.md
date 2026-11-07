@@ -6,8 +6,8 @@ and optional native Space management.
 ## Install
 
 Shoji is currently installed from source; there is no published installer yet.
-The validated target is macOS 15.6 on Apple Silicon. Other versions, including
-macOS 27, have not been fully validated.
+The target is macOS 27.2 (26B123) on Apple Silicon. Earlier validation ran on
+macOS 15.6 (24G84); other versions are not validated.
 
 Install Xcode Command Line Tools, [Odin](https://odin-lang.org/) (with its source
 checkout), and [Task](https://taskfile.dev/). Then, from this repository:
@@ -120,10 +120,20 @@ for more configuration and troubleshooting details.
 
 Basic window management does not require disabling System Integrity Protection
 (SIP). Native Space operations and some window effects use an optional Dock
-payload and require additional system setup. See [SIP and Dock setup](SIP.md)
-before enabling it.
+payload, and single-frame layout changes use an optional WindowServer gate. Both
+require additional system setup; see [privileged setup](SIP.md) before enabling
+them.
 
 ## Project status
 
 See the [production-readiness checklist](TODO.md) for remaining work and
 validation.
+
+## Documentation
+
+- [Development](docs/DEVELOPMENT.md): source map, tools, tests and local files.
+- [Scroll layout](docs/SCROLL_LAYOUT.md) and [Niri parity](docs/NIRI_PARITY.md).
+- [WindowServer roadmap](docs/WINDOWSERVER_ROADMAP.md) and the
+  [gate payload](src/payloads/windowserver/README.md).
+- [Porting status](PORTING.md), [Dock compatibility](tools/DOCK_COMPATIBILITY.md)
+  and [arm64e notes](tools/ARM64E.md).

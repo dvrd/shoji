@@ -22,7 +22,7 @@ Usage: shoji [-c CONFIG] [--sa]
 
 Run without arguments to start the window manager.
 -c, --config FILE   Execute FILE through /bin/sh after the socket starts.
---sa FILE          Load/reload the Dock payload using noninteractive sudo.
+--sa               Load/reload the Dock payload using noninteractive sudo.
 -m, --message      Send a command to the running shoji daemon.
 --inspect          Print a read-only macOS window/display/space snapshot.
 --ws-attach        Load the WindowServer gate and hand it to the caller (root).
