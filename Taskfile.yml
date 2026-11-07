@@ -344,7 +344,7 @@ tasks:
     deps: [build:step, build:inspector]
     desc: Build the WindowServer gate payload that `shoji --ws-attach` loads (does not load it)
     silent: true
-    sources: ['src/payloads/windowserver/*.odin', 'src/windowserver/gate/*.odin', 'src/dock/*.odin']
+    sources: ['src/payloads/windowserver/*.odin', 'src/windowserver/gate/*.odin', 'src/inject/*.odin']
     generates: [bin/shoji-ws.dylib]
     env:
       ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'

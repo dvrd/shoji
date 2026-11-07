@@ -2,6 +2,7 @@ package tests
 
 import e "../src"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 fixed_size_standard_windows_float_without_changing_the_tiled_view :: proc(t: ^testing.T) {
@@ -26,7 +27,7 @@ fixed_size_standard_windows_float_without_changing_the_tiled_view :: proc(t: ^te
 	)
 	testing.expect(t, w.floating)
 	testing.expect(t, !e.managed(w))
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, w.id) == nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, w.id) == nil)
 	testing.expect(t, before == e.space_by_id(&m, 100).view.root)
 	testing.expect_value(t, w.frame, e.Rect{200, 200, 300, 400})
 	testing.expect_value(t, e.flush(&m, e.space_by_id(&m, 100)), "")
@@ -59,7 +60,7 @@ explicit_management_can_tile_a_fixed_size_window :: proc(t: ^testing.T) {
 		},
 	)
 	testing.expect(t, !w.floating && e.managed(w))
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, w.id) != nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, w.id) != nil)
 }
 
 @(test)
@@ -80,7 +81,7 @@ unknown_resize_capability_does_not_exclude_standard_windows :: proc(t: ^testing.
 		},
 	)
 	testing.expect(t, !w.floating && e.managed(w))
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, w.id) != nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, w.id) != nil)
 }
 
 @(test)
@@ -103,7 +104,7 @@ accessory_panels_float_above_tiled_documents_and_respect_layer_overrides :: proc
 		},
 	)
 	testing.expect(t, w.floating && !e.managed(w))
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, w.id) == nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, w.id) == nil)
 	testing.expect_value(t, e.apply_window_layers(&m), "")
 	testing.expect_value(t, w.layer, "above")
 	found := false

@@ -3,6 +3,7 @@ package tests
 import e "../src"
 import "core:encoding/json"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 scroll_close_fills_the_vacated_viewport_and_restores_widths_on_open :: proc(t: ^testing.T) {
@@ -54,7 +55,7 @@ scroll_resize_shuffle_and_focus_use_animated_frame_actions :: proc(
 	testing.expect_value(t, m.windows[1].frame.w, f64(600))
 	testing.expect_value(t, m.windows[2].frame.w, f64(500))
 	testing.expect(t, !e.execute(&m, {"window", "1", "--swap", "east"}).failed)
-	testing.expect_value(t, e.first(m.spaces[0].view.root).windows[0], u32(2))
+	testing.expect_value(t, layout.first(m.spaces[0].view.root).windows[0], u32(2))
 	frames := 0
 	for a in r.actions {
 		if a.kind == .Frame {
@@ -81,8 +82,8 @@ scroll_rows_and_return_to_bsp_keep_all_window_memberships :: proc(
 	testing.expect(t, !e.execute(&m, {"space", "--layout", "bsp"}).failed)
 	testing.expect(
 		t,
-		e.find(m.spaces[0].view.root, 1) != nil &&
-		e.find(m.spaces[0].view.root, 2) != nil,
+		layout.find(m.spaces[0].view.root, 1) != nil &&
+		layout.find(m.spaces[0].view.root, 2) != nil,
 	)
 	testing.expect_value(t, m.windows[1].frame.w, f64(500))
 }
@@ -109,13 +110,13 @@ scroll_manual_pan_is_clamped_and_not_undone_by_refresh :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(
 		t,
-		e.find(m.spaces[0].view.root, 1).frame.x,
+		layout.find(m.spaces[0].view.root, 1).frame.x,
 		f64(-500),
 	)
 	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
 	testing.expect_value(
 		t,
-		e.find(m.spaces[0].view.root, 1).frame.x,
+		layout.find(m.spaces[0].view.root, 1).frame.x,
 		f64(-500),
 	)
 	data: [dynamic]e.Space_JSON
@@ -239,7 +240,7 @@ scroll_warp_preserves_width_and_places_window_before_its_west_neighbor :: proc(
 		!e.execute(&m, {"window", "2", "--column-width", "abs:450"}).failed,
 	)
 	testing.expect(t, !e.execute(&m, {"window", "2", "--warp", "west"}).failed)
-	testing.expect_value(t, e.first(m.spaces[0].view.root).windows[0], u32(2))
+	testing.expect_value(t, layout.first(m.spaces[0].view.root).windows[0], u32(2))
 	testing.expect_value(t, m.windows[2].frame.w, f64(450))
 	testing.expect_value(t, m.windows[1].frame.w, f64(500))
 }

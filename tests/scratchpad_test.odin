@@ -2,6 +2,7 @@ package tests
 
 import e "../src"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 scratchpad_labels_are_unique_and_toggle_without_focused_window :: proc(t: ^testing.T) {
@@ -9,7 +10,7 @@ scratchpad_labels_are_unique_and_toggle_without_focused_window :: proc(t: ^testi
 	defer e.manager_destroy(&m);defer delete(r.actions)
 	testing.expect(t, !e.execute(&m, []string{"window", "1", "--scratchpad", "terminal"}).failed)
 	testing.expect(t, m.windows[1].floating)
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) == nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, 1) == nil)
 	testing.expect(t, e.execute(&m, []string{"window", "2", "--scratchpad", "terminal"}).failed)
 	e.focus_window(&m, 0)
 	testing.expect(t, !e.execute(&m, []string{"window", "--toggle", "terminal"}).failed)
@@ -23,7 +24,7 @@ scratchpad_labels_are_unique_and_toggle_without_focused_window :: proc(t: ^testi
 	testing.expect_value(t, m.focused, u32(1))
 	testing.expect(t, !e.execute(&m, []string{"window", "1", "--scratchpad"}).failed)
 	testing.expect_value(t, m.windows[1].scratchpad, "")
-	testing.expect(t, e.find(e.space_by_id(&m, 100).view.root, 1) != nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 100).view.root, 1) != nil)
 }
 
 @(test)

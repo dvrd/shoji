@@ -3,6 +3,7 @@ package tests
 import mac "../src"
 import "core:testing"
 import "core:time"
+import layout "../src/layout"
 
 @(test)
 three_finger_stack_swipe_tracks_direction_and_latches_until_release :: proc(t: ^testing.T) {
@@ -228,8 +229,8 @@ cross_space_mouse_stack_commits_only_after_transport_success :: proc(t: ^testing
 	r.fail = false
 	testing.expect_value(t, mac.mouse_drop(&m, d, 3, {500, 400}), "")
 	testing.expect_value(t, m.windows[1].space, w.space)
-	testing.expect_value(t, mac.find(s.view.root, 3).count, 2)
-	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 1) == nil)
+	testing.expect_value(t, layout.find(s.view.root, 3).count, 2)
+	testing.expect(t, layout.find(mac.space_by_id(&m, 100).view.root, 1) == nil)
 }
 
 @(test)
@@ -303,7 +304,7 @@ mouse_bsp_resize_and_drop_preserve_membership :: proc(t: ^testing.T) {
 	s := mac.space_by_id(&m, 100);s.view.split = .Vertical;mac.flush(&m, s)
 	w :=
 		m.windows[1];d := mac.mouse_begin(&m, 1, .Resize, {w.frame.x + w.frame.w - 1, w.frame.y + 1})
-	n := mac.find(s.view.root, 1)
+	n := layout.find(s.view.root, 1)
 	testing.expect(t, mac.mouse_fence(n, .Vertical, false) == s.view.root)
 	testing.expect(t, mac.mouse_fence(n, .Vertical, true) == nil)
 	testing.expect_value(t, mac.mouse_update(&m, &d, {d.origin.x + 100, d.origin.y}), "")
@@ -313,8 +314,8 @@ mouse_bsp_resize_and_drop_preserve_membership :: proc(t: ^testing.T) {
 		m.windows[2];center := mac.Mouse_Point{target.frame.x + target.frame.w / 2, target.frame.y + target.frame.h / 2}
 	m.mouse.drop_stack = true
 	testing.expect_value(t, mac.mouse_drop(&m, d, 2, center), "")
-	testing.expect_value(t, mac.find(s.view.root, 2).count, 2)
-	testing.expect(t, mac.find(s.view.root, 1) == mac.find(s.view.root, 2))
+	testing.expect_value(t, layout.find(s.view.root, 2).count, 2)
+	testing.expect(t, layout.find(s.view.root, 1) == layout.find(s.view.root, 2))
 }
 foreign import test_cg "system:CoreGraphics.framework"
 @(default_calling_convention = "c")
@@ -332,7 +333,7 @@ scroll_double_click_resize_edge_toggles_width_and_resets_row :: proc(t: ^testing
 	mac.execute(&state.manager, {"window", "1", "--stack", "2"})
 	mac.execute(&state.manager, {"window", "1", "--row-height", "abs:250"})
 	w := state.manager.windows[1]
-	n := mac.find(state.manager.spaces[0].view.root, 1)
+	n := layout.find(state.manager.spaces[0].view.root, 1)
 	frame := w.frame
 	down := CGEventCreateMouseEvent(nil, 1, {frame.x + frame.w - 1, frame.y + frame.h / 2}, 0)
 	defer mac.CFRelease(down)

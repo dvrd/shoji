@@ -17,6 +17,7 @@ foreign import sls "system:SkyLight.framework"
 foreign import cocoa "system:Cocoa.framework"
 foreign import libc "system:c"
 
+Rect :: n.Rect
 CFRelease :: n.CFRelease
 CFGetTypeID :: n.CFGetTypeID
 CFStringGetTypeID :: n.CFStringGetTypeID

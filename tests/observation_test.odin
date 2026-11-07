@@ -4,6 +4,7 @@ import mac "../src"
 import "core:mem"
 import "core:strings"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 unavailable_appearance_preserves_the_last_observed_window_layer :: proc(
@@ -92,7 +93,7 @@ new_window_reconciliation_knows_resize_capability_before_tiling :: proc(
 	testing.expect(t, created)
 	testing.expect(
 		t,
-		mac.find(mac.space_by_id(&state.manager, 100).view.root, w.id) == nil,
+		layout.find(mac.space_by_id(&state.manager, 100).view.root, w.id) == nil,
 	)
 }
 

@@ -2,6 +2,7 @@ package tests
 
 import mac "../src"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 all_native_observations_use_one_admission_boundary :: proc(t: ^testing.T) {
@@ -16,7 +17,7 @@ all_native_observations_use_one_admission_boundary :: proc(t: ^testing.T) {
         clear(&r.actions)
         mac.opening_observe(&state, {}, nil, value)
         testing.expect_value(t, len(r.actions), 0)
-        testing.expect(t, mac.find(mac.space_by_id(&state.manager, 100).view.root, w.id) != nil)
+        testing.expect(t, layout.find(mac.space_by_id(&state.manager, 100).view.root, w.id) != nil)
     }
 }
 
@@ -49,7 +50,7 @@ newcomer_is_concealed_during_collection_before_other_apps_are_scanned :: proc(t:
     clear(&r.actions)
     w := mac.opening_observe(&state, {}, nil, value)
     testing.expect_value(t, w.opening.phase, mac.Opening_Phase.Pending)
-    testing.expect(t, mac.find(mac.space_by_id(&state.manager, 100).view.root, w.id) == nil)
+    testing.expect(t, layout.find(mac.space_by_id(&state.manager, 100).view.root, w.id) == nil)
     concealed := false
     for a in r.actions {
         if a.kind == .Opacity && a.window == w.id && a.value == 0 {concealed = true}

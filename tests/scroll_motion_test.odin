@@ -4,6 +4,7 @@ import mac "../src"
 import "core:math"
 import "core:testing"
 import "core:time"
+import layout "../src/layout"
 
 foreign import motion_test_cg "system:CoreGraphics.framework"
 foreign motion_test_cg {
@@ -168,7 +169,7 @@ scroll_animated_camera_rebases_when_an_earlier_column_resizes_or_disappears :: p
 	mac.execute(&m, {"config", "scroll_animation", "on"})
 	m.animation_duration = 0.5
 	s := m.spaces[0]
-	mac.find(s.view.root, 1).column_width = 700
+	layout.find(s.view.root, 1).column_width = 700
 	mac.flush(&m, s)
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
 	testing.expect(t, s.view.scroll.motion.active)

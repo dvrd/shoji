@@ -3,6 +3,7 @@ package tests
 import e "../src"
 import "core:strings"
 import "core:testing"
+import layout "../src/layout"
 
 fail_reorder_and_compensation :: proc(user: rawptr, action: e.Action) -> string {
 	r := (^Recorder)(user)
@@ -149,7 +150,7 @@ cross_display_space_swaps_move_windows_and_compensate_failure :: proc(t: ^testin
 	testing.expect_value(t, m.windows[1].space, u64(200))
 	testing.expect_value(t, m.windows[2].space, u64(200))
 	testing.expect_value(t, m.windows[3].space, u64(100))
-	testing.expect(t, e.find(s.view.root, 1) != nil && e.find(s.view.root, 3) == nil)
+	testing.expect(t, layout.find(s.view.root, 1) != nil && layout.find(s.view.root, 3) == nil)
 	testing.expect(t, e.space_command(&m, []string{"1", "--move", "2"}).failed)
 	testing.expect(t, !e.space_command(&m, []string{"1", "--display", "2"}).failed)
 	testing.expect(t, !e.space_command(&m, []string{"--create", "2"}).failed)

@@ -2,6 +2,7 @@ package tests
 
 import e "../src"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 space_override_keys_outlive_the_ipc_request_buffer :: proc(t: ^testing.T) {
@@ -114,7 +115,7 @@ display_order_and_window_origin_use_configured_displays :: proc(t: ^testing.T) {
 		},
 	)
 	testing.expect_value(t, w.space, u64(200))
-	testing.expect(t, e.find(e.space_by_id(&m, 200).view.root, 3) != nil)
+	testing.expect(t, layout.find(e.space_by_id(&m, 200).view.root, 3) != nil)
 	r.fail = true
 	w = e.add_window(
 		&m,
@@ -148,19 +149,19 @@ zoom_persistence_survives_tree_rebuilds_and_cleans_references :: proc(t: ^testin
 	m: e.Manager;r: Recorder;fixture(&m, &r)
 	defer e.manager_destroy(&m);defer delete(r.actions)
 	s := e.space_by_id(&m, 100)
-	n := e.find(s.view.root, 1);n.zoom = s.view.root
+	n := layout.find(s.view.root, 1);n.zoom = s.view.root
 	e.add_window(
 		&m,
 		e.Window{id = 3, space = 100, role = "AXWindow", subrole = "AXStandardWindow"},
 	)
-	testing.expect_value(t, e.find(s.view.root, 1).zoom, s.view.root)
+	testing.expect_value(t, layout.find(s.view.root, 1).zoom, s.view.root)
 	e.remove_window(&m, 2)
-	testing.expect_value(t, e.find(s.view.root, 1).zoom, s.view.root)
+	testing.expect_value(t, layout.find(s.view.root, 1).zoom, s.view.root)
 	e.set_layout(&m, s, .Stack)
-	testing.expect_value(t, e.find(s.view.root, 1).zoom, s.view.root)
+	testing.expect_value(t, layout.find(s.view.root, 1).zoom, s.view.root)
 	e.set_layout(&m, s, .BSP)
-	testing.expect_value(t, e.find(s.view.root, 1).zoom, s.view.root)
+	testing.expect_value(t, layout.find(s.view.root, 1).zoom, s.view.root)
 	testing.expect(t, !e.config(&m, []string{"window_zoom_persist", "off"}).failed)
 	e.remove_window(&m, 3)
-	testing.expect(t, e.find(s.view.root, 1).zoom == nil)
+	testing.expect(t, layout.find(s.view.root, 1).zoom == nil)
 }

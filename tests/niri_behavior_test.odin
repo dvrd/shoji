@@ -2,6 +2,7 @@ package tests
 
 import e "../src"
 import "core:testing"
+import layout "../src/layout"
 
 // Independently authored behavior fixtures. Numerical expectations and assumptions
 // are documented in docs/NIRI_PORT_REFERENCE.md; upstream tests are not copied.
@@ -27,7 +28,7 @@ niri_open :: proc(m: ^e.Manager, id: u32, width: f64 = 0) {
 		},
 	)
 	if width > 0 {
-		e.find(m.spaces[0].view.root, id).column_width = width
+		layout.find(m.spaces[0].view.root, id).column_width = width
 	}
 	e.focus_window(m, id)
 	e.flush(m, m.spaces[0])
@@ -44,7 +45,7 @@ niri_behavior_three_and_four_columns_keep_half_width :: proc(t: ^testing.T) {
 	niri_open(&m, 3)
 	testing.expect_value(
 		t,
-		e.find(m.spaces[0].view.root, 1).frame.x,
+		layout.find(m.spaces[0].view.root, 1).frame.x,
 		f64(-616),
 	)
 	testing.expect_value(t, m.windows[2].frame.x, f64(16))
@@ -68,8 +69,8 @@ niri_behavior_insert_right_of_active_and_restore_after_close :: proc(
 	e.focus_window(&m, 2); e.flush(&m, m.spaces[0]); niri_open(&m, 3)
 	e.focus_window(&m, 2); e.flush(&m, m.spaces[0]); niri_open(&m, 4)
 	ids := [4]u32{1, 2, 4, 3}
-	n := e.first(m.spaces[0].view.root)
-	for id in ids { testing.expect_value(t, n.windows[0], id); n = e.next(n) }
+	n := layout.first(m.spaces[0].view.root)
+	for id in ids { testing.expect_value(t, n.windows[0], id); n = layout.next(n) }
 	testing.expect_value(t, m.windows[2].frame.x, f64(16))
 	testing.expect_value(t, m.windows[4].frame.x, f64(648))
 }
@@ -96,7 +97,7 @@ niri_behavior_left_resize_preserves_active_screen_position :: proc(
 	niri_open(&m, 3, 500)
 	// A width change acknowledged on the left must not move the focused C.
 	before := m.windows[3].frame.x
-	e.find(m.spaces[0].view.root, 1).column_width = 700
+	layout.find(m.spaces[0].view.root, 1).column_width = 700
 	e.flush(&m, m.spaces[0])
 	testing.expect_value(t, m.windows[3].frame.x, before)
 	testing.expect_value(t, m.windows[2].frame.x, f64(148))
@@ -111,7 +112,7 @@ niri_behavior_rows_use_integer_edges_without_losing_height :: proc(
 	niri_open(&m, 2); niri_open(&m, 3)
 	testing.expect(t, !e.execute(&m, {"window", "1", "--stack", "2"}).failed)
 	testing.expect(t, !e.execute(&m, {"window", "1", "--stack", "3"}).failed)
-	n := e.find(m.spaces[0].view.root, 1)
+	n := layout.find(m.spaces[0].view.root, 1)
 	heights := [3]f64{245, 246, 245}
 	ys := [3]f64{16, 277, 539}
 	for i in 0 ..< n.count {
@@ -141,7 +142,7 @@ niri_behavior_close_return_refits_a_resized_previous_column :: proc(
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	e.find(m.spaces[0].view.root, 2).column_width = 900
+	layout.find(m.spaces[0].view.root, 2).column_width = 900
 	e.flush(&m, m.spaces[0])
 	e.remove_window(&m, 3); e.flush(&m, m.spaces[0])
 	testing.expect_value(t, m.windows[2].frame.x, f64(364))

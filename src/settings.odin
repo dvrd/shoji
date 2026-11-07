@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
+import layout "layout"
 
 // Configuration
 // ------------------------------------------------------------------------
@@ -509,8 +510,8 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		p^ = value != no
 		axis :=
 			value == "x-axis" \
-				? Split.Horizontal \
-				: (value == "y-axis" ? Split.Vertical : Split.Auto)
+				? layout.Split.Horizontal \
+				: (value == "y-axis" ? layout.Split.Vertical : layout.Split.Auto)
 		if name == "auto_balance" {
 			if s != nil {
 				s.view.balance_axis = axis
@@ -533,7 +534,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 	case "split_type":
 		p := s != nil ? &s.view.split : &m.split
-		names := [Split]string {
+		names := [layout.Split]string {
 			.Auto       = "auto",
 			.Vertical   = "vertical",
 			.Horizontal = "horizontal",
@@ -544,7 +545,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		valid := false
 		for name, index in names {
 			if name == value {
-				p^ = Split(index)
+				p^ = layout.Split(index)
 				valid = true
 			}
 		}

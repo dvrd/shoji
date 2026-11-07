@@ -1,6 +1,7 @@
 package shoji
 
 import "core:strings"
+import layout "layout"
 
 // Scratchpad
 // ------------------------------------------------------------------------
@@ -13,9 +14,9 @@ space_landing :: proc(w: ^Window, source, target: ^Space) -> (landing: Rect, sta
 	   (target.view.layout != .BSP && target.view.layout != .Stack) {
 		return
 	}
-	if !add(&target.view, w.id) {return}
-	view_update(&target.view)
-	if n := find(target.view.root, w.id); n != nil {landing = frame_for(n)}
+	if !layout.add(&target.view, w.id) {return}
+	layout.view_update(&target.view)
+	if n := layout.find(target.view.root, w.id); n != nil {landing = layout.frame_for(n)}
 	return landing, true
 }
 
@@ -42,7 +43,7 @@ scratchpad_show :: proc(m: ^Manager, w: ^Window) -> string {
 			return err
 		}
 		if previous := space_by_id(m, w.space); previous != nil {
-			remove(&previous.view, w.id)
+			layout.remove(&previous.view, w.id)
 		}
 		w.space, w.display = s.id, s.display
 	}
@@ -81,7 +82,7 @@ scratchpad_assign :: proc(m: ^Manager, w: ^Window, label: string) -> string {
 		delete(w.scratchpad); w.scratchpad = copy
 		w.floating = true; w.manage_override = false
 		if s := space_by_id(m, w.space); s != nil {
-			remove(&s.view, w.id); return flush(m, s)
+			layout.remove(&s.view, w.id); return flush(m, s)
 		}
 	} else {
 		if w.scratchpad == "" {
@@ -96,7 +97,7 @@ scratchpad_assign :: proc(m: ^Manager, w: ^Window, label: string) -> string {
 			w.opening.phase = .Admitted
 		}
 		if s := space_by_id(m, w.space); s != nil && layout_admitted(w) {
-			add(&s.view, w.id); return flush(m, s)
+			layout.add(&s.view, w.id); return flush(m, s)
 		}
 	}
 	return ""

@@ -1,11 +1,10 @@
-package shoji
+package layout
 
+import n "../native"
 import "core:math"
 
 // Layout tree
 // ------------------------------------------------------------------------
-
-import n "native"
 
 Rect :: n.Rect
 

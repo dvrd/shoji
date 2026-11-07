@@ -3,6 +3,7 @@ package tests
 import mac "../src"
 import "core:strings"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 desktop_validation_only_observes_the_owned_fixture_application :: proc(t: ^testing.T) {
@@ -69,6 +70,6 @@ transient_display_failures_preserve_the_last_complete_desktop :: proc(t: ^testin
 		testing.expect_value(t, state.manager.displays[0].label, "work")
 		testing.expect_value(t, state.manager.spaces[0], space)
 		testing.expect_value(t, space.view.root, root)
-		testing.expect(t, mac.find(root, 1) != nil && mac.find(root, 2) != nil)
+		testing.expect(t, layout.find(root, 1) != nil && layout.find(root, 2) != nil)
 	}
 }

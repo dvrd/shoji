@@ -3,6 +3,7 @@ package tests
 import mac "../src"
 import "core:encoding/json"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 unmatched_and_appearance_rules_preserve_existing_splits_and_stacks :: proc(t: ^testing.T) {
@@ -10,19 +11,19 @@ unmatched_and_appearance_rules_preserve_existing_splits_and_stacks :: proc(t: ^t
 	defer mac.manager_destroy(&m);defer delete(r.actions)
 	s := mac.space_by_id(&m, 100);s.view.root.ratio = 0.7
 	mac.flush(&m, s)
-	root := s.view.root;first := mac.find(root, 1);second := mac.find(root, 2)
+	root := s.view.root;first := layout.find(root, 1);second := layout.find(root, 2)
 	testing.expect(
 		t,
 		!mac.execute(&m, []string{"rule", "--apply", "app=^NoMatch$", "manage=off"}).failed,
 	)
 	testing.expect_value(t, s.view.root.ratio, f64(0.7))
-	testing.expect(t, mac.find(root, 1) == first && mac.find(root, 2) == second)
+	testing.expect(t, layout.find(root, 1) == first && layout.find(root, 2) == second)
 	testing.expect(
 		t,
 		!mac.execute(&m, []string{"rule", "--apply", "app=^Terminal$", "opacity=0.5"}).failed,
 	)
 	testing.expect_value(t, s.view.root.ratio, f64(0.7))
-	testing.expect(t, mac.find(root, 1) == first && mac.find(root, 2) == second)
+	testing.expect(t, layout.find(root, 1) == first && layout.find(root, 2) == second)
 	mac.execute(&m, []string{"window", "1", "--stack", "2"})
 	stack := s.view.root;order := stack.order;windows := stack.windows
 	testing.expect(
@@ -52,7 +53,7 @@ creation_rule_failure_does_not_prevent_later_management_effect :: proc(t: ^testi
 		},
 	)
 	testing.expect(t, w.floating)
-	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 3) == nil)
+	testing.expect(t, layout.find(mac.space_by_id(&m, 100).view.root, 3) == nil)
 }
 
 @(test)
@@ -65,8 +66,8 @@ full_stack_warp_fails_before_moving_or_removing_source :: proc(t: ^testing.T) {
 	testing.expect(t, mac.execute(&m, []string{"window", "1", "--warp", "10"}).failed)
 	testing.expect_value(t, len(r.actions), 0)
 	testing.expect_value(t, m.windows[1].space, u64(100))
-	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, 1) != nil)
-	testing.expect_value(t, target.view.root.count, mac.MAX_STACK)
+	testing.expect(t, layout.find(mac.space_by_id(&m, 100).view.root, 1) != nil)
+	testing.expect_value(t, target.view.root.count, layout.MAX_STACK)
 	testing.expect(t, mac.execute(&m, []string{"window", "1", "--space", "2"}).failed)
 	testing.expect_value(t, len(r.actions), 0)
 	m.windows[10].frame = {0, 0, 1000, 800}
@@ -81,14 +82,14 @@ sticky_toggle_updates_membership_and_inactive_space_visibility :: proc(t: ^testi
 	s := mac.space_by_id(&m, 100)
 	testing.expect(t, !mac.execute(&m, []string{"window", "1", "--toggle", "sticky"}).failed)
 	testing.expect(t, !mac.managed(m.windows[1]))
-	testing.expect(t, mac.find(s.view.root, 1) == nil)
+	testing.expect(t, layout.find(s.view.root, 1) == nil)
 	s.visible = false
 	testing.expect(t, mac.window_json(&m, m.windows[1]).is_visible)
 	m.windows[1].hidden = true
 	testing.expect(t, !mac.window_json(&m, m.windows[1]).is_visible)
 	m.windows[1].hidden = false
 	testing.expect(t, !mac.execute(&m, []string{"window", "1", "--toggle", "sticky"}).failed)
-	testing.expect(t, mac.find(s.view.root, 1) != nil)
+	testing.expect(t, layout.find(s.view.root, 1) != nil)
 	testing.expect(t, !mac.window_json(&m, m.windows[1]).is_visible)
 }
 
@@ -183,7 +184,7 @@ failed_creation_rules_retry_and_reserve_one_shot_for_original_window :: proc(t: 
 	testing.expect(t, !w.rules_pending && w.rule_error == "")
 	testing.expect_value(t, w.opacity, f64(0.4))
 	testing.expect_value(t, len(m.rules), 1)
-	testing.expect(t, mac.find(mac.space_by_id(&m, 100).view.root, w.id) == nil)
+	testing.expect(t, layout.find(mac.space_by_id(&m, 100).view.root, w.id) == nil)
 }
 
 @(test)
@@ -215,13 +216,13 @@ sticky_rules_remove_and_reinsert_only_the_matched_window :: proc(t: ^testing.T) 
 		t,
 		!mac.execute(&m, []string{"rule", "--apply", "app=^Terminal$", "sticky=on"}).failed,
 	)
-	testing.expect(t, mac.find(s.view.root, 1) == nil && mac.find(s.view.root, 2) != nil)
+	testing.expect(t, layout.find(s.view.root, 1) == nil && layout.find(s.view.root, 2) != nil)
 	testing.expect(
 		t,
 		!mac.execute(&m, []string{"rule", "--apply", "app=^Terminal$", "sticky=off"}).failed,
 	)
-	testing.expect(t, mac.find(s.view.root, 1) != nil && mac.find(s.view.root, 2) != nil)
+	testing.expect(t, layout.find(s.view.root, 1) != nil && layout.find(s.view.root, 2) != nil)
 	r.fail = true
 	testing.expect(t, mac.execute(&m, []string{"window", "1", "--toggle", "sticky"}).failed)
-	testing.expect(t, !m.windows[1].sticky && mac.find(s.view.root, 1) != nil)
+	testing.expect(t, !m.windows[1].sticky && layout.find(s.view.root, 1) != nil)
 }

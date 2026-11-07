@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
+import layout "layout"
 
 // Rules and signals
 // ------------------------------------------------------------------------
@@ -136,7 +137,7 @@ apply_rules :: proc(
 		w.floating = !enabled; w.manage_override = enabled
 		if !managed(w) {
 			if s := space_by_id(m, w.space); s != nil {
-				remove(&s.view, w.id)
+				layout.remove(&s.view, w.id)
 			}
 		}
 	}
@@ -189,7 +190,7 @@ apply_rule_effects :: proc(m: ^Manager, w: ^Window, r: Rule) -> string {
 		if target.id != w.space {
 			if managed(w) &&
 			   target.view.layout != .Float &&
-			   !can_add(&target.view, m.focused) {
+			   !layout.can_add(&target.view, m.focused) {
 				return "rule destination tiling tree is full"
 			}
 			if err := perform(

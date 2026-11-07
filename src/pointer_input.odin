@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:time"
+import layout "layout"
 
 // Pointer interaction
 // ------------------------------------------------------------------------
@@ -466,7 +467,7 @@ mouse_tick :: proc(
 		mouse.edge_double_pending = 0
 		if w := m.windows[id]; w != nil && w.generation == generation && !m.suspended && !m.gesture_active {
 			s := space_by_id(m, w.space)
-			if s != nil && s.visible && s.view.layout == .Scroll && find(s.view.root, id) != nil {
+			if s != nil && s.visible && s.view.layout == .Scroll && layout.find(s.view.root, id) != nil {
 				operation := horizontal ? "--toggle" : "--row-height"
 				operand := horizontal ? "column-full-width" : "auto"
 				if response := execute(m, {"window", fmt.tprintf("%d", id), operation, operand}); response.failed {
@@ -491,8 +492,8 @@ mouse_tick :: proc(
 		} else if s := space_by_id(m, focused.space); s == nil || !s.visible || s.view.layout != .Scroll {
 			current = false
 		} else {
-			n := find(s.view.root, focused.id)
-			current = current && n != nil && n.column_tabbed && find(s.view.root, id) == n
+			n := layout.find(s.view.root, focused.id)
+			current = current && n != nil && n.column_tabbed && layout.find(s.view.root, id) == n
 		}
 		if w := m.windows[id]; current && w != nil && w.generation == generation && !m.suspended && !m.gesture_active {
 			if response := execute(m, {"window", fmt.tprintf("%d", id), "--focus"}); response.failed {

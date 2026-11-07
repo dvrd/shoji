@@ -2,6 +2,7 @@ package tests
 
 import e "../src"
 import "core:testing"
+import layout "../src/layout"
 
 @(test)
 late_size_acceptance_does_not_animate_back_to_the_rejected_size :: proc(t: ^testing.T) {
@@ -190,7 +191,7 @@ accepted_width_changes_layout_footprint_without_rewriting_width_preference :: pr
 	testing.expect_value(t, w.frame.w, f64(700))
 	testing.expect_value(
 		t,
-		e.find(m.spaces[0].view.root, 1).column_size.value,
+		layout.find(m.spaces[0].view.root, 1).column_size.value,
 		f64(500),
 	)
 	testing.expect_value(
