@@ -1,12 +1,12 @@
 package main
 
-import bridge "../../../../src/dock"
 import gate "../../../../src/windowserver/gate"
 import "core:fmt"
 import "core:os"
 import "core:sys/posix"
 import mach "core:sys/darwin"
 import "base:intrinsics"
+import inject "../../../../src/inject"
 
 foreign import system "system:System"
 
@@ -78,7 +78,7 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 	intrinsics.atomic_store_explicit(&concurrent_errors, 0, .Relaxed)
 	intrinsics.atomic_store_explicit(&forward_calls, 0, .Relaxed)
 	trampoline_original = transmute(Ordering_Callback)uintptr(trampoline)
-	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(bridge.sign_function(u64(uintptr(rawptr(concurrent_worker)))))
+	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(inject.sign_function(u64(uintptr(rawptr(concurrent_worker)))))
 	for &thread in workers {
 		if posix.pthread_create(&thread, nil, worker, rawptr(transmute(uintptr)target_callback)) != nil {
 			return concurrent_failure("pthread_create", barrier.active)
@@ -105,7 +105,7 @@ run_concurrent :: proc(entry, base, trampoline, relay: u64, target_callback: Ord
 	if intrinsics.atomic_load_explicit(&concurrent_calls, .Acquire) != calls_before {
 		return concurrent_failure("calls advanced while suspended", barrier.active)
 	}
-	task := bridge.mach_task_self()
+	task := inject.mach_task_self()
 	if protect(task, base, mach.vm_page_size, 0, 1 | 2 | 16) != 0 {immediate_exit(1)}
 	entry_patch := ([^]u32)(uintptr(entry))
 	if inline_mode {
@@ -193,7 +193,7 @@ trampoline_region :: proc(page, page_size: u64) -> (info: Trampoline_Region, ok:
 		size: u64
 		words: [19]u32
 		count := u32(len(words))
-		code := mach_vm_region_recurse(bridge.mach_task_self(), &address, &size, &depth, &words[0], &count)
+		code := mach_vm_region_recurse(inject.mach_task_self(), &address, &size, &depth, &words[0], &count)
 		if code != 0 || count < 13 || address > page || page - address > size ||
 		   page_size > size - (page - address) {return {}, false}
 		if words[12] == 0 {return {i32(words[0]), i32(words[1])}, true}
@@ -205,26 +205,26 @@ trampoline_region :: proc(page, page_size: u64) -> (info: Trampoline_Region, ok:
 diagnose_alias :: proc(entry: u64, deallocate: gate.Deallocate) {
 	page := mach.vm_page_size
 	base := entry & ~(page - 1)
-	self := bridge.mach_task_self()
+	self := inject.mach_task_self()
 	alias: u64
 	current, maximum: i32
 	code := mach_vm_remap(self, &alias, page, 0, 1, self, base, 0, &current, &maximum, 1)
 	fmt.eprintf("alias diagnostic: remap=%d current=0x%x maximum=0x%x\n", code, current, maximum)
 	if code != 0 {return}
-	code = bridge.mach_vm_protect(self, alias, page, 0, 1 | 2)
+	code = inject.mach_vm_protect(self, alias, page, 0, 1 | 2)
 	fmt.eprintf("alias diagnostic: writable=%d\n", code)
 	fmt.eprintf("alias diagnostic: release=%d\n", deallocate(self, alias, page))
 }
 
 run_inline_trampoline :: proc(callback: Ordering_Callback) {
 	when ODIN_ARCH != .arm64 {trampoline_fail("arm64e required")}
-	self_image := bridge.dlopen(nil, 2)
+	self_image := inject.dlopen(nil, 2)
 	if self_image == nil {trampoline_fail("main image handle unavailable")}
-	defer bridge.dlclose(self_image)
-	entry := u64(uintptr(bridge.raw_symbol(self_image, "shoji_abi_original")))
-	replacement := bridge.strip_function(u64(uintptr(rawptr(forward))))
+	defer inject.dlclose(self_image)
+	entry := u64(uintptr(inject.raw_symbol(self_image, "shoji_abi_original")))
+	replacement := inject.strip_function(u64(uintptr(rawptr(forward))))
 	if entry == 0 {trampoline_fail("native target symbol unavailable")}
-	target_callback := transmute(Ordering_Callback)uintptr(bridge.sign_function(entry))
+	target_callback := transmute(Ordering_Callback)uintptr(inject.sign_function(entry))
 	entry_words := ([^]u32)(uintptr(entry))
 	expected: [4]u32
 	for index in 0 ..< 4 {expected[index] = entry_words[index]}
@@ -235,17 +235,17 @@ run_inline_trampoline :: proc(callback: Ordering_Callback) {
 	if expected[0] != gate.PACIBSP {trampoline_fail("native target does not start with PACIBSP")}
 	fmt.eprintln("inline stage: baselines")
 
-	kernel := bridge.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	kernel := inject.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {trampoline_fail("kernel library unavailable")}
-	defer bridge.dlclose(kernel)
-	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)bridge.raw_symbol(kernel, "mach_vm_allocate")
-	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)bridge.raw_symbol(kernel, "mach_vm_deallocate")
-	protect := cast(Trampoline_Protect)bridge.raw_symbol(kernel, "mach_vm_protect")
-	immediate_exit := cast(Trampoline_Exit)bridge.raw_symbol(kernel, "_exit")
+	defer inject.dlclose(kernel)
+	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)inject.raw_symbol(kernel, "mach_vm_allocate")
+	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)inject.raw_symbol(kernel, "mach_vm_deallocate")
+	protect := cast(Trampoline_Protect)inject.raw_symbol(kernel, "mach_vm_protect")
+	immediate_exit := cast(Trampoline_Exit)inject.raw_symbol(kernel, "_exit")
 	if allocate == nil || deallocate == nil || protect == nil || immediate_exit == nil {
 		trampoline_fail("Mach allocation symbols unavailable")
 	}
-	self := bridge.mach_task_self()
+	self := inject.mach_task_self()
 	page := mach.vm_page_size
 	if page == 0 || page & (page - 1) != 0 {trampoline_fail("invalid page size")}
 	base := entry & ~(page - 1)
@@ -307,16 +307,16 @@ run_inline_trampoline :: proc(callback: Ordering_Callback) {
 
 run_trampoline :: proc(callback: Ordering_Callback) {
 	when ODIN_ARCH != .arm64 {trampoline_fail("arm64e required")}
-	if bridge._dyld_get_image_header(0).subtype != 0x80000002 {
+	if inject._dyld_get_image_header(0).subtype != 0x80000002 {
 		trampoline_fail("arm64e ABI v0 required")
 	}
-	self_image := bridge.dlopen(nil, 2)
+	self_image := inject.dlopen(nil, 2)
 	if self_image == nil {trampoline_fail("main image handle unavailable")}
-	defer bridge.dlclose(self_image)
-	entry := u64(uintptr(bridge.raw_symbol(self_image, "shoji_abi_original")))
-	replacement := bridge.strip_function(u64(uintptr(rawptr(forward))))
+	defer inject.dlclose(self_image)
+	entry := u64(uintptr(inject.raw_symbol(self_image, "shoji_abi_original")))
+	replacement := inject.strip_function(u64(uintptr(rawptr(forward))))
 	if entry == 0 {trampoline_fail("native target symbol unavailable")}
-	target_callback := transmute(Ordering_Callback)uintptr(bridge.sign_function(entry))
+	target_callback := transmute(Ordering_Callback)uintptr(inject.sign_function(entry))
 	fmt.eprintf("trampoline target: entry=0x%x first_word=0x%x replacement=0x%x\n", entry, (^u32)(uintptr(entry))^, replacement)
 	fmt.eprintln("trampoline stage: direct forwarding baseline")
 	if code := shoji_abi_run(callback); code != 0 {
@@ -331,17 +331,17 @@ run_trampoline :: proc(callback: Ordering_Callback) {
 	}
 	fmt.eprintln("trampoline stage: entry validated")
 
-	kernel := bridge.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	kernel := inject.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
 	if kernel == nil {trampoline_fail("kernel library unavailable")}
-	defer bridge.dlclose(kernel)
-	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)bridge.raw_symbol(kernel, "mach_vm_allocate")
-	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)bridge.raw_symbol(kernel, "mach_vm_deallocate")
-	protect := cast(Trampoline_Protect)bridge.raw_symbol(kernel, "mach_vm_protect")
-	immediate_exit := cast(Trampoline_Exit)bridge.raw_symbol(kernel, "_exit")
+	defer inject.dlclose(kernel)
+	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)inject.raw_symbol(kernel, "mach_vm_allocate")
+	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)inject.raw_symbol(kernel, "mach_vm_deallocate")
+	protect := cast(Trampoline_Protect)inject.raw_symbol(kernel, "mach_vm_protect")
+	immediate_exit := cast(Trampoline_Exit)inject.raw_symbol(kernel, "_exit")
 	if allocate == nil || deallocate == nil || protect == nil || immediate_exit == nil {
 		trampoline_fail("Mach allocation symbols unavailable")
 	}
-	self := bridge.mach_task_self()
+	self := inject.mach_task_self()
 	page := mach.vm_page_size
 	if page == 0 || page & (page - 1) != 0 {trampoline_fail("invalid page size")}
 	base := entry & ~(page - 1)

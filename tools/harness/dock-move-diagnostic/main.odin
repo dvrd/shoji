@@ -1,7 +1,7 @@
 package main
 
 import mac "../../../src"
-import wire "../../../src/dock"
+import dock "../../../src/dock"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
@@ -22,8 +22,8 @@ main :: proc() {
 	if !known || mac.SLSConnectionGetPID(owner, &actual) != 0 || actual != pid {fmt.eprintln("fixture owner mismatch"); os.exit(1)}
 	before: mac.Rect
 	if mac.SLSGetWindowBounds(cid,wid,&before)!=0 {fmt.eprintln("cannot read fixture bounds"); os.exit(1)}
-	packet := wire.begin(.Window_Move)
-	wire.pack(&packet,wid); wire.pack(&packet,i32(before.x)-20); wire.pack(&packet,i32(before.y))
+	packet := dock.begin(.Window_Move)
+	dock.pack(&packet,wid); dock.pack(&packet,i32(before.x)-20); dock.pack(&packet,i32(before.y))
 	_, err := mac.addition_exchange(&packet)
 	after: mac.Rect; code := mac.SLSGetWindowBounds(cid,wid,&after)
 	fmt.printf("window=%d requested_x=%d before=%v after=%v readback_status=%d response=%s\n",wid,i32(before.x)-20,before,after,code,err)

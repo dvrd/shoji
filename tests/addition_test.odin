@@ -2,6 +2,7 @@ package tests
 
 import dock "../src/dock"
 import "core:testing"
+import inject "../src/inject"
 
 @(test)
 dock_focus_is_blocked_on_the_crashing_host_version :: proc(t: ^testing.T) {
@@ -102,13 +103,13 @@ bridge_move_callee :: proc "c" (source, destination, uuid: rawptr) {
 addition_native_swift_context_bridge :: proc(t: ^testing.T) {
 	when ODIN_ARCH == .arm64 {
 		entry := u64(0x100000000)
-		testing.expect_value(t, dock.strip_function(dock.sign_function(entry)), entry)
+		testing.expect_value(t, inject.strip_function(inject.sign_function(entry)), entry)
 	}
 	value: uintptr
-	dock.call_add(rawptr(uintptr(123)), &value, rawptr(bridge_callee))
+	inject.call_add(rawptr(uintptr(123)), &value, rawptr(bridge_callee))
 	testing.expect_value(t, value, uintptr(123))
 	values: [3]uintptr
-	dock.call_move(
+	inject.call_move(
 		rawptr(uintptr(1)),
 		rawptr(uintptr(2)),
 		rawptr(uintptr(3)),
@@ -126,28 +127,28 @@ bootstrap_fake_detach :: proc "c" (thread: uint) -> i32 {
 }
 @(test)
 addition_bootstrap_worker_uses_explicit_abi :: proc(t: ^testing.T) {
-	data := dock.Bootstrap {
+	data := inject.Bootstrap {
 		open          = bootstrap_fake_open,
 		self          = bootstrap_fake_self,
 		detach        = bootstrap_fake_detach,
 		detach_result = -1,
 	}
-	dock.remote_worker(&data)
+	inject.remote_worker(&data)
 	testing.expect_value(t, data.detach_result, i32(0))
 	testing.expect_value(t, data.done, u32(1))
 	testing.expect_value(t, data.worker_finished, u32(1))
 	testing.expect_value(t, uintptr(data.handle), uintptr(42))
 	size: uint
-	section := dock.getsectiondata(
-		dock._dyld_get_image_header(0),
+	section := inject.getsectiondata(
+		inject._dyld_get_image_header(0),
 		"__TEXT",
 		"__shoji_boot",
 		&size,
 	)
 	testing.expect(t, section != nil && size > 0)
 	for address in ([]uintptr {
-			uintptr(rawptr(dock.remote_worker)),
-			uintptr(rawptr(dock.remote_entry)),
+			uintptr(rawptr(inject.remote_worker)),
+			uintptr(rawptr(inject.remote_entry)),
 		}) {
 		testing.expect(
 			t,
@@ -158,47 +159,47 @@ addition_bootstrap_worker_uses_explicit_abi :: proc(t: ^testing.T) {
 
 @(test)
 addition_bootstrap_worker_executes_after_relocation :: proc(t: ^testing.T) {
-	library := dock.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
-	if !testing.expect(t, library != nil) {return};defer dock.dlclose(library)
-	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)dock.dlsym(
+	library := inject.dlopen("/usr/lib/system/libsystem_kernel.dylib", 2)
+	if !testing.expect(t, library != nil) {return};defer inject.dlclose(library)
+	allocate := cast(proc "c" (_: u32, _: ^u64, _: u64, _: i32) -> i32)inject.dlsym(
 		library,
 		"mach_vm_allocate",
 	)
-	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)dock.dlsym(
+	deallocate := cast(proc "c" (_: u32, _: u64, _: u64) -> i32)inject.dlsym(
 		library,
 		"mach_vm_deallocate",
 	)
 	size: uint
-	section := dock.getsectiondata(
-		dock._dyld_get_image_header(0),
+	section := inject.getsectiondata(
+		inject._dyld_get_image_header(0),
 		"__TEXT",
 		"__shoji_boot",
 		&size,
 	)
 	if !testing.expect(t, section != nil && size > 0) {return}
-	self := dock.mach_task_self();address: u64;stack: u64
+	self := inject.mach_task_self();address: u64;stack: u64
 	if !testing.expect_value(t, allocate(self, &address, u64(size), 1), i32(0)) {return}
 	defer deallocate(self, address, u64(size))
 	if !testing.expect_value(t, allocate(self, &stack, 16 * 1024, 1), i32(0)) {return}
 	defer deallocate(self, stack, 16 * 1024)
 	if !testing.expect_value(
 		t,
-		dock.mach_vm_protect(self, stack, 16 * 1024, 1, 1 | 2),
+		inject.mach_vm_protect(self, stack, 16 * 1024, 1, 1 | 2),
 		i32(0),
 	) {return}
 	if !testing.expect_value(
 		t,
-		dock.mach_vm_write(self, address, uintptr(section), u32(size)),
+		inject.mach_vm_write(self, address, uintptr(section), u32(size)),
 		i32(0),
 	) {return}
 	if !testing.expect_value(
 		t,
-		dock.mach_vm_protect(self, address, u64(size), 0, 1 | 4),
+		inject.mach_vm_protect(self, address, u64(size), 0, 1 | 4),
 		i32(0),
 	) {return}
-	offset := uintptr(rawptr(dock.remote_worker)) - uintptr(section)
+	offset := uintptr(rawptr(inject.remote_worker)) - uintptr(section)
 	worker := cast(proc "c" (_: rawptr) -> rawptr)rawptr(uintptr(address) + offset)
-	data := dock.Bootstrap {
+	data := inject.Bootstrap {
 		open = bootstrap_fake_open,
 	}
 	worker(&data)
@@ -210,7 +211,7 @@ addition_bootstrap_worker_executes_after_relocation :: proc(t: ^testing.T) {
 // real dlopen of an existing system library. No desktop process is contacted.
 @(test)
 addition_injector_self_test :: proc(t: ^testing.T) {
-	testing.expect_value(t, dock.self_test(), "")
+	testing.expect_value(t, inject.self_test(), "")
 }
 
 @(test)

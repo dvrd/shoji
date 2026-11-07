@@ -1,6 +1,6 @@
 package shoji
 
-import wire "dock"
+import dock "dock"
 import "core:fmt"
 import "core:time"
 
@@ -67,9 +67,9 @@ foreign animation_cg {
 }
 
 animation_swap :: proc(proxy: Animation_Proxy, hide: bool) -> string {
-	packet := wire.begin(hide ? wire.Opcode.Proxy_In : wire.Opcode.Proxy_Out)
-	wire.pack(&packet, i32(1)); wire.pack(&packet, proxy.window)
-	wire.pack(&packet, proxy.id)
+	packet := dock.begin(hide ? dock.Opcode.Proxy_In : dock.Opcode.Proxy_Out)
+	dock.pack(&packet, i32(1)); dock.pack(&packet, proxy.window)
+	dock.pack(&packet, proxy.id)
 	_, err := addition_exchange(&packet)
 	return err
 }
@@ -153,7 +153,7 @@ native_proxy_create :: proc(
 	}
 	if error := animation_journal_record(
 		&state.animation_journal,
-		wire.Entry{window, proxy.id, owner, proxy_owner},
+		dock.Entry{window, proxy.id, owner, proxy_owner},
 	); error != "" {
 		return {}, error
 	}
@@ -191,12 +191,12 @@ native_proxy_restore :: proc(state: ^State, proxy: Animation_Proxy) -> string {
 	if !exists {
 		return "animation recovery entry is missing"
 	}
-	backend := wire.Backend {
+	backend := dock.Backend {
 		animation_recovery_owner,
 		animation_recovery_restore,
 		state,
 	}
-	if result := wire.restore(entry, backend, false); result == .Retry {
+	if result := dock.restore(entry, backend, false); result == .Retry {
 		return "could not restore animated window"
 	}
 	return animation_journal_remove(&state.animation_journal, proxy.window)

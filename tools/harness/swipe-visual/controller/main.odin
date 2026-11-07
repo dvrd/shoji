@@ -1,7 +1,7 @@
 package main
 
 import mac "../../../../src"
-import wire "../../../../src/dock"
+import dock "../../../../src/dock"
 import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
@@ -144,10 +144,10 @@ fixture_backend :: proc(user: rawptr, action: mac.Action) -> string {
 	if dock_fixture_moves && action.kind == .Frame {
 		w := state.manager.windows[action.window]
 		if w == nil || w.pid != state.validation_pid {return "window is outside fixture"}
-		p := wire.begin(.Window_Move)
-		wire.pack(&p, action.window)
-		wire.pack(&p, i32(math.round(action.frame.x)))
-		wire.pack(&p, i32(math.round(action.frame.y)))
+		p := dock.begin(.Window_Move)
+		dock.pack(&p, action.window)
+		dock.pack(&p, i32(math.round(action.frame.x)))
+		dock.pack(&p, i32(math.round(action.frame.y)))
 		start := time.tick_now()
 		_, err := mac.addition_exchange(&p)
 		frame: mac.Rect

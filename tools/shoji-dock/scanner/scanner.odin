@@ -3,7 +3,7 @@ package dockscan
 import "core:crypto/sha2"
 import "core:fmt"
 import "core:strings"
-import p "../../../src/dock"
+import dock "../../../src/dock"
 import "core:os"
 import "core:path/filepath"
 import "core:mem"
@@ -231,11 +231,11 @@ Scan_Report :: struct {
 	static_only: bool,
 	targets: [dynamic]Target_Result,
 }
-parse_version :: proc(s: string) -> (p.Version, bool) {
+parse_version :: proc(s: string) -> (dock.Version, bool) {
 	parts := strings.split(s, "."); if len(parts) < 1 || len(parts) > 3 {
 		return {}, false
 	}
-	v: p.Version; values := [3]int{}
+	v: dock.Version; values := [3]int{}
 	for part, i in parts {
 		n, ok := strconv.parse_u64(part); if !ok || n > 9999 {
 			return {}, false
@@ -243,20 +243,20 @@ parse_version :: proc(s: string) -> (p.Version, bool) {
 	}
 	v = {values[0], values[1], values[2]}; return v, true
 }
-targets_for :: proc(v: p.Version) -> [7]Target {
+targets_for :: proc(v: dock.Version) -> [7]Target {
 	return [7]Target {
-		{"dock_spaces", p.get_dock_spaces_pattern(v), p.get_dock_spaces_offset(v), true},
-		{"desktop_pictures", p.get_dppm_pattern(v), p.get_dppm_offset(v), true},
-		{"add_space", p.get_add_space_pattern(v), p.get_add_space_offset(v), false},
-		{"remove_space", p.get_remove_space_pattern(v), p.get_remove_space_offset(v), false},
-		{"move_space", p.get_move_space_pattern(v), p.get_move_space_offset(v), false},
+		{"dock_spaces", dock.get_dock_spaces_pattern(v), dock.get_dock_spaces_offset(v), true},
+		{"desktop_pictures", dock.get_dppm_pattern(v), dock.get_dppm_offset(v), true},
+		{"add_space", dock.get_add_space_pattern(v), dock.get_add_space_offset(v), false},
+		{"remove_space", dock.get_remove_space_pattern(v), dock.get_remove_space_offset(v), false},
+		{"move_space", dock.get_move_space_pattern(v), dock.get_move_space_offset(v), false},
 		{
 			"focus_window",
-			p.get_set_front_window_pattern(v),
-			p.get_set_front_window_offset(v),
+			dock.get_set_front_window_pattern(v),
+			dock.get_set_front_window_offset(v),
 			false,
 		},
-		{"animation_time", p.get_fix_animation_pattern(v), p.get_fix_animation_offset(v), false},
+		{"animation_time", dock.get_fix_animation_pattern(v), dock.get_fix_animation_offset(v), false},
 	}
 }
 scan_target :: proc(im: Image, t: Target) -> Target_Result {
@@ -266,9 +266,9 @@ scan_target :: proc(im: Image, t: Target) -> Target_Result {
 		hint    = t.hint,
 		status  = "missing",
 	}
-	pat, ok := p.compile(t.pattern); if !ok {
+	pat, ok := dock.compile(t.pattern); if !ok {
 		result.status = "no_pattern"; return result
-	}; defer p.destroy(pat)
+	}; defer dock.destroy(pat)
 	b := slice_bytes(im)
 	for sec in im.sections {
 		if !sec.executable || sec.size < u64(len(pat.bytes)) {
@@ -292,7 +292,7 @@ scan_target :: proc(im: Image, t: Target) -> Target_Result {
 				m.text_offset = m.address - im.text_address
 			}
 			if t.global && span(b, off, 8) {
-				m.reference, m.reference_valid = p.decode_adrp_add(
+				m.reference, m.reference_valid = dock.decode_adrp_add(
 					u32le(b, off),
 					u32le(b, off + 4),
 					m.address,
@@ -334,8 +334,8 @@ scan :: proc(bundle: Bundle, profile: string) -> (Scan_Report, string) {
 	return r, ""
 }
 // Offline profiles can precede runtime validation on the target OS.
-scan_profile_available :: proc(v: p.Version) -> bool {
-	return p.supported(v) || v == (p.Version{27, 0, 1})
+scan_profile_available :: proc(v: dock.Version) -> bool {
+	return dock.supported(v) || v == (dock.Version{27, 0, 1})
 }
 choose_profile :: proc(bundle: Bundle, requested: string) -> string {
 	if requested != "" {
@@ -419,7 +419,7 @@ reference_strings :: proc(im: Image, address: u64) -> [dynamic]string {
 		if !span(b, off + i, 8) {
 			break
 		}
-		va, valid := p.decode_adrp_add(u32le(b, off + i), u32le(b, off + i + 4), address + i)
+		va, valid := dock.decode_adrp_add(u32le(b, off + i), u32le(b, off + i + 4), address + i)
 		if !valid {
 			continue
 		}
@@ -670,7 +670,7 @@ compare :: proc(
 					continue
 				}
 				if defs[i].global {
-					if _, ok := p.decode_adrp_add(u32le(b, off), u32le(b, off + 4), address); !ok {
+					if _, ok := dock.decode_adrp_add(u32le(b, off), u32le(b, off + 4), address); !ok {
 						continue
 					}
 				}

@@ -1,4 +1,4 @@
-package dock
+package inject
 
 import gate "../windowserver/gate"
 import "base:intrinsics"

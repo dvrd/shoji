@@ -1,11 +1,11 @@
 package tests
 
-import loader "../src/dock"
 import "base:intrinsics"
 import "core:strings"
 import posix "core:sys/posix"
 import "core:testing"
 import "core:time"
+import inject "../src/inject"
 
 bootstrap_failed_open :: proc "c" (path: cstring, mode: i32) -> rawptr {
 	return nil
@@ -18,14 +18,14 @@ bootstrap_failed_reason :: proc "c" () -> cstring {
 loader_failure_waits_for_acknowledgment_before_final_data_access :: proc(
 	t: ^testing.T,
 ) {
-	data := loader.Bootstrap {
+	data := inject.Bootstrap {
 		open  = bootstrap_failed_open,
 		error = bootstrap_failed_reason,
 	}
 	thread: posix.pthread_t
 	if !testing.expect(
 		t,
-		posix.pthread_create(&thread, nil, loader.remote_worker, &data) == nil,
+		posix.pthread_create(&thread, nil, inject.remote_worker, &data) == nil,
 	) {
 		return
 	}
@@ -69,8 +69,8 @@ injector_reclaims_failed_load_data_after_worker_finishes :: proc(
 ) {
 	// Exercise the real remote-thread and dlerror handshake against this process only.
 	for _ in 0 ..< 8 {
-		err := loader.inject_task(
-			loader.mach_task_self(),
+		err := inject.inject_task(
+			inject.mach_task_self(),
 			"/nonexistent/shoji-missing-p1-test.dylib",
 		)
 		testing.expect(t, strings.contains(err, "shoji-missing-p1-test"), err)

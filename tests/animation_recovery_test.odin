@@ -1,6 +1,6 @@
 package tests
 
-import r "../src/dock"
+import dock "../src/dock"
 import mac "../src"
 import "core:fmt"
 import "core:os"
@@ -18,7 +18,7 @@ recovery_owner :: proc(user: rawptr, window: u32) -> (i32, bool) {
 	rec := (^Recovery_Recorder)(user)
 	owner, ok := rec.owners[window];return owner, ok
 }
-recovery_restore :: proc(user: rawptr, entry: r.Entry, proxy_valid: bool) -> bool {
+recovery_restore :: proc(user: rawptr, entry: dock.Entry, proxy_valid: bool) -> bool {
 	rec := (^Recovery_Recorder)(user);rec.restores += 1;rec.proxy_valid = proxy_valid
 	return !rec.fail
 }
@@ -28,19 +28,19 @@ animation_recovery_restores_orphan_and_rejects_reused_ids :: proc(t: ^testing.T)
 		owners = make(map[u32]i32),
 	}
 	defer delete(rec.owners)
-	backend := r.Backend{recovery_owner, recovery_restore, &rec}
-	entry := r.Entry{1, 2, 10, 20}
+	backend := dock.Backend{recovery_owner, recovery_restore, &rec}
+	entry := dock.Entry{1, 2, 10, 20}
 	rec.owners[1], rec.owners[2] = 10, 20
-	testing.expect_value(t, r.restore(entry, backend, true), r.Result.Active)
+	testing.expect_value(t, dock.restore(entry, backend, true), dock.Result.Active)
 	testing.expect_value(t, rec.restores, 0)
 	delete_key(&rec.owners, 2)
-	testing.expect_value(t, r.restore(entry, backend, true), r.Result.Restored)
+	testing.expect_value(t, dock.restore(entry, backend, true), dock.Result.Restored)
 	testing.expect(t, !rec.proxy_valid)
 	rec.owners[2] = 99
-	testing.expect_value(t, r.restore(entry, backend, false), r.Result.Restored)
+	testing.expect_value(t, dock.restore(entry, backend, false), dock.Result.Restored)
 	testing.expect(t, !rec.proxy_valid)
 	rec.owners[1] = 99
-	testing.expect_value(t, r.restore(entry, backend, false), r.Result.Gone)
+	testing.expect_value(t, dock.restore(entry, backend, false), dock.Result.Gone)
 	testing.expect_value(t, rec.restores, 2)
 }
 @(test)
@@ -50,10 +50,10 @@ animation_recovery_retains_failed_restores :: proc(t: ^testing.T) {
 		fail   = true,
 	}
 	defer delete(rec.owners);rec.owners[1] = 10
-	backend := r.Backend{recovery_owner, recovery_restore, &rec}
-	testing.expect_value(t, r.restore({1, 2, 10, 20}, backend, false), r.Result.Retry)
+	backend := dock.Backend{recovery_owner, recovery_restore, &rec}
+	testing.expect_value(t, dock.restore({1, 2, 10, 20}, backend, false), dock.Result.Retry)
 	rec.fail = false
-	testing.expect_value(t, r.restore({1, 2, 10, 20}, backend, false), r.Result.Restored)
+	testing.expect_value(t, dock.restore({1, 2, 10, 20}, backend, false), dock.Result.Restored)
 }
 @(test)
 animation_journal_survives_reopen_and_keeps_failed_removal :: proc(t: ^testing.T) {

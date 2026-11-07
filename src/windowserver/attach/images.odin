@@ -1,4 +1,4 @@
-package shoji
+package attach
 
 // Detects any Shoji payload already mapped in WindowServer, whatever its
 // version. A payload that predates the current status format cannot prove
@@ -6,7 +6,7 @@ package shoji
 // already patched (install status 24). Reads dyld's image list through the
 // task port; bounded in images and bytes read.
 
-import gate "windowserver/gate"
+import gate "../gate"
 
 TASK_DYLD_INFO :: 17
 // Task_Dyld_Info is five natural_t words.

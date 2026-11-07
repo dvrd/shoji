@@ -3,7 +3,7 @@ package dock_payload
 import m "../../native"
 import "base:intrinsics"
 import objc "core:sys/darwin/Foundation"
-import docklib "../../dock"
+import dock "../../dock"
 import "core:fmt"
 import "core:math"
 import "core:time"
@@ -11,6 +11,7 @@ import "base:runtime"
 import "core:mem"
 import "core:strings"
 import posix "core:sys/posix"
+import inject "../../inject"
 
 foreign import sls "system:SkyLight.framework"
 foreign import sys "system:System"
@@ -97,19 +98,19 @@ dispatch_get_main_queue :: proc() -> rawptr {return &_dispatch_main_q}
 // ------------------------------------------------------------------------
 
 Globals :: struct {
-	dock, pictures:           Object,
+	dock_object, pictures:    Object,
 	add, remove, move, focus: rawptr,
-	caps:                     docklib.Capabilities,
-	version:                  docklib.Version,
+	caps:                     dock.Capabilities,
+	version:                  dock.Version,
 	cid:                      i32,
 }
 g: Globals
 locate :: proc(bytes: []u8, offset: u64, pattern: string) -> rawptr {
 	if offset == 0 || offset >= u64(len(bytes)) || pattern == "" {return nil}
-	compiled, ok := docklib.compile(pattern)
-	if !ok {return nil};defer docklib.destroy(compiled)
+	compiled, ok := dock.compile(pattern)
+	if !ok {return nil};defer dock.destroy(compiled)
 	stop := min(len(bytes), int(offset) + 0x1286a0 + len(compiled.bytes))
-	at, found := docklib.find(bytes[int(offset):stop], compiled)
+	at, found := dock.find(bytes[int(offset):stop], compiled)
 	if !found {return nil}
 	return rawptr(&bytes[int(offset) + at])
 }
@@ -118,7 +119,7 @@ resolve_global :: proc(address: rawptr) -> Object {
 	value: u64
 	when ODIN_ARCH == .arm64 {
 		instructions := ([^]u32)(address)
-		decoded, ok := docklib.decode_adrp_add(instructions[0], instructions[1], u64(uintptr(address)))
+		decoded, ok := dock.decode_adrp_add(instructions[0], instructions[1], u64(uintptr(address)))
 		if !ok {return nil};value = decoded
 	} else {
 		// Read unaligned RIP displacement without imposing pointer alignment.
@@ -133,52 +134,52 @@ discover :: proc() {
 	info := send(Object, objc.ProcessInfo, "processInfo")
 	version := send(objc.OperatingSystemVersion, info, "operatingSystemVersion")
 	g.version = {int(version.majorVersion), int(version.minorVersion), int(version.patchVersion)}
-	if !docklib.supported(
+	if !dock.supported(
 		g.version,
 	) {fmt.eprintln("shoji-sa: unsupported Dock version", g.version);return}
 	size: uint
 	data := getsegmentdata(_dyld_get_image_header(0), "__TEXT", &size)
 	if data == nil {return}
 	bytes := data[:size]
-	dock := locate(
+	dock_symbol := locate(
 		bytes,
-		docklib.get_dock_spaces_offset(g.version),
-		docklib.get_dock_spaces_pattern(g.version),
+		dock.get_dock_spaces_offset(g.version),
+		dock.get_dock_spaces_pattern(g.version),
 	)
-	g.dock = resolve_global(dock)
-	pictures := locate(bytes, docklib.get_dppm_offset(g.version), docklib.get_dppm_pattern(g.version))
+	g.dock_object = resolve_global(dock_symbol)
+	pictures := locate(bytes, dock.get_dppm_offset(g.version), dock.get_dppm_pattern(g.version))
 	g.pictures = resolve_global(pictures)
 	// Sonoma's alternate desktop-picture-manager slot is eight bytes earlier.
 	if g.pictures == nil && pictures != nil {
 		when ODIN_ARCH == .arm64 {
 			ins := ([^]u32)(pictures)
-			address, ok := docklib.decode_adrp_add(ins[0], ins[1], u64(uintptr(pictures)))
+			address, ok := dock.decode_adrp_add(ins[0], ins[1], u64(uintptr(pictures)))
 			if ok {g.pictures = (^Object)(uintptr(address - 8))^}
 		} else {
 			displacement: i32;copy(((^[4]u8)(&displacement))[:], (([^]u8)(pictures))[:4])
 			g.pictures = (^Object)(uintptr(i64(uintptr(pictures)) + i64(displacement) - 4))^
 		}
 	}
-	g.add = locate(bytes, docklib.get_add_space_offset(g.version), docklib.get_add_space_pattern(g.version))
+	g.add = locate(bytes, dock.get_add_space_offset(g.version), dock.get_add_space_pattern(g.version))
 	g.remove = locate(
 		bytes,
-		docklib.get_remove_space_offset(g.version),
-		docklib.get_remove_space_pattern(g.version),
+		dock.get_remove_space_offset(g.version),
+		dock.get_remove_space_pattern(g.version),
 	)
-	g.move = locate(bytes, docklib.get_move_space_offset(g.version), docklib.get_move_space_pattern(g.version))
+	g.move = locate(bytes, dock.get_move_space_offset(g.version), dock.get_move_space_pattern(g.version))
 	g.focus = locate(
 		bytes,
-		docklib.get_set_front_window_offset(g.version),
-		docklib.get_set_front_window_pattern(g.version),
+		dock.get_set_front_window_offset(g.version),
+		dock.get_set_front_window_pattern(g.version),
 	)
-	if g.dock != nil {send(Object, g.dock, "retain");g.caps += {.Dock_Spaces}}
+	if g.dock_object != nil {send(Object, g.dock_object, "retain");g.caps += {.Dock_Spaces}}
 	if g.pictures != nil {send(Object, g.pictures, "retain");g.caps += {.Desktop_Pictures}}
 	if g.add != nil {g.caps += {.Add_Space}};if g.remove != nil {g.caps += {.Remove_Space}}
-	if g.move != nil {g.caps += {.Move_Space}};if g.focus != nil && !docklib.focus_target_blocked(g.version) {g.caps += {.Focus_Window}}
+	if g.move != nil {g.caps += {.Move_Space}};if g.focus != nil && !dock.focus_target_blocked(g.version) {g.caps += {.Focus_Window}}
 	patch := locate(
 		bytes,
-		docklib.get_fix_animation_offset(g.version),
-		docklib.get_fix_animation_pattern(g.version),
+		dock.get_fix_animation_offset(g.version),
+		dock.get_fix_animation_pattern(g.version),
 	)
 	if patch != nil {
 		page := u64(uintptr(patch)) & ~(vm_page_size - 1)
@@ -193,15 +194,15 @@ discover :: proc() {
 	fmt.eprintf("shoji-sa: Dock %d.%d capabilities=%v\n", g.version.major, g.version.minor, g.caps)
 }
 space_object :: proc(uuid: m.Ref, id: u64) -> Object {
-	if g.dock == nil || uuid == nil {return nil}
-	array := send(Object, g.dock, "spacesForDisplay:", uuid)
+	if g.dock_object == nil || uuid == nil {return nil}
+	array := send(Object, g.dock_object, "spacesForDisplay:", uuid)
 	for i in 0 ..< send(uint, array, "count") {
 		space := send(Object, array, "objectAtIndex:", i)
 		if send(u64, space, "spid") == id {return space}
 	};return nil
 }
 display_object :: proc(uuid: m.Ref) -> Object {
-	array := ivar(g.dock, "_displaySpaces")
+	array := ivar(g.dock_object, "_displaySpaces")
 	for i in 0 ..< send(uint, array, "count") {
 		display := send(Object, array, "objectAtIndex:", i)
 		space := ivar(display, "_currentSpace")
@@ -223,8 +224,8 @@ Managed_Space :: struct {
 Legacy_Space :: struct {
 	using _: objc.Object,
 }
-focus_space :: proc(id: u64) -> docklib.Status {
-	if g.dock == nil {return .Unsupported}
+focus_space :: proc(id: u64) -> dock.Status {
+	if g.dock_object == nil {return .Unsupported}
 	uuid := SLSCopyManagedDisplayForSpace(g.cid, id)
 	if uuid == nil {return .Operation_Failed};defer m.CFRelease(uuid)
 	target := space_object(uuid, id);display := display_object(uuid)
@@ -238,9 +239,9 @@ focus_space :: proc(id: u64) -> docklib.Status {
 	set_ivar(display, "_currentSpace", target)
 	return .OK
 }
-space_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, created_space: ^u64) -> docklib.Status {
-	id := docklib.unpack(r, u64)
-	if g.dock == nil || id == 0 {return .Unsupported}
+space_action :: proc(op: dock.Opcode, r: ^dock.Reader, created_space: ^u64) -> dock.Status {
+	id := dock.unpack(r, u64)
+	if g.dock_object == nil || id == 0 {return .Unsupported}
 	uuid := SLSCopyManagedDisplayForSpace(g.cid, id)
 	if uuid == nil {return .Operation_Failed};defer m.CFRelease(uuid)
 	object := space_object(uuid, id);display := display_object(uuid)
@@ -256,7 +257,7 @@ space_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, created_space: ^u64
 		fresh = send(Object, fresh, "init")
 		if fresh == nil {return .Operation_Failed}
 		// Preserve upstream ownership at this private Swift boundary.
-		docklib.call_add(rawptr(fresh), rawptr(display), g.add)
+		inject.call_add(rawptr(fresh), rawptr(display), g.add)
 		if op == .Space_Create_Tracked {
 			created_space^ = send(u64, fresh, "spid")
 			if created_space^ == 0 {return .Operation_Failed}
@@ -267,12 +268,12 @@ space_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, created_space: ^u64
 		if SLSSpaceGetType(g.cid, id) != 0 ||
 		   alternate_user_space(uuid, id) == 0 {return .Operation_Failed}
 		function := cast(proc "c" (_: Object, _: Object, _: Object, _: u64, _: u64))g.remove
-		function(object, display, g.dock, id, id)
+		function(object, display, g.dock_object, id, id)
 		current := m.SLSManagedDisplayGetCurrentSpace(g.cid, uuid)
 		set_ivar(display, "_currentSpace", space_object(uuid, current))
 	case .Space_Move:
-		destination := docklib.unpack(r, u64);previous := docklib.unpack(r, u64)
-		follow_byte := docklib.unpack(r, u8)
+		destination := dock.unpack(r, u64);previous := dock.unpack(r, u64)
+		follow_byte := dock.unpack(r, u8)
 		if follow_byte > 1 {return .Invalid_Message}
 		follow := follow_byte == 1
 		if g.move == nil || g.pictures == nil {return .Unsupported}
@@ -282,7 +283,7 @@ space_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, created_space: ^u64
 		target := space_object(target_uuid, destination)
 		target_display := display_object(target_uuid)
 		if target == nil || target_display == nil || id == destination {return .Operation_Failed}
-		display_id := send(u32, g.dock, "displayIDForSpace:", target)
+		display_id := send(u32, g.dock_object, "displayIDForSpace:", target)
 		if SLSSpaceGetType(g.cid, id) != 0 ||
 		   SLSSpaceGetType(g.cid, destination) != 0 {return .Operation_Failed}
 		if m.text(uuid) != m.text(target_uuid) {
@@ -296,7 +297,7 @@ space_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, created_space: ^u64
 			   space_object(uuid, previous) == nil ||
 			   focus_space(previous) != .OK {return .Operation_Failed}
 		}
-		docklib.call_move(rawptr(object), rawptr(target), target_uuid, rawptr(g.dock), g.move)
+		inject.call_move(rawptr(object), rawptr(target), target_uuid, rawptr(g.dock_object), g.move)
 		send(nil, g.pictures, "moveSpace:toDisplay:displayUUID:", object, display_id, target_uuid)
 		if follow {return focus_space(id)}
 	case:
@@ -306,7 +307,7 @@ space_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, created_space: ^u64
 }
 
 alternate_user_space :: proc(uuid: m.Ref, excluded: u64) -> u64 {
-	list := send(Object, g.dock, "spacesForDisplay:", uuid)
+	list := send(Object, g.dock_object, "spacesForDisplay:", uuid)
 	for i in 0 ..< send(uint, list, "count") {
 		space := send(Object, list, "objectAtIndex:", i)
 		id := send(u64, space, "spid")
@@ -323,13 +324,13 @@ Fade :: struct {
 	began:      time.Time,
 	duration:   f64,
 }
-hidden_proxies: map[u32]docklib.Entry
+hidden_proxies: map[u32]dock.Entry
 payload_recovery_owner :: proc(user: rawptr, window: u32) -> (i32, bool) {
 	owner: i32
 	code := SLSGetWindowOwner(g.cid, window, &owner)
 	return owner, code == 0
 }
-payload_recovery_restore :: proc(user: rawptr, entry: docklib.Entry, proxy_valid: bool) -> bool {
+payload_recovery_restore :: proc(user: rawptr, entry: dock.Entry, proxy_valid: bool) -> bool {
 	transaction := SLSTransactionCreate(g.cid)
 	if transaction == nil {return false}; defer m.CFRelease(transaction)
 	SLSTransactionSetWindowSystemAlpha(transaction, entry.window, 1)
@@ -341,15 +342,15 @@ payload_recovery_restore :: proc(user: rawptr, entry: docklib.Entry, proxy_valid
 }
 tick_proxy_recovery :: proc() {
 	done := make([dynamic]u32, context.temp_allocator)
-	backend := docklib.Backend {payload_recovery_owner, payload_recovery_restore, nil}
+	backend := dock.Backend {payload_recovery_owner, payload_recovery_restore, nil}
 	for window, entry in hidden_proxies {
-		result := docklib.restore(entry, backend, true)
+		result := dock.restore(entry, backend, true)
 		if result == .Restored || result == .Gone {append(&done, window)}
 	}
 	for window in done {delete_key(&hidden_proxies, window)}
 }
 fades: map[u32]Fade
-status :: proc(code: i32) -> docklib.Status {return code == 0 ? .OK : .Operation_Failed}
+status :: proc(code: i32) -> dock.Status {return code == 0 ? .OK : .Operation_Failed}
 tick_fades :: proc() {
 	now := time.now()
 	done := make([dynamic]u32, 0, 8, context.temp_allocator)
@@ -360,13 +361,13 @@ tick_fades :: proc() {
 	}
 	for id in done {delete_key(&fades, id)}
 }
-window_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, diagnostic: ^docklib.Native_Failure) -> docklib.Status {
+window_action :: proc(op: dock.Opcode, r: ^dock.Reader, diagnostic: ^dock.Native_Failure) -> dock.Status {
 	if op == .Window_To_Space || op == .Window_List_To_Space {
-		sid := docklib.unpack(r, u64);if sid == 0 {return .Invalid_Message}
+		sid := dock.unpack(r, u64);if sid == 0 {return .Invalid_Message}
 		values := make([dynamic]u64, 0, 8, context.temp_allocator)
-		if op == .Window_To_Space {append(&values, u64(docklib.unpack(r, u32)))} else {
-			count := docklib.unpack(r, i32)
-			for _ in 0 ..< count {append(&values, u64(docklib.unpack(r, u32)))}
+		if op == .Window_To_Space {append(&values, u64(dock.unpack(r, u32)))} else {
+			count := dock.unpack(r, i32)
+			for _ in 0 ..< count {append(&values, u64(dock.unpack(r, u32)))}
 		}
 		for id in values {if id == 0 {return .Invalid_Message}}
 		array := array_u64(values[:]);defer m.CFRelease(array)
@@ -374,10 +375,10 @@ window_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, diagnostic: ^dockl
 		return .OK
 	}
 	if op == .Window_To_Space_Transaction {
-		target := docklib.unpack(r, u64);id := docklib.unpack(r, u32);source := docklib.unpack(r, u64)
+		target := dock.unpack(r, u64);id := dock.unpack(r, u32);source := dock.unpack(r, u64)
 		if target == 0 || id == 0 || source == target {return .Invalid_Message}
 		transaction := SLSTransactionCreate(g.cid)
-		if transaction == nil {docklib.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
+		if transaction == nil {dock.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
 		defer m.CFRelease(transaction)
 		SLSTransactionAddWindowToSpace(transaction, id, target)
 		if source != 0 {SLSTransactionRemoveWindowFromSpace(transaction, id, source)}
@@ -387,35 +388,35 @@ window_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, diagnostic: ^dockl
 		return .OK
 	}
 	if op == .Proxy_In || op == .Proxy_Out || op == .Window_Order_In {
-		count := docklib.unpack(r, i32)
+		count := dock.unpack(r, i32)
 		// Register every window before any transaction can hide it, including
 		// transactions whose commit reports an ambiguous failure.
 		check := r^
 		ids := make([dynamic]u32, context.temp_allocator)
 		for _ in 0..<count {
-			id := docklib.unpack(&check, u32)
+			id := dock.unpack(&check, u32)
 			if id == 0 {continue}
 			append(&ids, id)
 			if op == .Window_Order_In {continue}
-			proxy := docklib.unpack(&check, u32)
+			proxy := dock.unpack(&check, u32)
 			if op != .Proxy_In {continue}
 			owner, real_ok := payload_recovery_owner(nil, id)
 			proxy_owner, proxy_ok := payload_recovery_owner(nil, proxy)
 			if !real_ok || !proxy_ok || proxy == 0 || id == proxy {return .Invalid_Message}
-			entry := docklib.Entry {id, proxy, owner, proxy_owner}
+			entry := dock.Entry {id, proxy, owner, proxy_owner}
 			if previous, exists := hidden_proxies[id]; exists && previous != entry {return .Operation_Failed}
 			if len(hidden_proxies) >= 256 && id not_in hidden_proxies {return .Operation_Failed}
 			hidden_proxies[id] = entry
 		}
 		transaction := SLSTransactionCreate(g.cid)
-		if transaction == nil {docklib.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed};defer m.CFRelease(transaction)
+		if transaction == nil {dock.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed};defer m.CFRelease(transaction)
 		for _ in 0 ..< count {
-			id := docklib.unpack(r, u32);if id == 0 {continue}
+			id := dock.unpack(r, u32);if id == 0 {continue}
 			if op ==
 			   .Window_Order_In {
 				SLSTransactionOrderWindowGroup(transaction, id, 1, 0)
 			} else {
-				proxy := docklib.unpack(r, u32)
+				proxy := dock.unpack(r, u32)
 				if op == .Proxy_In {
 					SLSTransactionOrderWindowGroup(transaction, proxy, 1, id)
 					SLSTransactionSetWindowSystemAlpha(transaction, id, 0)
@@ -431,18 +432,18 @@ window_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, diagnostic: ^dockl
 		if op == .Proxy_Out {for id in ids {delete_key(&hidden_proxies, id)}}
 		return .OK
 	}
-	id := docklib.unpack(r, u32)
+	id := dock.unpack(r, u32)
 	if id == 0 {return .Invalid_Message}
 	#partial switch op {
 	case .Window_Move:
-		x := docklib.unpack(r, i32);y := docklib.unpack(r, i32);point := m.Point{f64(x), f64(y)}
+		x := dock.unpack(r, i32);y := dock.unpack(r, i32);point := m.Point{f64(x), f64(y)}
 		code := SLSMoveWindowWithGroup(g.cid, id, &point)
 		array := array_u64([]u64{u64(id)});defer m.CFRelease(array)
 		SLSReassociateWindowsSpacesByGeometry(g.cid, array)
 		return status(code)
 	case .Window_Opacity, .Window_Opacity_Fade:
-		alpha := docklib.unpack(r, f32);duration: f32
-		if op == .Window_Opacity_Fade {duration = docklib.unpack(r, f32)}
+		alpha := dock.unpack(r, f32);duration: f32
+		if op == .Window_Opacity_Fade {duration = dock.unpack(r, f32)}
 		if math.is_nan(alpha) ||
 		   math.is_nan(duration) ||
 		   alpha < 0 ||
@@ -456,37 +457,37 @@ window_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, diagnostic: ^dockl
 		fades[id] = Fade{start, alpha, time.now(), f64(duration)}
 		return .OK
 	case .Window_Layer:
-		layer, valid := docklib.normalize_window_layer_key(docklib.unpack(r, i32))
+		layer, valid := dock.normalize_window_layer_key(dock.unpack(r, i32))
 		if !valid {return .Invalid_Message}
 		return status(SLSSetWindowSubLevel(g.cid, id, CGWindowLevelForKey(layer)))
 	case .Window_Sticky, .Window_Shadow:
-		enabled := docklib.unpack(r, u8)
+		enabled := dock.unpack(r, u8)
 		if enabled > 1 {return .Invalid_Message}
 		tags: u64 = 1 << 11;set := enabled == 1
 		if op == .Window_Shadow {tags = 1 << 3;set = !set}
 		if set {return status(SLSSetWindowTags(g.cid, id, &tags, 64))}
 		return status(SLSClearWindowTags(g.cid, id, &tags, 64))
 	case .Window_Focus:
-		if g.focus == nil || docklib.focus_target_blocked(g.version) {return .Unsupported}
+		if g.focus == nil || dock.focus_target_blocked(g.version) {return .Unsupported}
 		owner: i32;psn: PSN
 		if SLSGetWindowOwner(g.cid, id, &owner) != 0 ||
 		   SLSGetConnectionPSN(owner, &psn) != 0 {return .Operation_Failed}
 		(cast(proc "c" (_: PSN, _: u32))g.focus)(psn, id)
 		return .OK
 	case .Window_Order:
-		order := docklib.unpack(r, i32);relative := docklib.unpack(r, u32)
+		order := dock.unpack(r, i32);relative := dock.unpack(r, u32)
 		if order < -1 || order > 1 {return .Invalid_Message}
 		// Commit group ordering explicitly; the ordinary setter can acknowledge
 		// without publishing the new order for windows owned by another app.
 		transaction := SLSTransactionCreate(g.cid)
-		if transaction == nil {docklib.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
+		if transaction == nil {dock.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
 		defer m.CFRelease(transaction)
 		SLSTransactionOrderWindowGroup(transaction, id, order, relative)
 		SLSTransactionCommit(transaction, 1)
 		return .OK
 	case .Window_Scale:
-		x := docklib.unpack(r, f32);y := docklib.unpack(r, f32);width := docklib.unpack(r, f32)
-		height := docklib.unpack(r, f32)
+		x := dock.unpack(r, f32);y := dock.unpack(r, f32);width := dock.unpack(r, f32)
+		height := dock.unpack(r, f32)
 		if math.is_nan(x) ||
 		   math.is_nan(y) ||
 		   math.is_nan(width) ||
@@ -531,21 +532,21 @@ window_action :: proc(op: docklib.Opcode, r: ^docklib.Reader, diagnostic: ^dockl
 // ------------------------------------------------------------------------
 
 Request :: struct {
-	op:     docklib.Opcode,
+	op:     dock.Opcode,
 	bytes:  []u8,
-	result: docklib.Status,
+	result: dock.Status,
 	tick:   bool,
 	ctx:    runtime.Context,
-	native_failure: docklib.Native_Failure,
+	native_failure: dock.Native_Failure,
 	created_space: u64,
 }
 main_request :: proc "c" (user: rawptr) {
 	req := (^Request)(user);context = req.ctx
 	pool := m.pool_push();defer m.pool_pop(pool)
 	if req.tick {tick_fades();tick_proxy_recovery();return}
-	if !docklib.validate(req.op, req.bytes) {req.result = .Invalid_Message;return}
+	if !dock.validate(req.op, req.bytes) {req.result = .Invalid_Message;return}
 	if req.op == .Handshake {req.result = .OK;return}
-	r := docklib.reader(req.bytes)
+	r := dock.reader(req.bytes)
 	if (req.op >= .Space_Focus && req.op <= .Space_Move) || req.op == .Space_Create_Tracked {
 		req.result = space_action(req.op, &r, &req.created_space)
 	} else {req.result = window_action(req.op, &r, &req.native_failure)}
@@ -554,7 +555,7 @@ initialize_payload :: proc "c" (unused: rawptr) {
 	context = runtime.default_context()
 	pool := m.pool_push();defer m.pool_pop(pool)
 	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys, .Space_Transaction};if g.add != nil {g.caps += {.Tracked_Space_Create}}
-	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]docklib.Entry)
+	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]dock.Entry)
 }
 listen_fd: i32 = -1
 serve :: proc "c" (unused: rawptr) -> rawptr {
@@ -591,36 +592,36 @@ serve_one :: proc(fd: i32) {
 	count := int(header[0]) | int(header[1]) << 8
 	if count < 1 ||
 	   count >
-		   docklib.MAX_PACKET -
-			   2 {reply := [1]u8{u8(docklib.Status.Invalid_Message)};m.write_all(fd, reply[:]);return}
-	buffer: [docklib.MAX_PACKET]u8
+		   dock.MAX_PACKET -
+			   2 {reply := [1]u8{u8(dock.Status.Invalid_Message)};m.write_all(fd, reply[:]);return}
+	buffer: [dock.MAX_PACKET]u8
 	if !m.read_exact(fd, buffer[:count], deadline) {return}
 	req := Request {
-		op    = docklib.Opcode(buffer[0]),
+		op    = dock.Opcode(buffer[0]),
 		bytes = buffer[1:count],
 		ctx   = context,
 	}
 	dispatch_sync_f(dispatch_get_main_queue(), &req, sign_c(main_request))
 	if req.result != .OK && req.native_failure.stage != .None {
-		reply := docklib.Packet{valid = true}
-		docklib.pack(&reply, docklib.Status.Native_Error)
-		docklib.pack(&reply, req.native_failure.stage)
-		docklib.pack(&reply, req.native_failure.code)
+		reply := dock.Packet{valid = true}
+		dock.pack(&reply, dock.Status.Native_Error)
+		dock.pack(&reply, req.native_failure.stage)
+		dock.pack(&reply, req.native_failure.code)
 		m.write_all(fd, reply.data[:reply.count]);return
 	}
 	response := [1]u8{u8(req.result)}
 	if !m.write_all(fd, response[:]) || req.result != .OK {return}
 	if req.op == .Space_Create_Tracked {
-		reply := docklib.Packet{valid = true};docklib.pack(&reply, req.created_space)
+		reply := dock.Packet{valid = true};dock.pack(&reply, req.created_space)
 		m.write_all(fd, reply.data[:reply.count]);return
 	}
 	if req.op != .Handshake {return}
-	p := docklib.Packet {
+	p := dock.Packet {
 		valid = true,
 	}
-	version := string(docklib.VERSION)
-	for byte in transmute([]u8)version {docklib.pack(&p, byte)}
-	docklib.pack(&p, u8(0));docklib.pack(&p, g.caps)
+	version := string(dock.VERSION)
+	for byte in transmute([]u8)version {dock.pack(&p, byte)}
+	dock.pack(&p, u8(0));dock.pack(&p, g.caps)
 	m.write_all(fd, p.data[:p.count])
 }
 load_payload :: proc "c" () {
@@ -652,5 +653,5 @@ shoji_sa_start :: proc "c" () {load_payload()}
 shoji_sa_init: proc "c" () = shoji_sa_start
 
 sign_c :: proc(p: $P) -> P {
-	return transmute(P)uintptr(docklib.sign_function(u64(uintptr(transmute(rawptr)p))))
+	return transmute(P)uintptr(inject.sign_function(u64(uintptr(transmute(rawptr)p))))
 }

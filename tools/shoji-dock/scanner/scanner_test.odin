@@ -1,6 +1,6 @@
 package dockscan
 
-import p "../../../src/dock"
+import dock "../../../src/dock"
 import "core:mem"
 import "core:os"
 import "core:strings"
@@ -249,7 +249,7 @@ comparison_ranks_changed_function_with_real_disassembly :: proc(t: ^testing.T) {
 		return
 	}; defer os.remove_all(dir)
 	v, _ := parse_version("15.6"); defs := targets_for(v)
-	target := defs[2]; pattern, valid := p.compile(target.pattern); if !testing.expect(t, valid) {
+	target := defs[2]; pattern, valid := dock.compile(target.pattern); if !testing.expect(t, valid) {
 		return
 	}
 	old := fixture(); new := fixture()
@@ -387,10 +387,10 @@ macos27_static_profile_keeps_runtime_gate_explicit :: proc(t: ^testing.T) {
  defer mem.dynamic_arena_destroy(&arena)
  context.allocator=mem.dynamic_arena_allocator(&arena)
  context.temp_allocator=context.allocator
- version:=p.Version{27,0,1}
+ version:=dock.Version{27,0,1}
  testing.expect(t,scan_profile_available(version))
- testing.expect_value(t,p.supported(version),p.MACOS27_CANDIDATE)
- testing.expect(t,!p.supported({27,2,0}))
+ testing.expect_value(t,dock.supported(version),dock.MACOS27_CANDIDATE)
+ testing.expect(t,!dock.supported({27,2,0}))
  testing.expect(t,!scan_profile_available({27,2,0}))
  testing.expect_value(t,choose_profile(Bundle{manifest=Manifest{os_version="27.0.1"}},""),"27.0.1")
  definitions:=targets_for(version)

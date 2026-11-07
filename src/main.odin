@@ -1,12 +1,13 @@
 package shoji
 
-import loader "dock"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
 import ipc "ipc"
 import service "service"
+import attach "windowserver/attach"
+import inject "inject"
 
 HELP_MESSAGE :: `
 Usage: shoji [-c CONFIG] [--sa]
@@ -100,7 +101,7 @@ main :: proc() {
 			}
 			payload, payload_err := addition_payload_path()
 			if payload_err != "" {fmt.eprintln(payload_err); os.exit(1)}
-			if err := loader.inject(payload); err != "" {
+			if err := inject.inject(payload); err != "" {
         fmt.eprintln(err)
         os.exit(1)
       }
@@ -118,7 +119,7 @@ main :: proc() {
 			fmt.printf("Dock scripting addition: %v\n", caps)
       return
 		case "--ws-attach":
-			os.exit(ws_attach_cli(args[1:]))
+			os.exit(attach.ws_attach_cli(args[1:]))
 		case "--ws-space-move":
 			if len(args) != 5 {
 				fmt.eprintln("--ws-space-move takes WINDOW SPACE X Y")

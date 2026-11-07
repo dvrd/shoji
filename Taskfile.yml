@@ -205,7 +205,7 @@ tasks:
     cmds:
       - '{{.ODIN}} check src -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check src/payloads/dock -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
-      - '{{.ODIN}} check src/payloads/windowserver -warnings-as-errors -no-entry-point -target-features:pauth -vet-unused-imports -vet-unused-variables'
+      - '{{.ODIN}} check src/payloads/windowserver -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tests -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock -warnings-as-errors -vet-unused-imports -vet-unused-variables'
       - '{{.ODIN}} check tools/shoji-dock/scanner -warnings-as-errors -no-entry-point -vet-unused-imports -vet-unused-variables'

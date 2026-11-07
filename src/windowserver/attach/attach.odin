@@ -1,4 +1,4 @@
-package shoji
+package attach
 
 // `shoji --ws-attach`: the only root step of the WindowServer gate, run by
 // the daemon as `sudo -n shoji --ws-attach` (one pinned sudoers rule, no
@@ -18,8 +18,8 @@ import "core:os"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
-import loader "dock"
-import gate "windowserver/gate"
+import gate "../gate"
+import inject "../../inject"
 
 WS_ATTACH_PAYLOAD :: WS_PAYLOAD_DIR + "/shoji-ws.dylib"
 WS_ATTACH_START_WAIT :: 5 * time.Second
@@ -150,7 +150,7 @@ ws_attach_load :: proc(
 	}
 	// sudo clears the environment; the loader requires the explicit opt-in.
 	posix.setenv(gate.EXPERIMENT_ENV, "1", true)
-	if message := loader.inject_windowserver(WS_ATTACH_PAYLOAD, result.windowserver);
+	if message := inject.inject_windowserver(WS_ATTACH_PAYLOAD, result.windowserver);
 	   message != "" {
 		result.detail = message
 		return {}, .Inject
@@ -196,7 +196,7 @@ ws_attach_find_windowserver :: proc() -> i32 {
 	if count <= 0 {return 0}
 	found: i32 = 0
 	for pid in pids[:min(int(count), len(pids))] {
-		if pid <= 0 || !gate.valid_path(loader.windowserver_process_path(pid)) {continue}
+		if pid <= 0 || !gate.valid_path(inject.windowserver_process_path(pid)) {continue}
 		// Two system WindowServers would make the target ambiguous.
 		if found != 0 {return 0}
 		found = pid

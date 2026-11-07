@@ -15,14 +15,13 @@ import "core:sys/posix"
 import "core:time"
 import gate "windowserver/gate"
 import health "health"
+import attach "windowserver/attach"
 
 WS_ATTACH_ATTEMPTS :: 5
 WS_ATTACH_RETRY_FIRST :: 2 * time.Second
 WS_ATTACH_RETRY_MAX :: 30 * time.Second
 // Covers injection (≤5 s), delivery (≤3 s) and sudo itself.
 WS_ATTACH_CHILD_LIMIT :: 15 * time.Second
-// `--ws-attach` exit status for refusals that a retry cannot fix.
-WS_ATTACH_EXIT_REFUSED :: 3
 
 Ws_Attach_State :: enum {
 	Off,
@@ -197,7 +196,7 @@ ws_attach_exit_outcome :: proc(
 	attempts: u32,
 ) -> Ws_Attach_Outcome {
 	if connected {return .Connected}
-	if exit.kind == .Exited && exit.code == WS_ATTACH_EXIT_REFUSED {return .Give_Up}
+	if exit.kind == .Exited && exit.code == attach.WS_ATTACH_EXIT_REFUSED {return .Give_Up}
 	if attempts >= WS_ATTACH_ATTEMPTS {return .Give_Up}
 	return .Retry
 }
