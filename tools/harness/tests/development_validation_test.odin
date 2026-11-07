@@ -3,7 +3,6 @@ package tests
 import i "../../inspector/inspect"
 import h "../harness"
 import tc "../../common"
-import s "../../../src"
 import "core:mem"
 import "core:os"
 import "core:strconv"
@@ -11,6 +10,7 @@ import "core:strings"
 import posix "core:sys/posix"
 import "core:testing"
 import "core:time"
+import support "../../../src/support"
 
 @(test)
 native_prebuilt_fixture_requires_a_verified_regular_file :: proc(t: ^testing.T) {
@@ -18,13 +18,13 @@ native_prebuilt_fixture_requires_a_verified_regular_file :: proc(t: ^testing.T) 
 	defer mem.dynamic_arena_destroy(&arena)
 	context.allocator = mem.dynamic_arena_allocator(&arena)
 	context.temp_allocator = context.allocator
-	root, _ := s.temp("shoji-prebuilt-fixture-test"); defer os.remove_all(root)
+	root, _ := support.temp("shoji-prebuilt-fixture-test"); defer os.remove_all(root)
 	r: Tool_Recorder
 	c := tool_context(root, &r)
 	testing.expect(t, h.build_live_helper(c, true) != "")
 	testing.expect_value(t, len(r.calls), 0)
-	_ = s.mkdir(s.join(root, "bin"))
-	_ = s.write(tc.binary(c, "harness-fixture"), "fixture")
+	_ = support.mkdir(support.join(root, "bin"))
+	_ = support.write(tc.binary(c, "harness-fixture"), "fixture")
 	r.fail_verify = true
 	testing.expect(t, h.build_live_helper(c, true) != "")
 	testing.expect_value(t, len(r.calls), 1)
@@ -43,8 +43,8 @@ native_evidence_failures_propagate_and_preserve_original_failures :: proc(
 	defer mem.dynamic_arena_destroy(&arena)
 	context.allocator = mem.dynamic_arena_allocator(&arena)
 	context.temp_allocator = context.allocator
-	root, _ := s.temp("shoji-evidence-error-test"); defer os.remove_all(root)
-	blocked := s.join(root, "blocked"); _ = s.mkdir(blocked)
+	root, _ := support.temp("shoji-evidence-error-test"); defer os.remove_all(root)
+	blocked := support.join(root, "blocked"); _ = support.mkdir(blocked)
 	report := h.Validation_Report {
 		status = "desktop-preflight-passed",
 	}
@@ -60,7 +60,7 @@ native_evidence_failures_propagate_and_preserve_original_failures :: proc(
 		report.status = status
 		h.finish_validation(
 			&report,
-			s.join(root, "validation.json"),
+			support.join(root, "validation.json"),
 			"preflight failed",
 			&err,
 		)
@@ -70,7 +70,7 @@ native_evidence_failures_propagate_and_preserve_original_failures :: proc(
 	l := h.Live {
 		evidence = root,
 	}
-	_ = s.mkdir(s.join(root, "commands.json"))
+	_ = support.mkdir(support.join(root, "commands.json"))
 	h.record_cleanup(&l, "owned child", "could not reap")
 	h.save_live(&l, "original live failure", &err)
 	testing.expect_value(t, l.report.status, "failed")
@@ -88,12 +88,12 @@ native_evidence_failures_propagate_and_preserve_original_failures :: proc(
 	saved: h.Live_Report
 	testing.expect_value(
 		t,
-		s.read_json(s.join(root, "report.json"), &saved),
+		support.read_json(support.join(root, "report.json"), &saved),
 		"",
 	)
 	testing.expect_value(t, saved.status, "failed")
-	_ = os.remove(s.join(root, "report.json"))
-	_ = s.mkdir(s.join(root, "report.json"))
+	_ = os.remove(support.join(root, "report.json"))
+	_ = support.mkdir(support.join(root, "report.json"))
 	h.save_live(&l, "", &err)
 	testing.expect(t, strings.contains(err, "report evidence"))
 	testing.expect_value(t, l.report.status, "failed")
@@ -113,18 +113,18 @@ native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
 	defer mem.dynamic_arena_destroy(&arena)
 	context.allocator = mem.dynamic_arena_allocator(&arena)
 	context.temp_allocator = context.allocator
-	root, _ := s.temp("shoji-interrupt-test"); defer os.remove_all(root)
+	root, _ := support.temp("shoji-interrupt-test"); defer os.remove_all(root)
 	c := tc.Context {
 		root = tc.project_root(),
 	}
-	fixture := s.join(root, "cancellation")
-	result := s.process_run(
+	fixture := support.join(root, "cancellation")
+	result := support.process_run(
 		{},
 		[]string {
 			tc.compiler(c),
 			"build",
-			s.join(c.root, "tools/harness/fixtures/cancellation"),
-			s.cat("-out:", fixture),
+			support.join(c.root, "tools/harness/fixtures/cancellation"),
+			support.cat("-out:", fixture),
 			"-warnings-as-errors",
 		},
 		env = tc.compiler_env(c),
@@ -148,7 +148,7 @@ native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
 	}
 	defer h.stop_child(&unrelated)
 	for mode in ([]string{"interrupt", "timeout", "stubborn"}) {
-		pidfile := s.join(root, s.cat(mode, ".pid"))
+		pidfile := support.join(root, support.cat(mode, ".pid"))
 		child, err := h.start_child(&l, []string{fixture, mode, pidfile}, mode)
 		testing.expect_value(t, err, ""); if err != "" {
 			return
@@ -159,12 +159,12 @@ native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
 		testing.expect_value(t, line, "ready")
 		// Signal only the fixture process created by this test, never the test runner.
 		started := time.tick_now()
-		for !s.regular(pidfile) &&
+		for !support.regular(pidfile) &&
 		    time.tick_since(started) <
 			    2 * time.Second { time.sleep(10 * time.Millisecond) }
-		text, read_error := s.read(pidfile)
+		text, read_error := support.read(pidfile)
 		testing.expect_value(t, read_error, "")
-		pid, valid := strconv.parse_i64(s.trim(text))
+		pid, valid := strconv.parse_i64(support.trim(text))
 		testing.expect(t, valid && pid > 1)
 		if !valid || pid <= 1 {
 			return
@@ -183,7 +183,7 @@ native_cancellation_reaps_child_and_allows_cleanup :: proc(t: ^testing.T) {
 			child.active = false
 		}
 		testing.expect_value(t, int(state.exit_code), 130)
-		output, _ := s.read(child.stdout)
+		output, _ := support.read(child.stdout)
 		testing.expect(t, strings.contains(output, "cleanup completed"))
 		deadline := time.tick_now()
 		for posix.kill(posix.pid_t(pid), posix.Signal(0)) == nil &&
@@ -210,7 +210,7 @@ native_validation_records_failures_and_timeouts_without_false_passes :: proc(
 	defer mem.dynamic_arena_destroy(&arena)
 	context.allocator = mem.dynamic_arena_allocator(&arena)
 	context.temp_allocator = context.allocator
-	root, _ := s.temp("shoji-validation-test"); defer os.remove_all(root)
+	root, _ := support.temp("shoji-validation-test"); defer os.remove_all(root)
 	c := tc.Context {
 		root = root,
 	}
@@ -249,7 +249,7 @@ native_validation_records_failures_and_timeouts_without_false_passes :: proc(
 	)
 	testing.expect_value(t, result.exit_code, 7)
 	testing.expect_value(t, result.status, "fail")
-	text, _ := s.read(result.log)
+	text, _ := support.read(result.log)
 	testing.expect(t, strings.contains(text, "diagnostic"))
 	result = h.validation_execute(
 		c,
@@ -260,7 +260,7 @@ native_validation_records_failures_and_timeouts_without_false_passes :: proc(
 	)
 	testing.expect_value(t, result.exit_code, -1)
 	testing.expect_value(t, result.status, "fail")
-	text, _ = s.read(result.log)
+	text, _ = support.read(result.log)
 	testing.expect(t, strings.contains(text, "Timeout"))
 }
 
@@ -354,7 +354,7 @@ native_alpha_parser_and_owned_child_cleanup_handle_failures :: proc(
 	}
 	alpha, err := h.parse_alpha(`{"window":123,"query_alpha":0.5}`, 123)
 	testing.expect_value(t, err, ""); testing.expect_value(t, alpha, f64(.5))
-	root, _ := s.temp("shoji-child-test"); defer os.remove_all(root)
+	root, _ := support.temp("shoji-child-test"); defer os.remove_all(root)
 	live := h.Live {
 		evidence = root,
 	}
@@ -417,27 +417,27 @@ native_live_helper_emits_valid_json_without_windowserver :: proc(
 	defer mem.dynamic_arena_destroy(&arena)
 	context.allocator = mem.dynamic_arena_allocator(&arena)
 	context.temp_allocator = context.allocator
-	root, _ := s.temp("shoji-helper-output-test"); defer os.remove_all(root)
+	root, _ := support.temp("shoji-helper-output-test"); defer os.remove_all(root)
 	c := tc.Context {
 		root = tc.project_root(),
-	}; helper := s.join(root, "helper")
-	r := s.process_run(
+	}; helper := support.join(root, "helper")
+	r := support.process_run(
 		{},
 		[]string {
 			tc.compiler(c),
 			"build",
-			s.join(c.root, "tools/harness/fixtures/desktop"),
-			s.cat("-out:", helper),
+			support.join(c.root, "tools/harness/fixtures/desktop"),
+			support.cat("-out:", helper),
 			"-extra-linker-flags:-F/System/Library/PrivateFrameworks",
 		},
 		timeout = 120 * time.Second,
 		env = tc.compiler_env(c),
 	)
-	testing.expect(t, r.code == 0, s.cat(r.out, r.diagnostic))
+	testing.expect(t, r.code == 0, support.cat(r.out, r.diagnostic))
 	if r.code != 0 {
 		return
 	}
-	output := s.process_run(
+	output := support.process_run(
 		{},
 		[]string{helper, "--self-test-output"},
 		timeout = 15 * time.Second,

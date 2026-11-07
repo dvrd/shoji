@@ -17,6 +17,7 @@ import "core:sync"
 import "core:sys/posix"
 import "core:time"
 import objc "core:sys/darwin/Foundation"
+import health "health"
 
 NOTIFY_RATE_LIMIT :: 5
 NOTIFY_RATE_WINDOW :: 10 * time.Minute
@@ -200,8 +201,8 @@ notify_payload_transition :: proc(n: ^Notifier, r: ^Addition_Reload, now: time.T
 	switch transition {
 	case .None:
 	case .Failed:
-		body := bounded_get(&r.health.cause)
-		if report := bounded_get(&r.health.crash_report); report != "" {
+		body := health.bounded_get(&r.payload_health.cause)
+		if report := health.bounded_get(&r.payload_health.crash_report); report != "" {
 			body = fmt.tprintf("%s. Crash report: %s", body, report)
 		}
 		notify(n, "Shoji: Dock payload failed", body, now)
@@ -215,7 +216,7 @@ notify_config_failures :: proc(n: ^Notifier, run: ^Config_Run, now: time.Time) {
 	report := &run.report
 	for run.notified < report.count {
 		failure := &report.failures[run.notified]
-		notify(n, "Shoji: configuration error", config_failure_text(failure), now)
+		notify(n, "Shoji: configuration error", health.config_failure_text(failure), now)
 		run.notified += 1
 	}
 }

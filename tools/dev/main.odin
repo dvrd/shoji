@@ -1,9 +1,9 @@
 package main
 
-import s "../../src"
 import tc "../common"
 import "core:os"
 import d "dev"
+import support "../../src/support"
 
 HELP :: `Usage: dev COMMAND [OPTIONS]
   signing setup|check|sign   Persistent identity and verified installation
@@ -23,7 +23,7 @@ dispatch :: proc(c: tc.Context, args: []string) -> string {
 	case "package":
 		err = d.package_cli(c, args[1:])
 	case "clean":
-		o, e := s.parse(args[1:], nil, []string{"dry-run"}); err = e
+		o, e := support.parse(args[1:], nil, []string{"dry-run"}); err = e
 		if err == "" {
 			if len(o.positionals) != 0 {
 				err = "unexpected cleanup argument"
@@ -32,7 +32,7 @@ dispatch :: proc(c: tc.Context, args: []string) -> string {
 			}
 		}
 	case:
-		err = s.cat("unknown command: ", args[0])
+		err = support.cat("unknown command: ", args[0])
 	}
 	return err
 }

@@ -1,12 +1,12 @@
 package harness
 
-import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
 import i "../../inspector/inspect"
+import support "../../../src/support"
 
 // Compiler regression checks
 // ------------------------------------------------------------------------
@@ -104,7 +104,7 @@ jump :: asm(f: rawptr) [f = %x19, #volatile] {
 	},
 }
 check_asm :: proc(c: tc.Context, args: []string) -> string {
-	o, err := s.parse(
+	o, err := support.parse(
 		args,
 		[]string{"compiler", "library-root", "target"},
 		nil,
@@ -113,21 +113,21 @@ check_asm :: proc(c: tc.Context, args: []string) -> string {
 	}; if len(o.positionals) != 0 {
 		return "unexpected check-asm arguments"
 	}
-	odin := s.get(o, "compiler", tc.compiler(c))
-	libs := s.get(o, "library-root", tc.library_root(c))
-	target := s.get(o, "target", "darwin_arm64")
-	stage, e := s.temp("shoji-asm-check"); if e != "" {
+	odin := support.get(o, "compiler", tc.compiler(c))
+	libs := support.get(o, "library-root", tc.library_root(c))
+	target := support.get(o, "target", "darwin_arm64")
+	stage, e := support.temp("shoji-asm-check"); if e != "" {
 		return e
 	}; defer os.remove_all(stage)
 	failed := false
 	for item in ASM_CASES {
-		dir := s.join(stage, item.name); if err = s.mkdir(dir); err != "" {
+		dir := support.join(stage, item.name); if err = support.mkdir(dir); err != "" {
 			return err
 		}
-		if err = s.write(s.join(dir, "probe.odin"), item.source); err != "" {
+		if err = support.write(support.join(dir, "probe.odin"), item.source); err != "" {
 			return err
 		}
-		r := s.process_run(
+		r := support.process_run(
 			c.executor,
 			[]string {
 				odin,
@@ -135,14 +135,14 @@ check_asm :: proc(c: tc.Context, args: []string) -> string {
 				dir,
 				"-no-entry-point",
 				"-warnings-as-errors",
-				s.cat("-target:", target),
+				support.cat("-target:", target),
 			},
 			"",
 			"",
 			30 * time.Second,
-			s.environment("ODIN_ROOT", s.abs(libs)),
+			support.environment("ODIN_ROOT", support.abs(libs)),
 		)
-		output := s.cat(r.out, r.diagnostic)
+		output := support.cat(r.out, r.diagnostic)
 		passed :=
 			item.diagnostic == "" \
 				? r.code == 0 \
@@ -187,7 +187,7 @@ finish_validation :: proc(
 	   report.status != "target-mismatch" {
 		report.status = "failed"
 	}
-	write_error := s.write_json(path, report^)
+	write_error := support.write_json(path, report^)
 	final^ = tc.with_error(err, "report evidence", write_error)
 	if write_error != "" {
 		report.status = "failed"
@@ -222,19 +222,19 @@ validation_execute :: proc(
 	directory, name: string,
 	timeout: time.Duration = 300 * time.Second,
 ) -> Validation_Check {
-	r := s.process_run(
+	r := support.process_run(
 		c.executor,
 		args,
 		c.root,
 		timeout = timeout,
 		env = tc.compiler_env(c),
 	)
-	log := s.join(directory, s.cat(name, ".log"))
-	err := s.write(log, s.cat(r.out, r.diagnostic))
+	log := support.join(directory, support.cat(name, ".log"))
+	err := support.write(log, support.cat(r.out, r.diagnostic))
 	if err != "" {
-		return {s.clone_args(args), -1, "fail", log, err}
+		return {support.clone_args(args), -1, "fail", log, err}
 	}
-	return {s.clone_args(args), r.code, r.code == 0 ? "pass" : "fail", log, ""}
+	return {support.clone_args(args), r.code, r.code == 0 ? "pass" : "fail", log, ""}
 }
 validation_cli :: proc(c: tc.Context, args: []string) -> string {
 	report: Validation_Report
@@ -255,7 +255,7 @@ validation_run :: proc(
 ) -> (
 	err: string,
 ) {
-	o, e := s.parse(
+	o, e := support.parse(
 		args,
 		nil,
 		[]string{"preflight-only", "live-animation", "dock-restart"},
@@ -267,7 +267,7 @@ validation_run :: proc(
 	if o.flags["dock-restart"] && !o.flags["live-animation"] {
 		return "--dock-restart requires --live-animation"
 	}
-	directory, temp_error := s.temp("shoji-validation"); if temp_error != "" {
+	directory, temp_error := support.temp("shoji-validation"); if temp_error != "" {
 		return temp_error
 	}
 	report := Validation_Report {
@@ -279,7 +279,7 @@ validation_run :: proc(
 		artifacts = make(map[string]string),
 	}
 	defer report_out^ = report
-	path := s.join(directory, "report.json")
+	path := support.join(directory, "report.json")
 	path_out^ = path
 	report.recorded_at = fmt.tprintf("%v", time.now())
 	version, ev := tc.run(c, []string{"/usr/bin/sw_vers", "-productVersion"})
@@ -293,7 +293,7 @@ validation_run :: proc(
 	arch, ea := tc.run(c, []string{"/usr/bin/uname", "-m"}); if ea != "" {
 		return ea
 	}
-	report.actual = {s.trim(version), s.trim(build), s.trim(arch)}
+	report.actual = {support.trim(version), support.trim(build), support.trim(arch)}
 	report.matches_target = report.actual == report.target
 	if report.head, err = tc.run(
 		c,
@@ -309,7 +309,7 @@ validation_run :: proc(
 	); err != "" {
 		return err
 	}
-	if err = s.write_json(path, report); err != "" {
+	if err = support.write_json(path, report); err != "" {
 		return err
 	}
 	if !o.flags["preflight-only"] {
@@ -330,15 +330,15 @@ validation_run :: proc(
 				task,
 				1800 * time.Second,
 			)
-			if write_error := s.write_json(path, report); write_error != "" {
+			if write_error := support.write_json(path, report); write_error != "" {
 				original :=
 					report.checks[task].status == "pass" \
 						? "" \
-						: s.cat("validation task failed: ", task)
+						: support.cat("validation task failed: ", task)
 				return tc.with_error(original, "report evidence", write_error)
 			}
 			if report.checks[task].status != "pass" {
-				return s.cat("validation task failed: ", task)
+				return support.cat("validation task failed: ", task)
 			}
 		}
 		dev := tc.binary(c, "dev")
@@ -375,7 +375,7 @@ validation_run :: proc(
 		if report.checks["package"].status == "pass" {
 			verification := i.verify_archive(
 				c,
-				s.join(directory, "shoji-validation-macos.tar.gz"),
+				support.join(directory, "shoji-validation-macos.tar.gz"),
 			)
 			report.checks["archive-checksums"] = {
 				status = verification == "" ? "pass" : "fail",
@@ -384,10 +384,10 @@ validation_run :: proc(
 		}
 	}
 	for name in tc.RELEASE_BINARIES {
-		if s.regular(tc.binary(c, name)) {
+		if support.regular(tc.binary(c, name)) {
 			if report.artifacts[name], err = tc.digest(c, tc.binary(c, name));
 			   err != "" {
-				return s.cat("binary evidence: ", err)
+				return support.cat("binary evidence: ", err)
 			}
 		}
 	}
@@ -450,7 +450,7 @@ validation_run :: proc(
 	if report.status != "automated-checks-passed-live-pending" &&
 	   report.status != "selected-live-checks-passed" &&
 	   report.status != "desktop-preflight-passed" {
-		return s.cat("validation: ", report.status)
+		return support.cat("validation: ", report.status)
 	}
 	return ""
 }

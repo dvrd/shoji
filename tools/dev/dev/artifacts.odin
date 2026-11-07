@@ -1,11 +1,11 @@
 package development
 
-import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import support "../../../src/support"
 
 // Build artifact management
 // ------------------------------------------------------------------------
@@ -62,7 +62,7 @@ generated_directory :: proc(path, name: string) -> (bool, string) {
 		if entry.type != .Regular || !tc.contains(allowed, entry.name) {
 			return false, ""
 		}
-		file, open_error := os.open(s.join(path, entry.name))
+		file, open_error := os.open(support.join(path, entry.name))
 		if open_error != nil {
 			return false, fmt.tprintf(
 				"cannot inspect generated output: %v",
@@ -78,10 +78,10 @@ generated_directory :: proc(path, name: string) -> (bool, string) {
 }
 clean_outputs :: proc(c: tc.Context) -> ([]string, string) {
 	directory := tc.root_file(c, "bin")
-	if s.kind(directory) == .Symlink {
+	if support.kind(directory) == .Symlink {
 		return nil, "refusing to clean a symlinked bin directory"
 	}
-	if !s.exists(directory) {
+	if !support.exists(directory) {
 		return nil, ""
 	}
 	files, err := os.read_directory_by_path(directory, -1, context.allocator)
@@ -93,7 +93,7 @@ clean_outputs :: proc(c: tc.Context) -> ([]string, string) {
 		if tc.contains(CLEAN_KEEP, entry.name) || entry.type == .Symlink {
 			continue
 		}
-		path := s.join(directory, entry.name)
+		path := support.join(directory, entry.name)
 		if entry.type == .Directory {
 			generated, inspect_error := generated_directory(path, entry.name)
 			if inspect_error != "" {
@@ -155,38 +155,38 @@ package_release :: proc(
 	string,
 	string,
 ) {
-	if !s.safe_name(version) {
+	if !support.safe_name(version) {
 		return "",
 			"version must contain only letters, numbers, dots, hyphens and underscores"
 	}
-	archive := s.join(
-		s.abs(output),
+	archive := support.join(
+		support.abs(output),
 		fmt.tprintf("shoji-%s-macos.tar.gz", version),
 	)
-	if s.exists(archive) {
+	if support.exists(archive) {
 		return "", "release already exists"
 	}
-	if err := s.mkdir(s.abs(output)); err != "" {
+	if err := support.mkdir(support.abs(output)); err != "" {
 		return "", err
 	}
-	stage, err := s.temp("shoji-release"); if err != "" {
+	stage, err := support.temp("shoji-release"); if err != "" {
 		return "", err
 	}; defer os.remove_all(stage)
-	prefix := s.cat("shoji-", version); bundle := s.join(stage, prefix)
-	if err = s.mkdir(s.join(bundle, "bin")); err != "" {
+	prefix := support.cat("shoji-", version); bundle := support.join(stage, prefix)
+	if err = support.mkdir(support.join(bundle, "bin")); err != "" {
 		return "", err
 	}
 	manifest := strings.builder_make(context.allocator)
 	for relative in tc.release_files() {
 		source := tc.root_file(c, relative)
 		if strings.has_prefix(relative, "bin/") {
-			source = s.join(binaries, filepath.base(relative))
+			source = support.join(binaries, filepath.base(relative))
 		}
-		if !s.regular(source) {
-			return "", s.cat("missing release input: ", source)
+		if !support.regular(source) {
+			return "", support.cat("missing release input: ", source)
 		}
-		destination := s.join(bundle, relative)
-		if err = s.copy_file(destination, source); err != "" {
+		destination := support.join(bundle, relative)
+		if err = support.copy_file(destination, source); err != "" {
 			return "", err
 		}
 		hash, e := tc.digest(c, destination); if e != "" {
@@ -197,8 +197,8 @@ package_release :: proc(
 			fmt.tprintf("%s  %s\n", hash, relative),
 		)
 	}
-	if err = s.write(
-		s.join(bundle, "SHA256SUMS"),
+	if err = support.write(
+		support.join(bundle, "SHA256SUMS"),
 		strings.to_string(manifest),
 	); err != "" {
 		return "", err
@@ -208,32 +208,32 @@ package_release :: proc(
 		[]string{"/usr/bin/tar", "-czf", archive, "-C", stage, prefix},
 		"",
 		"",
-		env = s.environment("COPYFILE_DISABLE", "1"),
+		env = support.environment("COPYFILE_DISABLE", "1"),
 	); err != "" {
 		_ = os.remove(archive); return "", err
 	}
 	return archive, ""
 }
 package_cli :: proc(c: tc.Context, args: []string) -> string {
-	o, err := s.parse(args, []string{"version", "binaries", "output"}, nil)
+	o, err := support.parse(args, []string{"version", "binaries", "output"}, nil)
 	if err != "" {
 		return err
 	}
-	if len(o.positionals) != 0 || s.get(o, "version") == "" {
+	if len(o.positionals) != 0 || support.get(o, "version") == "" {
 		return "package requires --version"
 	}
 	archive, e := package_release(
 		c,
-		s.get(o, "binaries", tc.binary(c, "universal")),
-		s.get(o, "output", tc.root_file(c, "dist")),
-		s.get(o, "version"),
+		support.get(o, "binaries", tc.binary(c, "universal")),
+		support.get(o, "output", tc.root_file(c, "dist")),
+		support.get(o, "version"),
 	); if e != "" {
 		return e
 	}
 	fmt.println(archive); return ""
 }
 remove_output :: proc(path: string) -> os.Error {
-	if s.kind(path) == .Directory {
+	if support.kind(path) == .Directory {
 		return os.remove_all(path)
 	}; return os.remove(path)
 }

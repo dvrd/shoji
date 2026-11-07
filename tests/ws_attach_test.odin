@@ -4,6 +4,8 @@ import mac "../src"
 import gate "../src/windowserver/gate"
 import "core:strings"
 import "core:testing"
+import health "../src/health"
+import service "../src/service"
 
 @(private = "file")
 status_bytes :: proc(status: gate.Tgate_Status) -> []u8 {
@@ -84,8 +86,8 @@ ws_attach_rejects_arguments :: proc(t: ^testing.T) {
 
 @(test)
 ws_attach_retries_transient_failures_and_stops_on_refusal :: proc(t: ^testing.T) {
-	failed := mac.Child_Exit{.Exited, 1}
-	refused := mac.Child_Exit{.Exited, mac.WS_ATTACH_EXIT_REFUSED}
+	failed := health.Child_Exit{.Exited, 1}
+	refused := health.Child_Exit{.Exited, mac.WS_ATTACH_EXIT_REFUSED}
 	Outcome :: mac.Ws_Attach_Outcome
 	testing.expect_value(t, mac.ws_attach_exit_outcome(failed, true, 1), Outcome.Connected)
 	testing.expect_value(t, mac.ws_attach_exit_outcome(failed, false, 1), Outcome.Retry)
@@ -106,8 +108,8 @@ windowserver_gate_setting_requires_the_daemon :: proc(t: ^testing.T) {
 @(test)
 service_status_shows_gate_failure_cause :: proc(t: ^testing.T) {
 	b := strings.builder_make(context.temp_allocator)
-	h := mac.Health_JSON{gate = "failed", gate_cause = "payload not installed"}
-	mac.status_render_health(&b, {color = false, home = "/Users/u"}, h)
+	h := health.Health_JSON{gate = "failed", gate_cause = "payload not installed"}
+	service.status_render_health(&b, {color = false, home = "/Users/u"}, h)
 	text := strings.to_string(b)
 	testing.expect(t, strings.contains(text, "● failed"))
 	testing.expect(t, strings.contains(text, "payload not installed"))

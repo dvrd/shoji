@@ -4,6 +4,7 @@ import mac "../src"
 import "core:sys/posix"
 import "core:testing"
 import "core:time"
+import health "../src/health"
 
 config_launch_count: int
 record_config_launch :: proc(_: string) -> bool {config_launch_count += 1;return true}
@@ -40,8 +41,8 @@ Reload_Recorder :: struct {
 	phases:     [dynamic]mac.Addition_Reload_Phase,
 	fail_spawn: bool,
 }
-reload_ok :: mac.Child_Exit{.Exited, 0}
-reload_failed :: mac.Child_Exit{.Exited, 1}
+reload_ok :: health.Child_Exit{.Exited, 0}
+reload_failed :: health.Child_Exit{.Exited, 1}
 reload_spawn :: proc(
 	user: rawptr,
 	phase: mac.Addition_Reload_Phase,
@@ -196,7 +197,7 @@ reload_native_subprocess_exit_drives_verification :: proc(t: ^testing.T) {
 		mac.addition_reload_finished(
 			&r,
 			i32(pid),
-			mac.child_exit_from_status(status),
+			health.child_exit_from_status(status),
 			now,
 		),
 	)

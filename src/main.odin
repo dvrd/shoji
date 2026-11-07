@@ -5,6 +5,8 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import ipc "ipc"
+import service "service"
 
 HELP_MESSAGE :: `
 Usage: shoji [-c CONFIG] [--sa]
@@ -85,7 +87,7 @@ main :: proc() {
 		switch args[0] {
 		case "service":
 			binary, _ := os.get_executable_path(context.allocator)
-			os.exit(service_cli(args[1:], binary))
+			os.exit(service.service_cli(args[1:], binary))
 		case "--validate-sizes", "--validate-swipe":
 			if len(args) != 2 {fmt.eprintln("validation requires a fixture process ID"); os.exit(2)}
 			pid, valid := strconv.parse_u64(args[1])
@@ -148,7 +150,7 @@ main :: proc() {
 			fmt.println(HELP_MESSAGE)
 			return
 		case "-m", "--message":
-			os.exit(client(args[1:]))
+			os.exit(ipc.client(args[1:]))
 		case "--inspect":
 			if len(args) != 1 {
 				fmt.eprintln("--inspect takes no arguments")

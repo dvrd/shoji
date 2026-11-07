@@ -7,6 +7,7 @@ import "core:strings"
 import posix "core:sys/posix"
 import "core:testing"
 import "core:time"
+import ipc "../src/ipc"
 
 @(test)
 command_server_services_complete_client_while_other_client_trickles_header :: proc(t: ^testing.T) {
@@ -20,7 +21,7 @@ command_server_services_complete_client_while_other_client_trickles_header :: pr
 	testing.expect(t, mac.command_accept(&server, slow[1]))
 	testing.expect(t, mac.command_accept(&server, fast[1]))
 	deadline := server.clients[0].deadline
-	data, _ := mac.encode_message([]string{"query", "--windows"});defer delete(data)
+	data, _ := ipc.encode_message([]string{"query", "--windows"});defer delete(data)
 	byte := []u8{0}
 	testing.expect(t, mac.write_all(slow[0], byte))
 	testing.expect(t, mac.write_all(fast[0], data))
@@ -65,7 +66,7 @@ command_client_waits_for_valid_delayed_reply_fragments :: proc(t: ^testing.T) {
 	thread: posix.pthread_t
 	if !testing.expect(t, posix.pthread_create(&thread, nil, write_delayed_command_response, &writer) == nil) { return }
 	reply := strings.builder_make(context.temp_allocator)
-	failed, err := mac.client_receive_response(fds[0], &reply)
+	failed, err := ipc.client_receive_response(fds[0], &reply)
 	posix.pthread_join(thread)
 	testing.expect_value(t, err, "")
 	testing.expect(t, !failed)
@@ -109,7 +110,7 @@ command_response_owns_data_across_tick_arena_and_backpressure :: proc(t: ^testin
 	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) {return}
 	defer mac.close(fds[0])
 	testing.expect(t, mac.command_accept(&server, fds[1]))
-	data, _ := mac.encode_message([]string{"query", "--windows"});defer delete(data)
+	data, _ := ipc.encode_message([]string{"query", "--windows"});defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
 	scratch: mem.Dynamic_Arena;mem.dynamic_arena_init(&scratch)
 	{
@@ -139,7 +140,7 @@ command_server_executes_only_after_complete_fragmented_message :: proc(t: ^testi
 	if !testing.expect_value(t, socketpair(1, 1, 0, &fds), i32(0)) {return}
 	defer mac.close(fds[0])
 	testing.expect(t, mac.command_accept(&server, fds[1]))
-	data, _ := mac.encode_message([]string{"config", "window_gap", "12"});defer delete(data)
+	data, _ := ipc.encode_message([]string{"config", "window_gap", "12"});defer delete(data)
 	for i in 0 ..< len(data) {
 		testing.expect(t, mac.write_all(fds[0], data[i:i + 1]))
 		mac.command_server_tick(&server, &m)

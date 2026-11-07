@@ -6,6 +6,7 @@ package shoji
 import "core:encoding/json"
 import "core:fmt"
 import "core:time"
+import health "health"
 
 Runtime_Health :: struct {
 	reload: ^Addition_Reload,
@@ -33,14 +34,14 @@ health_tick :: proc(h: ^Runtime_Health, now: time.Time) {
 	notify_config_failures(&h.notifier, &h.config, now)
 	if h.attach != nil && h.attach.failed_event {
 		h.attach.failed_event = false
-		cause := bounded_get(&h.attach.cause)
+		cause := health.bounded_get(&h.attach.cause)
 		notify(&h.notifier, "Shoji: WindowServer gate unavailable", cause, now)
 	}
 }
 
 // Routes a reaped child to its owner by process ID.
 health_child_finished :: proc(h: ^Runtime_Health, pid, status: i32, now: time.Time) {
-	exit := child_exit_from_status(status)
+	exit := health.child_exit_from_status(status)
 	if addition_reload_finished(h.reload, pid, exit, now) {
 		notify_payload_transition(&h.notifier, h.reload, now)
 		return
@@ -50,45 +51,23 @@ health_child_finished :: proc(h: ^Runtime_Health, pid, status: i32, now: time.Ti
 	}
 }
 
-Health_Config_Failure_JSON :: struct {
-	line: i32,
-	command: string,
-	error: string,
-}
-
-Health_JSON :: struct {
-	payload: string,
-	payload_enabled: bool,
-	payload_failures: u32,
-	payload_cause: string,
-	crash_report: string,
-	config_finished: bool,
-	config_exit: string,
-	config_failures: []Health_Config_Failure_JSON,
-	config_failures_dropped: int,
-	notifications: string,
-	notifications_suppressed: int,
-	gate: string,
-	gate_cause: string,
-}
-
 health_report :: proc(user: rawptr) -> string {
 	h := (^Runtime_Health)(user)
 	r := h.reload
 	report := &h.config.report
-	failures := make([]Health_Config_Failure_JSON, report.count, context.temp_allocator)
+	failures := make([]health.Health_Config_Failure_JSON, report.count, context.temp_allocator)
 	for i in 0 ..< report.count {
 		f := &report.failures[i]
-		failures[i] = {f.line, bounded_get(&f.command), bounded_get(&f.error)}
+		failures[i] = {f.line, health.bounded_get(&f.command), health.bounded_get(&f.error)}
 	}
-	value := Health_JSON {
+	value := health.Health_JSON {
 		payload = health_payload_state_name(r),
 		payload_enabled = r.payload != "",
-		payload_failures = r.health.failures,
-		payload_cause = bounded_get(&r.health.cause),
-		crash_report = bounded_get(&r.health.crash_report),
+		payload_failures = r.payload_health.failures,
+		payload_cause = health.bounded_get(&r.payload_health.cause),
+		crash_report = health.bounded_get(&r.payload_health.crash_report),
 		config_finished = report.finished,
-		config_exit = report.finished ? child_exit_text(report.exit) : "",
+		config_exit = report.finished ? health.child_exit_text(report.exit) : "",
 		config_failures = failures,
 		config_failures_dropped = report.dropped,
 		notifications = health_notifier_name(&h.notifier),
@@ -97,7 +76,7 @@ health_report :: proc(user: rawptr) -> string {
 	}
 	if h.attach != nil {
 		value.gate = ws_attach_state_name(h.attach.state)
-		value.gate_cause = bounded_get(&h.attach.cause)
+		value.gate_cause = health.bounded_get(&h.attach.cause)
 	}
 	data, err := json.marshal(value, {pretty = true}, context.temp_allocator)
 	if err != nil {
@@ -110,7 +89,7 @@ health_payload_state_name :: proc(r: ^Addition_Reload) -> string {
 	if r.payload == "" {
 		return "disabled"
 	}
-	switch r.health.state {
+	switch r.payload_health.state {
 	case .Starting:
 		return "starting"
 	case .Ready:

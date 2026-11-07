@@ -4,6 +4,7 @@ import mac "../src"
 import "core:math"
 import "core:testing"
 import "core:time"
+import ipc "../src/ipc"
 
 @(test)
 display_pacer_coalesces_pulses_and_consumes_once :: proc(t: ^testing.T) {
@@ -151,7 +152,7 @@ queued_resize_uses_execution_time_after_a_slow_refresh :: proc(t: ^testing.T) {
 	if !testing.expect(t, mac.command_accept(&server, fds[1])) {
 		return
 	}
-	data, valid := mac.encode_message(
+	data, valid := ipc.encode_message(
 		{"window", "1", "--column-width", "abs:900"},
 	)
 	if !testing.expect(t, valid) {

@@ -1,12 +1,12 @@
 package development
 
-import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import support "../../../src/support"
 
 SIGNING_IDENTIFIER :: "tech.shoji.window-manager"
 Signing_Config :: struct {
@@ -15,17 +15,17 @@ Signing_Config :: struct {
 }
 signing_path :: proc() -> string {
 	base := os.get_env("XDG_CONFIG_HOME", context.allocator); if base == "" {
-		base = s.join(s.home(), ".config")
-	}; return s.join(base, "shoji/signing.json")
+		base = support.join(support.home(), ".config")
+	}; return support.join(base, "shoji/signing.json")
 }
 signing_check :: proc(c: tc.Context, config: Signing_Config) -> string {
 	if config.adhoc {
 		return ""
 	}
-	if !s.hexadecimal(config.identity, 40) {
+	if !support.hexadecimal(config.identity, 40) {
 		return "signing identity must be a certificate SHA-1 fingerprint"
 	}
-	if !s.regular(config.keychain) {
+	if !support.regular(config.keychain) {
 		return "configured signing keychain is unavailable"
 	}
 	out, err := tc.run(
@@ -62,7 +62,7 @@ read_signing_config :: proc(
 	Signing_Config,
 	string,
 ) {
-	if !s.regular(path) {
+	if !support.regular(path) {
 		return {},
 			"persistent signing is not configured; run task signing:setup"
 	}
@@ -72,7 +72,7 @@ read_signing_config :: proc(
 	}
 	config := Signing_Config {
 		identity = strings.to_upper(disk.identity),
-		keychain = s.real(disk.keychain),
+		keychain = support.real(disk.keychain),
 	}
 	return config, signing_check(c, config)
 }
@@ -107,21 +107,21 @@ sign :: proc(
 	install: string = "",
 	codesign: string = "/usr/bin/codesign",
 ) -> string {
-	if !s.regular(path) {
+	if !support.regular(path) {
 		return "signing input must be a regular non-symlink file"
 	}
-	if !s.safe_name(identifier) || strings.contains(identifier, "_") {
+	if !support.safe_name(identifier) || strings.contains(identifier, "_") {
 		return "invalid signing identifier"
 	}
 	if install != "" {
-		if s.kind(install) == .Symlink {
+		if support.kind(install) == .Symlink {
 			return "refusing to replace a symlink"
 		}
-		if s.abs(path) == s.abs(install) {
+		if support.abs(path) == support.abs(install) {
 			return "atomic installation requires a separate candidate"
 		}
-		if s.real(filepath.dir(s.abs(path))) !=
-		   s.real(filepath.dir(s.abs(install))) {
+		if support.real(filepath.dir(support.abs(path))) !=
+		   support.real(filepath.dir(support.abs(install))) {
 			return "candidate and installed binary must share a directory"
 		}
 	}
@@ -144,7 +144,7 @@ sign :: proc(
 			"--keychain",
 			config.keychain,
 			"--requirements",
-			s.cat("=designated => ", requirement),
+			support.cat("=designated => ", requirement),
 		)
 	}
 	append(&args, path)
@@ -163,7 +163,7 @@ sign :: proc(
 				"--verify",
 				"--strict",
 				"--test-requirement",
-				s.cat("=", requirement),
+				support.cat("=", requirement),
 				path,
 			},
 		); err != "" {
@@ -185,7 +185,7 @@ signing_setup :: proc(
 	if path == "" {
 		path = signing_path()
 	}
-	if s.exists(path) && identity == "" {
+	if support.exists(path) && identity == "" {
 		_, err := read_signing_config(c, path); return err
 	}
 	if keychain == "" {
@@ -194,29 +194,29 @@ signing_setup :: proc(
 			[]string{"/usr/bin/security", "default-keychain", "-d", "user"},
 		); if err != "" {
 			return err
-		}; keychain = strings.trim(s.trim(out), "\"")
+		}; keychain = strings.trim(support.trim(out), "\"")
 	}
-	keychain = s.real(keychain)
+	keychain = support.real(keychain)
 	if keychain == "" {
 		return "keychain does not exist"
 	}
 	if identity == "" {
-		if err := s.mkdir(filepath.dir(path)); err != "" {
+		if err := support.mkdir(filepath.dir(path)); err != "" {
 			return err
 		}
-		certificate := s.join(filepath.dir(path), "local-signing.pem")
-		if !s.exists(certificate) {
-			stage, err := s.temp("shoji-signing"); if err != "" {
+		certificate := support.join(filepath.dir(path), "local-signing.pem")
+		if !support.exists(certificate) {
+			stage, err := support.temp("shoji-signing"); if err != "" {
 				return err
 			}; defer os.remove_all(stage)
 			_ = os.chmod(stage, {.Read_User, .Write_User, .Execute_User})
 			key, request, cert, bundle, extensions :=
-				s.join(stage, "key.pem"),
-				s.join(stage, "request.pem"),
-				s.join(stage, "cert.pem"),
-				s.join(stage, "identity.p12"),
-				s.join(stage, "extensions.cnf")
-			if err = s.write(
+				support.join(stage, "key.pem"),
+				support.join(stage, "request.pem"),
+				support.join(stage, "cert.pem"),
+				support.join(stage, "identity.p12"),
+				support.join(stage, "extensions.cnf")
+			if err = support.write(
 				extensions,
 				"basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n",
 			); err != "" {
@@ -268,7 +268,7 @@ signing_setup :: proc(
 				[]string{"/usr/bin/openssl", "rand", "-hex", "32"},
 			); if e != "" {
 				return e
-			}; password = s.trim(password)
+			}; password = support.trim(password)
 			if _, err = tc.run(
 				c,
 				[]string {
@@ -287,7 +287,7 @@ signing_setup :: proc(
 					"stdin",
 				},
 				"",
-				s.cat(password, "\n"),
+				support.cat(password, "\n"),
 			); err != "" {
 				return err
 			}
@@ -303,7 +303,7 @@ signing_setup :: proc(
 					"stdin",
 				},
 				"",
-				s.cat(password, "\n"),
+				support.cat(password, "\n"),
 			); err != "" {
 				return err
 			}
@@ -325,12 +325,12 @@ signing_setup :: proc(
 					"/usr/bin/codesign",
 				},
 			); err != "" {
-				return s.cat(
+				return support.cat(
 					"Keychain import failed; run setup in the logged-in session with an unlocked keychain: ",
 					err,
 				)
 			}
-			if err = s.copy_file(certificate, cert); err != "" {
+			if err = support.copy_file(certificate, cert); err != "" {
 				return err
 			}
 		}
@@ -350,9 +350,9 @@ signing_setup :: proc(
 		}
 		at := strings.index(out, "="); if at < 0 {
 			return "invalid certificate fingerprint"
-		}; identity, _ = strings.replace_all(s.trim(out[at + 1:]), ":", "")
+		}; identity, _ = strings.replace_all(support.trim(out[at + 1:]), ":", "")
 		identity = strings.to_upper(identity)
-		if !s.hexadecimal(identity, 40) {
+		if !support.hexadecimal(identity, 40) {
 			return "invalid certificate fingerprint"
 		}
 		identities, e := tc.run(
@@ -402,13 +402,13 @@ signing_setup :: proc(
 	); if encode_error != nil {
 		return "cannot encode signing configuration"
 	}
-	return s.atomic_write(path, string(data))
+	return support.atomic_write(path, string(data))
 }
 signing_cli :: proc(c: tc.Context, args: []string) -> string {
 	if len(args) == 0 {
 		return "signing expects setup|check|sign"
 	}
-	o, err := s.parse(
+	o, err := support.parse(
 		args[1:],
 		[]string {
 			"config",
@@ -428,12 +428,12 @@ signing_cli :: proc(c: tc.Context, args: []string) -> string {
 		}
 		return signing_setup(
 			c,
-			s.get(o, "config"),
-			s.get(o, "identity"),
-			s.get(o, "keychain"),
+			support.get(o, "config"),
+			support.get(o, "identity"),
+			support.get(o, "keychain"),
 		)
 	}
-	config, e := signing_load(c, s.get(o, "config"), o.flags["ad-hoc"])
+	config, e := signing_load(c, support.get(o, "config"), o.flags["ad-hoc"])
 	if e != "" {
 		return e
 	}
@@ -450,11 +450,11 @@ signing_cli :: proc(c: tc.Context, args: []string) -> string {
 		c,
 		o.positionals[0],
 		config,
-		s.get(o, "identifier", SIGNING_IDENTIFIER),
-		s.get(o, "install"),
-		s.get(o, "codesign", "/usr/bin/codesign"),
+		support.get(o, "identifier", SIGNING_IDENTIFIER),
+		support.get(o, "install"),
+		support.get(o, "codesign", "/usr/bin/codesign"),
 	)
 	if err == "" {
-		fmt.println("Signed:", s.get(o, "install", o.positionals[0]))
+		fmt.println("Signed:", support.get(o, "install", o.positionals[0]))
 	}; return err
 }

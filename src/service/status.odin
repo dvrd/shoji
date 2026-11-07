@@ -1,4 +1,4 @@
-package shoji
+package service
 
 // `shoji service status`: a compact summary of what launchd knows about the
 // process and what the daemon knows about its features. Parsing and rendering
@@ -9,6 +9,8 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import posix "core:sys/posix"
+import health "../health"
+import ipc "../ipc"
 
 STATUS_LABEL_WIDTH :: 9
 
@@ -116,7 +118,7 @@ status_render_config :: proc(
 	b: ^strings.Builder,
 	style: Status_Style,
 	path: string,
-	h: Health_JSON,
+	h: health.Health_JSON,
 ) {
 	where_ := path == "" ? "(none)" : status_path(style, path)
 	count := len(h.config_failures) + h.config_failures_dropped
@@ -141,7 +143,7 @@ status_render_config :: proc(
 	}
 }
 
-status_render_health :: proc(b: ^strings.Builder, style: Status_Style, h: Health_JSON) {
+status_render_health :: proc(b: ^strings.Builder, style: Status_Style, h: health.Health_JSON) {
 	code := DIM
 	switch h.payload {
 	case "ready":
@@ -188,7 +190,7 @@ status_render :: proc(
 	b: ^strings.Builder,
 	style: Status_Style,
 	l: Launchd_Status,
-	h: Health_JSON,
+	h: health.Health_JSON,
 	health_error: string,
 ) {
 	status_render_header(b, style, l)
@@ -213,10 +215,10 @@ service_status :: proc(m: Service_Manager, verbose: bool) -> int {
 	}
 	if verbose {fmt.print(r.out, r.diagnostic)}
 	l := launchd_status_parse(r.out)
-	h: Health_JSON
+	h: health.Health_JSON
 	health_error := ""
 	reply := strings.builder_make(context.temp_allocator)
-	failed, err := client_exchange([]string{"query", "--health"}, &reply)
+	failed, err := ipc.client_exchange([]string{"query", "--health"}, &reply)
 	switch {
 	case err != "":
 		health_error = err

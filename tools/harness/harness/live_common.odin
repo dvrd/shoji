@@ -1,6 +1,5 @@
 package harness
 
-import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
@@ -10,6 +9,7 @@ import "core:strconv"
 import "core:strings"
 import posix "core:sys/posix"
 import "core:time"
+import support "../../../src/support"
 
 Recorded_Command :: struct {
 	command: []string,
@@ -37,19 +37,19 @@ Child :: struct {
 	group: posix.pid_t,
 }
 live_command :: proc(l: ^Live, args: []string) -> (string, string) {
-	r := s.process_run(l.c.executor, args, timeout = 30 * time.Second)
+	r := support.process_run(l.c.executor, args, timeout = 30 * time.Second)
 	append(
 		&l.commands,
-		Recorded_Command{s.clone_args(args), r.code, r.out, r.diagnostic},
+		Recorded_Command{support.clone_args(args), r.code, r.out, r.diagnostic},
 	); if r.code != 0 {
-		return r.out, s.cat(
+		return r.out, support.cat(
 			"command failed: ",
 			args[0],
 			": ",
 			r.diagnostic,
 			r.out,
 		)
-	}; return s.trim(r.out), ""
+	}; return support.trim(r.out), ""
 }
 live_client :: proc(l: ^Live, args: ..string) -> (string, string) {
 	cmd := make([dynamic]string); append(&cmd, tc.binary(l.c, "shoji"), "-m")
@@ -78,11 +78,11 @@ save_live :: proc(l: ^Live, err: string, final: ^string) {
 	final^ = tc.with_error(
 		final^,
 		"command evidence",
-		s.write_json(s.join(l.evidence, "commands.json"), l.commands[:]),
+		support.write_json(support.join(l.evidence, "commands.json"), l.commands[:]),
 	)
 	l.report.status = final^ == "" ? "passed" : "failed"
 	l.report.error = final^
-	report_error := s.write_json(s.join(l.evidence, "report.json"), l.report)
+	report_error := support.write_json(support.join(l.evidence, "report.json"), l.report)
 	final^ = tc.with_error(final^, "report evidence", report_error)
 	if report_error != "" {
 		l.report.status = "failed"; l.report.error = final^
@@ -92,7 +92,7 @@ save_live :: proc(l: ^Live, err: string, final: ^string) {
 	}
 }
 prepare_live :: proc(c: tc.Context, prefix: string) -> (Live, string) {
-	stage, err := s.temp(prefix); if err != "" {
+	stage, err := support.temp(prefix); if err != "" {
 		return {}, err
 	}; l := Live {
 		c = c,
@@ -110,13 +110,13 @@ prepare_live :: proc(c: tc.Context, prefix: string) -> (Live, string) {
 build_live_helper :: proc(c: tc.Context, prebuilt: bool = false) -> string {
 	if prebuilt {
 		path := tc.binary(c, "harness-fixture")
-		if !s.regular(path) {return "prebuilt fixture must be a regular non-symlink file"}
+		if !support.regular(path) {return "prebuilt fixture must be a regular non-symlink file"}
 		if _, err := tc.run(c, []string{"/usr/bin/codesign", "--verify", "--strict", path}); err != "" {return err}
 		hash, err := tc.digest(c, path); if err != "" {return err}
 		fmt.println("Prebuilt fixture SHA-256:", hash)
 		return ""
 	}
-	if err := s.mkdir(tc.root_file(c, "bin")); err != "" {
+	if err := support.mkdir(tc.root_file(c, "bin")); err != "" {
 		return err
 	}
 	args := make([dynamic]string)
@@ -126,7 +126,7 @@ build_live_helper :: proc(c: tc.Context, prebuilt: bool = false) -> string {
 		"build",
 		"-warnings-as-errors",
 		tc.root_file(c, "tools/harness/fixtures/desktop"),
-		s.cat("-out:", tc.binary(c, "harness-fixture")),
+		support.cat("-out:", tc.binary(c, "harness-fixture")),
 		"-extra-linker-flags:-F/System/Library/PrivateFrameworks",
 	)
 	when ODIN_ARCH == .arm64 { append(&args, "-target-features:pauth") }
@@ -148,19 +148,19 @@ start_child :: proc(
 	Child,
 	string,
 ) {
-	if s.cancelled() {
+	if support.cancelled() {
 		return {}, "interrupted"
 	}
 	outpath, errpath :=
-		s.join(l.evidence, s.cat(name, ".stdout")),
-		s.join(l.evidence, s.cat(name, ".stderr"))
+		support.join(l.evidence, support.cat(name, ".stdout")),
+		support.join(l.evidence, support.cat(name, ".stderr"))
 	out, a := os.create(outpath); if a != nil {
 		return {}, "cannot create child stdout"
 	}; defer os.close(out)
 	stderr, b := os.create(errpath); if b != nil {
 		return {}, "cannot create child stderr"
 	}; defer os.close(stderr)
-	child, group, err := s.process_start(
+	child, group, err := support.process_start(
 		{command = args, stdout = out, stderr = stderr},
 	)
 	if err != nil {
@@ -183,7 +183,7 @@ stop_child :: proc(child: ^Child, kill: bool = false) -> string {
 	if kill && alive {
 		_ = os.process_kill(child.process)
 	}
-	err := s.stop_tree(child.process, child.group, !alive)
+	err := support.stop_tree(child.process, child.group, !alive)
 	child.active = false
 	child.group = 0
 	return err
@@ -191,16 +191,16 @@ stop_child :: proc(child: ^Child, kill: bool = false) -> string {
 first_line :: proc(child: ^Child) -> (string, string) {
 	start := time.tick_now()
 	for time.tick_since(start) < 8 * time.Second {
-		if s.cancelled() {
+		if support.cancelled() {
 			return "", "interrupted"
 		}
-		text, _ := s.read(child.stdout)
+		text, _ := support.read(child.stdout)
 		if at := strings.index(text, "\n"); at >= 0 {
-			return s.trim(text[:at]), ""
+			return support.trim(text[:at]), ""
 		}
 		if !child_alive(child) {
-			diagnostic, _ := s.read(child.stderr)
-			return "", s.cat("fixture exited before startup: ", diagnostic)
+			diagnostic, _ := support.read(child.stderr)
+			return "", support.cat("fixture exited before startup: ", diagnostic)
 		}
 		time.sleep(50 * time.Millisecond)
 	}
@@ -209,7 +209,7 @@ first_line :: proc(child: ^Child) -> (string, string) {
 parse_alpha :: proc(text: string, window: u32) -> (f64, string) {
 	value: json.Value
 	if err := json.unmarshal(transmute([]u8)text, &value, .JSON); err != nil {
-		return 0, s.cat("invalid alpha JSON: ", text)
+		return 0, support.cat("invalid alpha JSON: ", text)
 	}
 	obj, ok := value.(json.Object); if !ok {
 		return 0, "alpha observation is not an object"
@@ -327,7 +327,7 @@ wait_space :: proc(l: ^Live, id: u64, present, visible: bool) -> string {
 	return "timed out waiting for disposable Space state"
 }
 parse_id :: proc(text: string) -> (u64, string) {
-	id, ok := strconv.parse_u64(s.trim(text)); if !ok || id == 0 {
+	id, ok := strconv.parse_u64(support.trim(text)); if !ok || id == 0 {
 		return 0, "fixture did not return a positive owned ID"
 	}; return id, ""
 }
