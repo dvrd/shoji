@@ -2,12 +2,9 @@ package shoji
 
 import n "native"
 import "core:fmt"
-import "core:strings"
 import posix "core:sys/posix"
 import "core:time"
-
-// Socket transport
-// ------------------------------------------------------------------------
+import ipc "ipc"
 
 Unix_Address :: n.Unix_Address
 Timeval :: n.Timeval
@@ -33,79 +30,6 @@ connect_socket :: n.connect_socket
 wait_socket :: n.wait_socket
 read_exact :: n.read_exact
 write_all :: n.write_all
-
-socket_path :: proc() -> string {
-	return fmt.tprintf("/tmp/shoji_%d.socket", getuid())
-}
-
-client :: proc(args: []string) -> int {
-	out := strings.builder_make(context.temp_allocator)
-	failed, err := client_exchange(args, &out)
-	if err != "" {
-		fmt.eprintln("shoji:", err)
-		return 1
-	}
-	if failed {
-		fmt.eprint(strings.to_string(out))
-		return 1
-	}
-	fmt.print(strings.to_string(out))
-	return 0
-}
-
-// Sends one command and collects the daemon's reply into `out`. `failed` is
-// the daemon's verdict; `err` is a transport error (no reply was received).
-client_exchange :: proc(args: []string, out: ^strings.Builder) -> (failed: bool, err: string) {
-	data, ok := encode_message(args)
-	if !ok {
-		return false, "invalid or oversized message"
-	}
-	defer delete(data)
-	fd := connect_socket(socket_path())
-	if fd < 0 {
-		return false, "cannot connect to daemon"
-	}
-	defer close(fd)
-	if !write_all(fd, data) {
-		return false, "failed to send message"
-	}
-	shutdown(fd, 1)
-	return client_receive_response(fd, out)
-}
-
-client_receive_response :: proc(fd: i32, out: ^strings.Builder) -> (failed: bool, err: string) {
-	// Native desktop actions can exceed the transport's two-second idle limit.
-	// Bound the entire reply instead of resetting a timeout for each fragment.
-	deadline := time.time_add(time.now(), 15 * time.Second)
-	first := true
-	buffer: [8192]u8
-	for {
-		if !wait_socket(fd, 1, deadline) {
-			return false, "cannot read daemon response before deadline"
-		}
-		n := recv(fd, &buffer[0], len(buffer), 0x80) // MSG_DONTWAIT
-		if n < 0 && (__error()^ == 4 || __error()^ == 35) {
-			continue
-		}
-		if n < 0 {
-			return false, "response read failed"
-		}
-		if n == 0 {
-			break
-		}
-		offset := 0
-		if first && buffer[0] == 7 {
-			failed = true
-			offset = 1
-		}
-		first = false
-		strings.write_string(out, string(buffer[offset:n]))
-	}
-	if first {
-		return false, "daemon returned no response"
-	}
-	return failed, ""
-}
 
 // Nonblocking command server
 // ------------------------------------------------------------------------
@@ -219,7 +143,7 @@ command_tick :: proc(
 			h := client.header
 			count :=
 				u32(h[0]) | u32(h[1]) << 8 | u32(h[2]) << 16 | u32(h[3]) << 24
-			if count < 2 || count > MAX_MESSAGE {
+			if count < 2 || count > ipc.MAX_MESSAGE {
 				command_reply(client, failure("invalid message length"), now)
 				break
 			}
@@ -227,7 +151,7 @@ command_tick :: proc(
 			copy(client.data, h[:])
 		}
 		if client.data != nil && client.received == len(client.data) {
-			args, valid := decode_message(client.data)
+			args, valid := ipc.decode_message(client.data)
 			defer delete(args)
 			// Discovery or another client can block after the loop was sampled.
 			// Start this action now, otherwise its first animation frame may

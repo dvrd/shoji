@@ -1,4 +1,4 @@
-package shoji
+package health
 
 // Runtime health reporting
 // ------------------------------------------------------------------------
@@ -335,4 +335,27 @@ config_failure_text :: proc(failure: ^Config_Failure) -> string {
 		)
 	}
 	return fmt.tprintf("shojirc: %s", bounded_get(&failure.error))
+}
+
+// Daemon health as reported by `query --health` and read by `service status`.
+Health_Config_Failure_JSON :: struct {
+	line: i32,
+	command: string,
+	error: string,
+}
+
+Health_JSON :: struct {
+	payload: string,
+	payload_enabled: bool,
+	payload_failures: u32,
+	payload_cause: string,
+	crash_report: string,
+	config_finished: bool,
+	config_exit: string,
+	config_failures: []Health_Config_Failure_JSON,
+	config_failures_dropped: int,
+	notifications: string,
+	notifications_suppressed: int,
+	gate: string,
+	gate_cause: string,
 }

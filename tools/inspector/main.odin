@@ -1,9 +1,9 @@
 package main
 
-import s "../../src"
 import tc "../common"
 import "core:os"
 import d "inspect"
+import support "../../src/support"
 
 HELP :: `Usage: inspector COMMAND [OPTIONS]
   normalize-arm64e BINARY   Validate and normalize arm64e ABI metadata
@@ -27,7 +27,7 @@ dispatch :: proc(c: tc.Context, args: []string) -> string {
 			err = d.verify_archive(c, args[1])
 		}
 	case:
-		err = s.cat("unknown command: ", args[0])
+		err = support.cat("unknown command: ", args[0])
 	}
 	return err
 }

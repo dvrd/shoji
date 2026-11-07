@@ -7,6 +7,8 @@ import "core:path/filepath"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
+import support "support"
+import health "health"
 
 // Scripting-addition protocol client
 // ------------------------------------------------------------------------
@@ -230,11 +232,11 @@ Addition_Reload :: struct {
 	// The child's stderr is captured so failures report their real cause.
 	output_fd: i32,
 	output_open: bool, // output_fd is owned only while this is set.
-	output: Output_Tail,
+	output: health.Output_Tail,
 	spawned_at: time.Time,
-	health: Payload_Health,
+	payload_health: health.Payload_Health,
 	// Set by a state change; consumed once by the notification owner.
-	transition: Health_Transition,
+	transition: health.Health_Transition,
 	crash_directory: string, // Overrides the user's crash reports for tests.
 }
 
@@ -303,12 +305,12 @@ spawn_with_stderr_pipe :: proc(argv: []cstring) -> (pid: i32, output_fd: i32, er
 		return 0, -1, "cannot create recovery output pipe"
 	}
 	actions: rawptr
-	if posix_spawn_file_actions_init(&actions) != .NONE {
+	if support.posix_spawn_file_actions_init(&actions) != .NONE {
 		posix.close(fds[0]); posix.close(fds[1])
 		return 0, -1, "cannot prepare recovery subprocess"
 	}
-	defer posix_spawn_file_actions_destroy(&actions)
-	posix_spawn_file_actions_adddup2(&actions, i32(fds[1]), 2)
+	defer support.posix_spawn_file_actions_destroy(&actions)
+	support.posix_spawn_file_actions_adddup2(&actions, i32(fds[1]), 2)
 	posix_spawn_file_actions_addclose(&actions, i32(fds[0]))
 	posix_spawn_file_actions_addclose(&actions, i32(fds[1]))
 	child: posix.pid_t
@@ -353,7 +355,7 @@ addition_reload_tick :: proc(r: ^Addition_Reload, dock: i32, now: time.Time) {
 	if r.payload == "" {
 		return
 	}
-	if r.output_open && !output_tail_drain(&r.output, r.output_fd) {
+	if r.output_open && !health.output_tail_drain(&r.output, r.output_fd) {
 		addition_reload_close_output(r)
 	}
 	if dock != r.dock {
@@ -395,7 +397,7 @@ addition_reload_record_failure :: proc(
 	cause, crash_report: string,
 	now: time.Time,
 ) {
-	transition := payload_health_failure(&r.health, cause, crash_report, now)
+	transition := health.payload_health_failure(&r.payload_health, cause, crash_report, now)
 	if transition != .None {
 		r.transition = transition
 	}
@@ -405,27 +407,27 @@ addition_reload_record_failure :: proc(
 // the evidence-based cause plus any crash report written since the spawn.
 addition_reload_collect :: proc(
 	r: ^Addition_Reload,
-	exit: Child_Exit,
+	exit: health.Child_Exit,
 ) -> (
 	cause, crash_report: string,
 ) {
 	if r.output_open {
-		output_tail_drain(&r.output, r.output_fd)
+		health.output_tail_drain(&r.output, r.output_fd)
 		addition_reload_close_output(r)
 	}
-	output := output_tail_text(&r.output)
+	output := health.output_tail_text(&r.output)
 	if output != "" {
 		fmt.eprint(output)
 		if !strings.has_suffix(output, "\n") {fmt.eprintln()}
 	}
 	action := r.phase == .Load ? "Dock payload load failed" : "Dock payload check failed"
-	cause = payload_failure_cause(action, exit, output)
+	cause = health.payload_failure_cause(action, exit, output)
 	directory := r.crash_directory
 	if directory == "" {
-		directory = user_crash_report_directory()
+		directory = health.user_crash_report_directory()
 	}
 	if directory != "" {
-		crash_report = crash_report_newest(directory, CRASH_REPORT_PREFIX, r.spawned_at)
+		crash_report = health.crash_report_newest(directory, health.CRASH_REPORT_PREFIX, r.spawned_at)
 	}
 	return
 }
@@ -433,14 +435,14 @@ addition_reload_collect :: proc(
 addition_reload_finished :: proc(
 	r: ^Addition_Reload,
 	child: i32,
-	exit: Child_Exit,
+	exit: health.Child_Exit,
 	now: time.Time,
 ) -> bool {
 	if child == 0 || child != r.child {
 		return false
 	}
 	r.child = 0
-	success := child_exit_ok(exit)
+	success := health.child_exit_ok(exit)
 	cause, crash_report := "", ""
 	if !success {
 		cause, crash_report = addition_reload_collect(r, exit)
@@ -468,7 +470,7 @@ addition_reload_check_finished :: proc(
 	if success {
 		r.healthy = true
 		r.retry_delay = 0
-		if transition := payload_health_success(&r.health, now); transition != .None {
+		if transition := health.payload_health_success(&r.payload_health, now); transition != .None {
 			r.transition = transition
 		}
 		fmt.eprintln("shoji: Dock payload is ready")

@@ -1,8 +1,8 @@
 package harness
 
-import s "../../../src"
 import tc "../../common"
 import "core:fmt"
+import support "../../../src/support"
 
 live_spaces :: proc(c: tc.Context, load_payload: bool, prebuilt: bool = false) -> string {
 	l: Live
@@ -23,8 +23,8 @@ live_spaces_run :: proc(
 	l^ = prepared
 	created, original: u64; protected: []u64
 	defer {
-		s.begin_cleanup()
-		defer s.end_cleanup()
+		support.begin_cleanup()
+		defer support.end_cleanup()
 		if created != 0 {
 			if cleanup := restore_space(l, created, original, protected);
 			   cleanup != "" {

@@ -1,11 +1,11 @@
 package inspector
 
-import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:os"
+import support "../../../src/support"
 
 // Bootstrap inspection
 // ------------------------------------------------------------------------
@@ -27,7 +27,7 @@ parse_disassembly :: proc(text: string) -> []Instruction {
 		i := 1
 		for i < len(f) &&
 		    (len(f[i]) == 2 || len(f[i]) == 8) &&
-		    s.hexadecimal(f[i], len(f[i])) { i += 1 }
+		    support.hexadecimal(f[i], len(f[i])) { i += 1 }
 		if i >= len(f) {
 			continue
 		}
@@ -91,13 +91,13 @@ validate_bootstrap :: proc(metadata, disassembly: string) -> string {
 			strings.has_prefix(item.op, "b.") ||
 			strings.has_prefix(item.op, "j") ||
 			strings.has_prefix(item.op, "call")
-		if branch && !strings.has_prefix(s.trim(item.operands), "*") {
+		if branch && !strings.has_prefix(support.trim(item.operands), "*") {
 			rest := item.operands
 			for {
 				at := strings.index(rest, "0x"); if at < 0 {
 					break
 				}; rest = rest[at + 2:]; n := 0
-				for n < len(rest) && s.hexadecimal(rest[n:n + 1], 1) { n += 1 }
+				for n < len(rest) && support.hexadecimal(rest[n:n + 1], 1) { n += 1 }
 				if n == 0 {
 					break
 				}; target, ok := strconv.parse_u64(rest[:n], 16)
@@ -135,7 +135,7 @@ check_bootstrap :: proc(c: tc.Context, args: []string) -> string {
 			return e
 		}
 		if err = validate_bootstrap(metadata, code); err != "" {
-			return s.cat(path, ": ", err)
+			return support.cat(path, ": ", err)
 		}
 		fmt.println(
 			path,
@@ -168,7 +168,7 @@ normalize_bytes :: proc(bytes: []u8) -> string {
 	bytes[8], bytes[9], bytes[10], bytes[11] = 2, 0, 0, 0x80; return ""
 }
 normalize_arm64e :: proc(path: string) -> string {
-	if !s.regular(path) {
+	if !support.regular(path) {
 		return "ABI input must be a regular, non-symlink file"
 	}
 	b, err := os.read_entire_file(path, context.allocator); if err != nil {
@@ -210,7 +210,7 @@ verify_archive :: proc(c: tc.Context, archive: string) -> string {
 			return "release contains an absolute path"
 		}
 		parts := strings.split(line, "/")
-		if len(parts) == 0 || !s.safe_name(parts[0]) {
+		if len(parts) == 0 || !support.safe_name(parts[0]) {
 			return "invalid release prefix"
 		}
 		if prefix == "" {
@@ -222,18 +222,18 @@ verify_archive :: proc(c: tc.Context, archive: string) -> string {
 		if entries[name] {
 			return "release contains duplicate members"
 		}; entries[name] = true
-		if name == prefix || name == s.cat(prefix, "/bin") {
+		if name == prefix || name == support.cat(prefix, "/bin") {
 			continue
 		}
-		relative := strings.trim_prefix(name, s.cat(prefix, "/"))
+		relative := strings.trim_prefix(name, support.cat(prefix, "/"))
 		if relative != "SHA256SUMS" && !tc.contains(required, relative) {
 			return "release contains an unexpected or unsafe path"
 		}
 	}
-	if prefix == "" || !entries[s.cat(prefix, "/SHA256SUMS")] {
+	if prefix == "" || !entries[support.cat(prefix, "/SHA256SUMS")] {
 		return "release is missing its checksum manifest"
 	}
-	stage, temp_error := s.temp("shoji-release-check"); if temp_error != "" {
+	stage, temp_error := support.temp("shoji-release-check"); if temp_error != "" {
 		return temp_error
 	}; defer os.remove_all(stage)
 	if _, err = tc.run(
@@ -241,7 +241,7 @@ verify_archive :: proc(c: tc.Context, archive: string) -> string {
 		[]string {
 			"/usr/bin/tar",
 			"-xzf",
-			s.abs(archive),
+			support.abs(archive),
 			"-C",
 			stage,
 			"--no-same-owner",
@@ -250,7 +250,7 @@ verify_archive :: proc(c: tc.Context, archive: string) -> string {
 	); err != "" {
 		return err
 	}
-	text, read_error := s.read(s.join(s.join(stage, prefix), "SHA256SUMS"))
+	text, read_error := support.read(support.join(support.join(stage, prefix), "SHA256SUMS"))
 	if read_error != "" {
 		return read_error
 	}
@@ -261,15 +261,15 @@ verify_archive :: proc(c: tc.Context, archive: string) -> string {
 		}
 		if len(line) < 67 ||
 		   line[64:66] != "  " ||
-		   !s.hexadecimal(line[:64], 64) {
+		   !support.hexadecimal(line[:64], 64) {
 			return "invalid checksum manifest"
 		}
 		relative := line[66:]
 		if !tc.contains(required, relative) || verified[relative] {
 			return "unexpected or duplicate checksum entry"
 		}
-		path := s.join(s.join(stage, prefix), relative)
-		if !s.regular(path) {
+		path := support.join(support.join(stage, prefix), relative)
+		if !support.regular(path) {
 			return "release input is not a regular file"
 		}
 		hash, hash_error := tc.digest(c, path); if hash_error != "" {
@@ -288,7 +288,7 @@ verify_archive :: proc(c: tc.Context, archive: string) -> string {
 		verified[relative] = true
 	}
 	for relative in required {
-		if !verified[relative] || !entries[s.cat(prefix, "/", relative)] {
+		if !verified[relative] || !entries[support.cat(prefix, "/", relative)] {
 			return "release is missing required files"
 		}
 	}

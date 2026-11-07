@@ -1,12 +1,12 @@
 package harness
 
-import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:time"
+import support "../../../src/support"
 
 Live_Rect :: struct {
 	x, y, w, h: f64,
@@ -32,7 +32,7 @@ Desktop_Check :: enum {
 	Empty,
 }
 desktop_guard :: proc(c: tc.Context) -> string {
-	r := s.process_run(
+	r := support.process_run(
 		c.executor,
 		[]string{tc.binary(c, "shoji"), "-m", "query", "--windows"},
 		timeout = 10 * time.Second,
@@ -182,8 +182,8 @@ live_desktop_run :: proc(c: tc.Context, l: ^Live, prebuilt: bool = false) -> (er
 		return "invalid fixture ownership"
 	}
 	l.report.fixture_pid = owned.pid
-	config := s.join(l.evidence, "shojirc")
-	if err = s.write(
+	config := support.join(l.evidence, "shojirc")
+	if err = support.write(
 		config,
 		"# Empty fixture configuration; all operations are PID-scoped.\n",
 	); err != "" {
@@ -300,7 +300,7 @@ live_desktop_run :: proc(c: tc.Context, l: ^Live, prebuilt: bool = false) -> (er
 		return err
 	}
 	if cleanup_error := stop_child(&fixture); cleanup_error != "" {
-		return s.cat("fixture cleanup: ", cleanup_error)
+		return support.cat("fixture cleanup: ", cleanup_error)
 	}
 	if err = wait_desktop(l, owned.pid, first, second, .Empty, &daemon);
 	   err != "" {
@@ -318,7 +318,7 @@ live_cli :: proc(c: tc.Context, args: []string) -> string {
 	if os.get_euid() == 0 {
 		return "run live validation as the logged-in user, not root"
 	}
-	o, err := s.parse(
+	o, err := support.parse(
 		args[1:],
 		nil,
 		[]string{"load-payload", "reload-payload", "dock-restart", "prebuilt-fixture"},

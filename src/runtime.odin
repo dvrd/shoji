@@ -7,6 +7,7 @@ import "core:strings"
 import "core:sync"
 import posix "core:sys/posix"
 import "core:time"
+import ipc "ipc"
 
 foreign import libc "system:c"
 
@@ -35,7 +36,7 @@ startup_config_start :: proc(
 	if started^ {
 		return true
 	}
-	waiting := reload.payload != "" && !reload.healthy && reload.health.state != .Failed
+	waiting := reload.payload != "" && !reload.healthy && reload.payload_health.state != .Failed
 	if path != "" && waiting {
 		return true
 	}
@@ -216,7 +217,7 @@ run :: proc(
 		fmt.eprintln("shoji: another daemon is already running")
 		return 1
 	}
-	socket_name := strings.clone(socket_path())
+	socket_name := strings.clone(ipc.socket_path())
 	defer delete(socket_name)
 	cpath := strings.clone_to_cstring(socket_name)
 	defer delete(cpath)
@@ -294,10 +295,10 @@ run :: proc(
 	}
 	defer workspace_stop(&state)
 	config_started := false
-	health := Runtime_Health{reload = &reload, attach = &attach}
-	defer health_stop(&health)
-	health_start(&health, &state.manager)
-	if !startup_config_start(config, &reload, &config_started, run = &health.config) {
+	runtime_health := Runtime_Health{reload = &reload, attach = &attach}
+	defer health_stop(&runtime_health)
+	health_start(&runtime_health, &state.manager)
+	if !startup_config_start(config, &reload, &config_started, run = &runtime_health.config) {
 		return 1
 	}
 	if !config_started {
@@ -332,12 +333,12 @@ run :: proc(
 				state.workspace_events.dock_pid,
 				time.now(),
 			)
-			if !startup_config_start(config, &reload, &config_started, run = &health.config) {
+			if !startup_config_start(config, &reload, &config_started, run = &runtime_health.config) {
 				return 1
 			}
-			health_tick(&health, time.now())
+			health_tick(&runtime_health, time.now())
 			ws_attach_tick(&attach, time.now())
-			focus_ring_hold_tick(&state, &health.config, ring_hold_start, time.now())
+			focus_ring_hold_tick(&state, &runtime_health.config, ring_hold_start, time.now())
 			animation_recovery_tick(&state, time.now())
 			desktop_commands_tick(&commands, &state, &last_refresh, time.now())
 			moving := motion_active(&state)
@@ -404,7 +405,7 @@ run :: proc(
 					break
 				}
 				if !ws_attach_child_finished(&attach, i32(pid), status, time.now()) {
-					health_child_finished(&health, i32(pid), status, time.now())
+					health_child_finished(&runtime_health, i32(pid), status, time.now())
 				}
 			}
 		}

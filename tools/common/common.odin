@@ -1,19 +1,19 @@
 package tool_common
 
-import s "../../src"
 import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:time"
+import support "../../src/support"
 
 // Tool context
 // ------------------------------------------------------------------------
 
 // Keep each tool's command dispatch local; share allocation and exit handling.
 cli_main :: proc(name, help: string, dispatch: proc(Context, []string) -> string) -> int {
-	s.configure_signals()
+	support.configure_signals()
 	arena: mem.Dynamic_Arena
 	mem.dynamic_arena_init(&arena)
 	defer mem.dynamic_arena_destroy(&arena)
@@ -32,14 +32,14 @@ cli_main :: proc(name, help: string, dispatch: proc(Context, []string) -> string
 	}
 	if err := dispatch(Context{root = project_root()}, args); err != "" {
 		fmt.eprintf("%s: %s\n", name, err)
-		return s.interrupted() ? 130 : 1
+		return support.interrupted() ? 130 : 1
 	}
 	return 0
 }
 
 Context :: struct {
 	root: string,
-	executor: s.Executor,
+	executor: support.Executor,
 }
 run :: proc(
 	c: Context,
@@ -51,25 +51,25 @@ run :: proc(
 ) -> (
 	string,
 	string,
-) { return s.checked(c.executor, args, dir, input, timeout, env) }
+) { return support.checked(c.executor, args, dir, input, timeout, env) }
 root_file :: proc(c: Context, path: string) -> string {
-	return s.join(c.root, path)
+	return support.join(c.root, path)
 }
 binary :: proc(c: Context, name: string) -> string {
-	return root_file(c, s.cat("bin/", name))
+	return root_file(c, support.cat("bin/", name))
 }
 compiler :: proc(c: Context) -> string {
 	if value := os.get_env("ODIN", context.allocator); value != "" {
 		return value
 	}; p := root_file(c, ".toolchain/Odin/odin")
-	return s.regular(p) ? p : "odin"
+	return support.regular(p) ? p : "odin"
 }
 library_root :: proc(c: Context) -> string {
 	return root_file(c, ".toolchain/Odin")
 }
 compiler_env :: proc(c: Context) -> []string {
-	if s.kind(s.join(library_root(c), "core")) == .Directory {
-		return s.environment("ODIN_ROOT", library_root(c))
+	if support.kind(support.join(library_root(c), "core")) == .Directory {
+		return support.environment("ODIN_ROOT", library_root(c))
 	}; return nil
 }
 digest :: proc(c: Context, path: string) -> (string, string) {
@@ -77,19 +77,19 @@ digest :: proc(c: Context, path: string) -> (string, string) {
 	if err != "" {
 		return "", err
 	}; fields := strings.fields(text)
-	if len(fields) < 1 || !s.hexadecimal(fields[0], 64) {
+	if len(fields) < 1 || !support.hexadecimal(fields[0], 64) {
 		return "", "invalid SHA-256 output"
 	}; return fields[0], ""
 }
 read_json :: proc(path: string, value: ^$T) -> string {
-	return s.read_json(path, value)
+	return support.read_json(path, value)
 }
 copy_tree :: proc(c: Context, dst, src: string) -> string {
 	_, err := run(c, []string{"/bin/cp", "-R", src, dst}); return err
 }
 project_root :: proc() -> string {
 	cwd, _ := os.get_working_directory(context.allocator)
-	if s.regular(s.join(cwd, "Taskfile.yml")) {
+	if support.regular(support.join(cwd, "Taskfile.yml")) {
 		return cwd
 	}; exe, _ := os.get_executable_path(context.allocator)
 	return filepath.dir(filepath.dir(exe))
@@ -98,8 +98,8 @@ with_error :: proc(primary, operation, failure: string) -> string {
 	if failure == "" {
 		return primary
 	}
-	extra := s.cat(operation, ": ", failure)
-	return primary == "" ? extra : s.cat(primary, "; ", extra)
+	extra := support.cat(operation, ": ", failure)
+	return primary == "" ? extra : support.cat(primary, "; ", extra)
 }
 
 le32 :: proc(b: []u8) -> u32 {
@@ -133,6 +133,6 @@ RELEASE_DOCUMENTS := []string {
 }
 release_files :: proc() -> []string {
 	result := make([dynamic]string)
-	for name in RELEASE_BINARIES { append(&result, s.cat("bin/", name)) }
+	for name in RELEASE_BINARIES { append(&result, support.cat("bin/", name)) }
 	append(&result, ..RELEASE_DOCUMENTS); return result[:]
 }

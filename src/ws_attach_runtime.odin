@@ -14,6 +14,7 @@ import "core:os"
 import "core:sys/posix"
 import "core:time"
 import gate "windowserver/gate"
+import health "health"
 
 WS_ATTACH_ATTEMPTS :: 5
 WS_ATTACH_RETRY_FIRST :: 2 * time.Second
@@ -38,14 +39,14 @@ Ws_Attach_Runtime :: struct {
 	child:        i32,
 	child_start:  time.Time,
 	killed:       bool,
-	output:       Output_Tail,
+	output:       health.Output_Tail,
 	output_fd:    i32,
 	output_open:  bool,
 	rendezvous:   u32,
 	attempts:     u32,
 	retry_delay:  time.Duration,
 	next_attempt: time.Time,
-	cause:        Bounded_Text(HEALTH_TEXT_BYTES),
+	cause:        health.Bounded_Text(health.HEALTH_TEXT_BYTES),
 	failed_event: bool, // Failed transition not yet notified.
 }
 
@@ -95,7 +96,7 @@ ws_attach_control :: proc(user: rawptr, value: string) -> Response {
 		if r.state == .Off || r.state == .Failed {
 			r.state = .Waiting
 			r.attempts, r.retry_delay, r.next_attempt = 0, 0, {}
-			bounded_set(&r.cause, "")
+			health.bounded_set(&r.cause, "")
 		}
 	case "off":
 		ws_attach_disconnect(r)
@@ -110,7 +111,7 @@ ws_attach_disconnect :: proc(r: ^Ws_Attach_Runtime) {
 }
 
 ws_attach_tick :: proc(r: ^Ws_Attach_Runtime, now: time.Time) {
-	if r.output_open && !output_tail_drain(&r.output, r.output_fd) {
+	if r.output_open && !health.output_tail_drain(&r.output, r.output_fd) {
 		ws_attach_close_output(r)
 	}
 	if r.state == .Attaching {
@@ -185,13 +186,13 @@ ws_attach_receive :: proc(r: ^Ws_Attach_Runtime) -> bool {
 	r.manager.layout_batch = ws_layout_batch
 	r.manager.ws_debug = ws_debug
 	r.state = .Serving
-	bounded_set(&r.cause, "")
+	health.bounded_set(&r.cause, "")
 	return true
 }
 
 // Pure retry policy, unit-tested.
 ws_attach_exit_outcome :: proc(
-	exit: Child_Exit,
+	exit: health.Child_Exit,
 	connected: bool,
 	attempts: u32,
 ) -> Ws_Attach_Outcome {
@@ -209,14 +210,14 @@ ws_attach_child_finished :: proc(
 ) -> bool {
 	if r.child == 0 || pid != r.child {return false}
 	r.child = 0
-	if r.output_open {output_tail_drain(&r.output, r.output_fd)}
+	if r.output_open {health.output_tail_drain(&r.output, r.output_fd)}
 	ws_attach_close_output(r)
-	exit := child_exit_from_status(status)
+	exit := health.child_exit_from_status(status)
 	if r.state == .Off {return true}
 	connected := r.state == .Serving || ws_attach_receive(r)
 	if connected {return true}
-	cause := output_tail_last_line(&r.output)
-	if cause == "" {cause = child_exit_text(exit)}
+	cause := health.output_tail_last_line(&r.output)
+	if cause == "" {cause = health.child_exit_text(exit)}
 	give_up := ws_attach_exit_outcome(exit, false, r.attempts) == .Give_Up
 	ws_attach_failed_attempt(r, cause, give_up, now)
 	return true
@@ -228,7 +229,7 @@ ws_attach_failed_attempt :: proc(
 	give_up: bool,
 	now: time.Time,
 ) {
-	bounded_set(&r.cause, cause)
+	health.bounded_set(&r.cause, cause)
 	// The child already prefixes its own message; spawn errors are bare.
 	fmt.eprintf("shoji: gate: %s\n", cause)
 	if give_up || r.attempts >= WS_ATTACH_ATTEMPTS {

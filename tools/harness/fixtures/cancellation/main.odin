@@ -1,20 +1,20 @@
 package main
 
-import s "../../../../src"
 import "core:fmt"
 import "core:os"
 import posix "core:sys/posix"
 import "core:time"
+import support "../../../../src/support"
 
 main :: proc() {
-	s.configure_signals()
+	support.configure_signals()
 	if len(os.args) == 3 &&
 	   (os.args[1] == "worker" || os.args[1] == "worker-stubborn") {
 		script := `sleep 30 & kid=$!; trap 'kill "$kid" 2>/dev/null; wait "$kid"; exit 143' TERM; echo "$kid" > "$1"; wait`
 		if os.args[1] == "worker-stubborn" {
 			script = `trap '' TERM; sleep 30 & echo "$!" > "$1"; wait`
 		}
-		r := s.process_run(
+		r := support.process_run(
 			{},
 			[]string{"/bin/sh", "-c", script, "owned-fixture", os.args[2]},
 		)
@@ -22,7 +22,7 @@ main :: proc() {
 	}
 	// Model an interactive root CLI even when this test runs under native validation.
 	// The worker branch above preserves the marker and exercises nested ownership.
-	_ = posix.unsetenv(s.COMMAND_GROUP_ENV)
+	_ = posix.unsetenv(support.COMMAND_GROUP_ENV)
 	fmt.println("ready")
 	args := []string{"/bin/sleep", "30"}
 	timeout := 30 * time.Second
@@ -35,17 +35,17 @@ main :: proc() {
 			timeout = time.Second
 		}
 	}
-	result := s.process_run({}, args, timeout = timeout)
+	result := support.process_run({}, args, timeout = timeout)
 	if len(os.args) == 3 && os.args[1] != "interrupt" {
 		if !result.timed_out {
 			os.exit(3)
 		}
-	} else if !s.interrupted() || result.code != 130 {
+	} else if !support.interrupted() || result.code != 130 {
 		os.exit(1)
 	}
-	s.begin_cleanup()
-	cleanup := s.process_run({}, []string{"/usr/bin/true"})
-	s.end_cleanup()
+	support.begin_cleanup()
+	cleanup := support.process_run({}, []string{"/usr/bin/true"})
+	support.end_cleanup()
 	if cleanup.code != 0 {
 		os.exit(2)
 	}

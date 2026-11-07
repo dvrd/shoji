@@ -1,6 +1,5 @@
 package harness
 
-import s "../../../src"
 import tc "../../common"
 import "core:encoding/json"
 import "core:fmt"
@@ -8,6 +7,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import support "../../../src/support"
 
 user_dock :: proc(c: tc.Context, uid: int) -> (int, string) {
 	text, err := tc.run(c, []string{"/bin/ps", "-axo", "pid,uid,comm"})
@@ -55,10 +55,10 @@ restart_dock :: proc(
 	}
 	replaced := false
 	defer {
-		s.begin_cleanup()
-		defer s.end_cleanup()
+		support.begin_cleanup()
+		defer support.end_cleanup()
 		if !replaced {
-			_ = s.process_run(
+			_ = support.process_run(
 				c.executor,
 				[]string{"/bin/launchctl", "kickstart", target},
 				timeout = 15 * time.Second,
@@ -73,7 +73,7 @@ restart_dock :: proc(
 	}
 	began := time.tick_now()
 	for time.tick_since(began) < timeout {
-		if s.cancelled() {
+		if support.cancelled() {
 			return "interrupted"
 		}
 		current, current_error := user_dock(c, uid)
@@ -112,8 +112,8 @@ start_animation_fixture :: proc(
 	}
 	id, id_error := parse_id(line); if id_error != "" || id > 0xffffffff {
 		cleanup_error := stop_child(&child)
-		diagnostic, _ := s.read(child.stderr)
-		reason := s.cat(
+		diagnostic, _ := support.read(child.stderr)
+		reason := support.cat(
 			"fixture could not create an owned window: ",
 			diagnostic,
 			line,
@@ -131,7 +131,7 @@ replay_journal :: proc(l: ^Live, journal: string, window: u32) -> string {
 	}; if alpha < .99 {
 		return "journal did not restore owned-window opacity"
 	}
-	text, err := s.read(journal); if err != "" {
+	text, err := support.read(journal); if err != "" {
 		return err
 	}
 	value: json.Value
@@ -192,7 +192,7 @@ live_animation_run :: proc(
 	}; if baseline < .99 {
 		return "owned-window baseline opacity is not one"
 	}
-	journal := s.join(l.evidence, "watchdog.json")
+	journal := support.join(l.evidence, "watchdog.json")
 	proxy, _, e3 := start_animation_fixture(
 		l,
 		[]string{"proxy", fmt.tprintf("%d", window), journal},
@@ -206,7 +206,7 @@ live_animation_run :: proc(
 		return "fixture did not hide its owned real window"
 	}
 	if cleanup_error := stop_child(&proxy, true); cleanup_error != "" {
-		return s.cat("proxy cleanup: ", cleanup_error)
+		return support.cat("proxy cleanup: ", cleanup_error)
 	}
 	start := time.tick_now(); restored := false
 	for time.tick_since(start) < 5 * time.Second {
@@ -223,7 +223,7 @@ live_animation_run :: proc(
 		return err
 	}
 	fmt.println("PASS: owned-window SIGKILL watchdog restoration")
-	journal = s.join(l.evidence, "replay.json")
+	journal = support.join(l.evidence, "replay.json")
 	second, _, e5 := start_animation_fixture(
 		l,
 		[]string{"proxy", fmt.tprintf("%d", window), journal},
@@ -240,11 +240,11 @@ live_animation_run :: proc(
 		return err
 	}
 	if cleanup_error := stop_child(&second); cleanup_error != "" {
-		return s.cat("replay cleanup: ", cleanup_error)
+		return support.cat("replay cleanup: ", cleanup_error)
 	}
 	fmt.println("PASS: fresh-process journal replay")
 	if dock_restart {
-		journal = s.join(l.evidence, "dock.json")
+		journal = support.join(l.evidence, "dock.json")
 		third, _, e7 := start_animation_fixture(
 			l,
 			[]string{"proxy", fmt.tprintf("%d", window), journal},

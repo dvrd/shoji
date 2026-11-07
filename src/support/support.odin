@@ -1,4 +1,4 @@
-package shoji
+package support
 
 import "core:encoding/json"
 import "core:fmt"

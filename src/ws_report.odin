@@ -13,6 +13,7 @@ import "core:strings"
 import "core:sys/posix"
 import "core:time"
 import gate "windowserver/gate"
+import ipc "ipc"
 
 WS_PAYLOAD_DIR :: "/Library/GPUBundles/ShojiWindowServerProbe"
 WS_PAYLOAD_PATH :: WS_PAYLOAD_DIR + "/shoji-ws.dylib"
@@ -164,10 +165,10 @@ read_limited :: proc(path: string, limit: int) -> (data: []u8, st: posix.stat_t,
 // Ask a running daemon (which may own the gate) before claiming directly.
 @(private = "file")
 daemon_request :: proc(args: []string) -> (text: string, reached: bool) {
-	data, ok := encode_message(args)
+	data, ok := ipc.encode_message(args)
 	if !ok {return}
 	defer delete(data)
-	fd := connect_socket(socket_path())
+	fd := connect_socket(ipc.socket_path())
 	if fd < 0 {return}
 	defer close(fd)
 	if !write_all(fd, data) {return}

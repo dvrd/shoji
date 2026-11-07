@@ -1,17 +1,17 @@
 package tests
 
 import tc "../../common"
-import s "../../../src"
 import "core:fmt"
 import "core:strings"
+import support "../../../src/support"
 
 Tool_Recorder :: struct {
-	calls: [dynamic]s.Request,
+	calls: [dynamic]support.Request,
 	loaded, fail_verify, policy_fail, dock_stuck, shoji_running: bool,
 	identity: string,
 	dock_queries: int,
 }
-tool_execute :: proc(user: rawptr, request: s.Request) -> s.Result {
+tool_execute :: proc(user: rawptr, request: support.Request) -> support.Result {
 	r := (^Tool_Recorder)(user); a := request.args; snapshot := request
 	snapshot.args = make([]string, len(a)); copy(snapshot.args, a)
 	append(&r.calls, snapshot)
@@ -66,7 +66,7 @@ tool_execute :: proc(user: rawptr, request: s.Request) -> s.Result {
 	   (r.shoji_running || a[1] == "--check-sa") {
 		return {0, "[]", "", false}
 	}
-	return s.process_run(
+	return support.process_run(
 		{},
 		a,
 		request.dir,

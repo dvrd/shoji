@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "core:time"
+import ipc "../src/ipc"
 
 foreign import libc "system:c"
 foreign libc {
@@ -30,7 +31,7 @@ unix_socket_protocol_survives_fragmented_writes :: proc(t: ^testing.T) {
 	defer mac.close(fds[1])
 	mac.prepare_socket(fds[0])
 	mac.prepare_socket(fds[1])
-	data, ok := mac.encode_message([]string{"query", "--windows"})
+	data, ok := ipc.encode_message([]string{"query", "--windows"})
 	testing.expect(t, ok)
 	defer delete(data)
 	for i in 0 ..< len(data) {
@@ -47,7 +48,7 @@ unix_socket_protocol_survives_fragmented_writes :: proc(t: ^testing.T) {
 
 @(test)
 socket_path_is_user_scoped_and_bounded :: proc(t: ^testing.T) {
-	addr, ok := mac.address(mac.socket_path())
+	addr, ok := mac.address(ipc.socket_path())
 	testing.expect(t, ok)
 	testing.expect_value(t, addr.family, u8(1))
 	long: [105]u8
@@ -66,7 +67,7 @@ server_returns_failure_marker_for_invalid_command :: proc(t: ^testing.T) {
 	}
 	defer mac.close(fds[0])
 	mac.prepare_socket(fds[0])
-	data, ok := mac.encode_message([]string{"not-a-domain"})
+	data, ok := ipc.encode_message([]string{"not-a-domain"})
 	testing.expect(t, ok)
 	defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
@@ -95,7 +96,7 @@ server_returns_query_response_over_socket :: proc(t: ^testing.T) {
 	}
 	defer mac.close(fds[0])
 	mac.prepare_socket(fds[0])
-	data, ok := mac.encode_message([]string{"query", "--windows"})
+	data, ok := ipc.encode_message([]string{"query", "--windows"})
 	testing.expect(t, ok)
 	defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
@@ -186,7 +187,7 @@ event_driven_listener_and_fragmented_client_wake_without_executing_callbacks :: 
 		return
 	}
 	defer mac.close(peer)
-	data, ok := mac.encode_message({"config", "window_gap", "37"})
+	data, ok := ipc.encode_message({"config", "window_gap", "37"})
 	testing.expect(t, ok); defer delete(data)
 	testing.expect(t, mac.write_all(peer, data[:2]))
 	testing.expect_value(
@@ -236,7 +237,7 @@ commands_use_reconciled_space_state_before_presentation :: proc(
 	defer mac.close(fds[0])
 	server: mac.Command_Server; defer mac.command_server_stop(&server)
 	testing.expect(t, mac.command_accept(&server, fds[1]))
-	data, valid := mac.encode_message({"space", "--label", "fresh"})
+	data, valid := ipc.encode_message({"space", "--label", "fresh"})
 	testing.expect(t, valid); defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
 	now := time.now(); last := now
@@ -282,7 +283,7 @@ blocked_command_replies_rearm_write_readiness_until_they_drain :: proc(
 	) {
 		return
 	}
-	data, valid := mac.encode_message({"query", "--windows"})
+	data, valid := ipc.encode_message({"query", "--windows"})
 	testing.expect(t, valid); defer delete(data)
 	testing.expect(t, mac.write_all(fds[0], data))
 	if !testing.expect_value(

@@ -1,34 +1,34 @@
 package development
 
-import s "../../../src"
 import tc "../../common"
 import "core:fmt"
 import "core:os"
 import "core:time"
+import support "../../../src/support"
 
 ODIN_REVISION :: "37d8ab08f"
 patch_assembly :: proc(c: tc.Context, source: string) -> string {
-	stage, err := s.temp("shoji-odin-patch"); if err != "" {
+	stage, err := support.temp("shoji-odin-patch"); if err != "" {
 		return err
 	}; defer os.remove_all(stage)
-	if err = s.mkdir(s.join(stage, "src")); err != "" {
+	if err = support.mkdir(support.join(stage, "src")); err != "" {
 		return err
 	}
 	files := []string{"src/check_asm.cpp", "src/check_asm_cfg.cpp"}
 	for name in files {
-		if err = s.copy_file(s.join(stage, name), s.join(source, name)); err != "" {
+		if err = support.copy_file(support.join(stage, name), support.join(source, name)); err != "" {
 			return err
 		}
 	}
 	patch := tc.root_file(c, "tools/odin-asm-calls.patch")
-	r := s.process_run(c.executor, []string{"git", "apply", "--check", patch}, stage)
+	r := support.process_run(c.executor, []string{"git", "apply", "--check", patch}, stage)
 	if r.code != 0 {
-		if reverse := s.process_run(
+		if reverse := support.process_run(
 			c.executor,
 			[]string{"git", "apply", "--reverse", "--check", patch},
 			stage,
 		); reverse.code != 0 {
-			return s.cat("cannot apply assembly-call fix: ", r.diagnostic)
+			return support.cat("cannot apply assembly-call fix: ", r.diagnostic)
 		}
 		return ""
 	}
@@ -36,7 +36,7 @@ patch_assembly :: proc(c: tc.Context, source: string) -> string {
 		return err
 	}
 	for name in files {
-		if err = s.copy_file(s.join(source, name), s.join(stage, name)); err != "" {
+		if err = support.copy_file(support.join(source, name), support.join(stage, name)); err != "" {
 			return err
 		}
 	}
@@ -46,22 +46,22 @@ prepare_toolchain :: proc(
 	c: tc.Context,
 	source, destination: string,
 ) -> string {
-	if s.exists(destination) {
+	if support.exists(destination) {
 		return "refusing to overwrite an existing toolchain"
 	}
-	if err := s.mkdir(s.join(destination, "..")); err != "" {
+	if err := support.mkdir(support.join(destination, "..")); err != "" {
 		return err
 	}
 	stage, err := os.make_directory_temp(
-		s.join(destination, ".."),
+		support.join(destination, ".."),
 		"odin-*",
 		context.allocator,
 	); if err != nil {
 		return fmt.tprintf("toolchain stage: %v", err)
 	}
 	defer os.remove_all(stage)
-	archive := s.join(stage, "source.tar"); unpack := s.join(stage, "unpacked")
-	if e := s.mkdir(unpack); e != "" {
+	archive := support.join(stage, "source.tar"); unpack := support.join(stage, "unpacked")
+	if e := support.mkdir(unpack); e != "" {
 		return e
 	}
 	if _, e := tc.run(
@@ -90,7 +90,7 @@ prepare_toolchain :: proc(
 	return ""
 }
 toolchain_cli :: proc(c: tc.Context, args: []string) -> string {
-	o, err := s.parse(
+	o, err := support.parse(
 		args,
 		[]string{"source"},
 		[]string{"patch-only", "build-compiler"},
@@ -101,14 +101,14 @@ toolchain_cli :: proc(c: tc.Context, args: []string) -> string {
 	}
 	destination := tc.library_root(c)
 	if !(o.flags["patch-only"] ||
-		   o.flags["build-compiler"] && s.kind(destination) == .Directory) {
-		source := s.get(o, "source")
+		   o.flags["build-compiler"] && support.kind(destination) == .Directory) {
+		source := support.get(o, "source")
 		if source == "" {
 			text, e := tc.run(c, []string{"odin", "root"}); if e != "" {
 				return e
-			}; source = s.trim(text)
+			}; source = support.trim(text)
 		}
-		if err = prepare_toolchain(c, s.abs(source), destination); err != "" {
+		if err = prepare_toolchain(c, support.abs(source), destination); err != "" {
 			return err
 		}
 	}
@@ -116,9 +116,9 @@ toolchain_cli :: proc(c: tc.Context, args: []string) -> string {
 		return err
 	}
 	if o.flags["build-compiler"] {
-		env := s.environment(
+		env := support.environment(
 			"CPPFLAGS",
-			s.cat(
+			support.cat(
 				os.get_env("CPPFLAGS", context.allocator),
 				` -DGIT_SHA="` + ODIN_REVISION + `"`,
 			),
@@ -142,24 +142,24 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 	if len(args) != 1 {
 		return "build-arm64e expects an Odin source checkout"
 	}
-	source := s.real(args[0]); if source == "" {
+	source := support.real(args[0]); if source == "" {
 		return "source checkout is missing"
 	}
 	for name in ([]string{"src", "base", "core", "vendor", "build_odin.sh"}) {
-		if !s.exists(s.join(source, name)) {
-			return s.cat("missing source input: ", name)
+		if !support.exists(support.join(source, name)) {
+			return support.cat("missing source input: ", name)
 		}
 	}
-	stage, err := s.temp("shoji-odin-arm64e"); if err != "" {
+	stage, err := support.temp("shoji-odin-arm64e"); if err != "" {
 		return err
 	}; defer os.remove_all(stage)
-	if err = tc.copy_tree(c, s.join(stage, "src"), s.join(source, "src"));
+	if err = tc.copy_tree(c, support.join(stage, "src"), support.join(source, "src"));
 	   err != "" {
 		return err
 	}
-	if err = s.copy_file(
-		s.join(stage, "build_odin.sh"),
-		s.join(source, "build_odin.sh"),
+	if err = support.copy_file(
+		support.join(stage, "build_odin.sh"),
+		support.join(source, "build_odin.sh"),
 	); err != "" {
 		return err
 	}
@@ -169,8 +169,8 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 			[]string {
 				"/bin/ln",
 				"-s",
-				s.join(source, name),
-				s.join(stage, name),
+				support.join(source, name),
+				support.join(stage, name),
 			},
 		); err != "" {
 			return err
@@ -183,8 +183,8 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 			"llvm_backend_general.cpp",
 			"llvm_backend.cpp",
 		}) {
-		include := s.cat("--include=src/", name)
-		r := s.process_run(
+		include := support.cat("--include=src/", name)
+		r := support.process_run(
 			c.executor,
 			[]string{"git", "apply", include, "--check", patch},
 			stage,
@@ -198,7 +198,7 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 				return err
 			}
 		} else {
-			if reverse := s.process_run(
+			if reverse := support.process_run(
 				c.executor,
 				[]string {
 					"git",
@@ -210,7 +210,7 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 				},
 				stage,
 			); reverse.code != 0 {
-				return s.cat(
+				return support.cat(
 					"cannot apply arm64e patch to ",
 					name,
 					": ",
@@ -232,8 +232,8 @@ build_arm64e :: proc(c: tc.Context, args: []string) -> string {
 	); err != "" {
 		return err
 	}
-	if err = s.mkdir(tc.root_file(c, "bin")); err != "" {
+	if err = support.mkdir(tc.root_file(c, "bin")); err != "" {
 		return err
 	}
-	return s.copy_file(tc.binary(c, "odin-arm64e"), s.join(stage, "odin"))
+	return support.copy_file(tc.binary(c, "odin-arm64e"), support.join(stage, "odin"))
 }

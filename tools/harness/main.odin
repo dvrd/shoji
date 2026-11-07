@@ -1,9 +1,9 @@
 package main
 
-import s "../../src"
 import tc "../common"
 import "core:os"
 import d "harness"
+import support "../../src/support"
 
 HELP :: `Usage: harness COMMAND [OPTIONS]
   check-asm                 Compiler diagnostic regression fixtures
@@ -23,7 +23,7 @@ dispatch :: proc(c: tc.Context, args: []string) -> string {
 	case "live":
 		err = d.live_cli(c, args[1:])
 	case:
-		err = s.cat("unknown command: ", args[0])
+		err = support.cat("unknown command: ", args[0])
 	}
 	return err
 }
