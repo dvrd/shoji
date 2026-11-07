@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Authorize Shoji binaries to claim the WindowServer gate, without rebuilding
 // the payload or restarting WindowServer. Run as root (installer/update step).
 //

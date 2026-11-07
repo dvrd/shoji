@@ -55,9 +55,10 @@ windowserver_ordering_target_requires_exact_identity_range_and_signature :: proc
 	location := wire.Ordering_Location {
 		uuid = wire.ORDERING_IMAGE_UUID,
 		slide = 0x46d8000,
-		text_start = 0x18b76b000,
+		// Keep the entry inside text for whichever build is selected.
+		text_start = 0x46d8000 + wire.ORDERING_UNSLID_ENTRY - 0x463260,
 		text_size = 0x1000000,
-		candidate = 0x18bace260,
+		candidate = 0x46d8000 + wire.ORDERING_UNSLID_ENTRY,
 	}
 	testing.expect(t, wire.valid_ordering_location(location))
 	signature := wire.ORDERING_ENTRY_SIGNATURE
@@ -617,4 +618,28 @@ gate_allowlist_file_trusted_only_when_root_owned_and_unwritable :: proc(t: ^test
 	testing.expect(t, !wire.gate_allowlist_trusted(0, file, 41, 501, dir))          // user-owned dir
 	testing.expect(t, !wire.gate_allowlist_trusted(0, file, 41, 0, 0o040777))       // writable dir: swap
 	testing.expect(t, !wire.gate_allowlist_trusted(0, file, 41, 0, 0o120755))       // dir is a symlink
+}
+
+@(test)
+dispatch_redirect_encoder_reproduces_skylight_instructions :: proc(t: ^testing.T) {
+	// 26B123 and 26A434 PKGTransactionCommit table loads, from the build models.
+	cases := [2]struct {
+		pc, table: u64,
+		words: [2]u32,
+	}{
+		{0x182a57f04, 0x1e22470a8, {0x902fbf98, 0x9102a318}},
+		{0x187451678, 0x1e873d430, {0x90309778, 0x9110c318}},
+	}
+	for c in cases {
+		words, ok := wire.encode_adrp_add(c.pc, c.table, 24)
+		testing.expect(t, ok)
+		testing.expect_value(t, words, c.words)
+	}
+	backward, back_ok := wire.encode_adrp_add(0x199ee7f04, 0x11d9b4000, 24)
+	testing.expect(t, back_ok)
+	testing.expect_value(t, backward[1], u32(0x91000318))
+	_, far_ok := wire.encode_adrp_add(0x199ee7f04, 0x299ee8000, 24)
+	testing.expect(t, !far_ok)
+	_, register_ok := wire.encode_adrp_add(0x1000, 0x2000, 31)
+	testing.expect(t, !register_ok)
 }

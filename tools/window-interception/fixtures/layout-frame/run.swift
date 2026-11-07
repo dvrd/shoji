@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Disposable 26A434 fixture only. Each captured display frame contains both
 // windows, allowing mixed states to be detected without cross-stream matching.
 // usage: run.swift cascade|gated
@@ -56,7 +56,7 @@ func cleanup() {
     if !captureLabel.isEmpty { sh("/bin/launchctl", ["bootout", "gui/\(uid)/\(captureLabel)"]) }
     if fixturePid != 0 { kill(fixturePid, SIGTERM) }
 }
-func gateCtlRaw(_ args: [String]) -> String { sh("swift", [src + "/gate-ctl.swift"] + args).1 }
+func gateCtlRaw(_ args: [String]) -> String { sh(src + "/gate-ctl.swift", args).1 }
 for s in [SIGINT, SIGTERM] { signal(s) { _ in _exit(130) } }
 
 func waitFile(_ path: String) {

@@ -199,6 +199,14 @@ Manager :: struct {
 	layout_batch: Layout_Batch,
 	// Daemon-only WindowServer diagnostics (`debug ws`); nil elsewhere.
 	ws_debug: proc(user: rawptr, dump: bool) -> string,
+	// Daemon-only runtime health JSON (`query --health`); nil elsewhere.
+	health_report: proc(user: rawptr) -> string,
+	health_user: rawptr,
+	// Daemon-only `notify test`: posts a test notification; nil elsewhere.
+	health_notify_test: proc(user: rawptr) -> Response,
+	// Daemon-only `config windowserver_gate [on|off]`; "" queries. Nil elsewhere.
+	ws_gate_control: proc(user: rawptr, value: string) -> Response,
+	ws_gate_user: rawptr,
 	rules: [dynamic]Rule,
 	signals: [dynamic]Signal,
 }

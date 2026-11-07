@@ -1,5 +1,3 @@
-#+build darwin
-
 package shoji
 
 import wire "dock"
@@ -9,7 +7,6 @@ import "core:path/filepath"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
-import ws_wire "experimental/window_server"
 
 // Scripting-addition protocol client
 // ------------------------------------------------------------------------
@@ -212,6 +209,15 @@ Addition_Reload_Phase :: enum {
 	Check,
 	Load,
 }
+Addition_Reload_Spawn :: proc(
+	user: rawptr,
+	phase: Addition_Reload_Phase,
+	binary, payload: string,
+) -> (
+	pid: i32,
+	output_fd: i32, // Nonblocking read end of the child's stderr, or -1.
+	err: string,
+)
 Addition_Reload :: struct {
 	binary, payload: string,
 	dock, child, child_dock: i32,
@@ -219,15 +225,36 @@ Addition_Reload :: struct {
 	healthy, loaded: bool,
 	next_attempt: time.Time,
 	retry_delay: time.Duration,
-	spawn: proc(
-		user: rawptr,
-		phase: Addition_Reload_Phase,
-		binary, payload: string,
-	) -> (
-		i32,
-		string,
-	),
+	spawn: Addition_Reload_Spawn,
 	user: rawptr,
+	// The child's stderr is captured so failures report their real cause.
+	output_fd: i32,
+	output_open: bool, // output_fd is owned only while this is set.
+	output: Output_Tail,
+	spawned_at: time.Time,
+	health: Payload_Health,
+	// Set by a state change; consumed once by the notification owner.
+	transition: Health_Transition,
+	crash_directory: string, // Overrides the user's crash reports for tests.
+}
+
+ADDITION_PAYLOAD_NAME :: "shoji-sa.dylib"
+
+// The Dock payload ships beside the executable: Contents/Resources in the app
+// bundle, or the same directory in a development build (bin/).
+addition_payload_path :: proc() -> (path: string, err: string) {
+	binary, binary_err := os.get_executable_path(context.temp_allocator)
+	if binary_err != nil {return "", "cannot resolve shoji executable path"}
+	dir := filepath.dir(binary)
+	contents := filepath.dir(dir)
+	candidates := [2]string {
+		fmt.tprintf("%s/Resources/%s", contents, ADDITION_PAYLOAD_NAME),
+		fmt.tprintf("%s/%s", dir, ADDITION_PAYLOAD_NAME),
+	}
+	for candidate in candidates {
+		if os.is_file(candidate) {return candidate, ""}
+	}
+	return "", fmt.tprintf("Dock payload %s not found beside %s", ADDITION_PAYLOAD_NAME, binary)
 }
 
 addition_reload_init :: proc(r: ^Addition_Reload, payload: string) -> string {
@@ -249,50 +276,71 @@ addition_reload_init :: proc(r: ^Addition_Reload, payload: string) -> string {
 addition_reload_destroy :: proc(r: ^Addition_Reload) {
 	// The standalone loader owns its remote operation and completion cleanup.
 	// Do not interrupt an in-flight injection when the daemon shuts down.
+	addition_reload_close_output(r)
 	delete(r.payload); delete(r.binary)
 	r^ = {}
 }
+addition_reload_close_output :: proc(r: ^Addition_Reload) {
+	if r.output_open {
+		posix.close(posix.FD(r.output_fd))
+	}
+	r.output_open = false
+	r.output_fd = -1
+}
+
+// The other file-action bindings are declared with the process helpers.
+@(default_calling_convention = "c")
+foreign {
+	posix_spawn_file_actions_addclose :: proc(actions: ^rawptr, fd: i32) -> posix.Errno ---
+}
+
+// Starts argv with stderr redirected to a new pipe. The read end is
+// nonblocking and close-on-exec; the caller owns it.
+spawn_with_stderr_pipe :: proc(argv: []cstring) -> (pid: i32, output_fd: i32, err: string) {
+	assert(len(argv) > 0 && argv[len(argv) - 1] == nil)
+	fds: [2]posix.FD
+	if posix.pipe(&fds) != .OK {
+		return 0, -1, "cannot create recovery output pipe"
+	}
+	actions: rawptr
+	if posix_spawn_file_actions_init(&actions) != .NONE {
+		posix.close(fds[0]); posix.close(fds[1])
+		return 0, -1, "cannot prepare recovery subprocess"
+	}
+	defer posix_spawn_file_actions_destroy(&actions)
+	posix_spawn_file_actions_adddup2(&actions, i32(fds[1]), 2)
+	posix_spawn_file_actions_addclose(&actions, i32(fds[0]))
+	posix_spawn_file_actions_addclose(&actions, i32(fds[1]))
+	child: posix.pid_t
+	code := posix.posix_spawn(&child, argv[0], &actions, nil, raw_data(argv), _NSGetEnviron()^)
+	posix.close(fds[1])
+	if code != nil {
+		posix.close(fds[0])
+		return 0, -1, "cannot start scripting-addition recovery subprocess"
+	}
+	posix.fcntl(fds[0], .SETFL, posix.O_NONBLOCK)
+	posix.fcntl(fds[0], .SETFD, posix.FD_CLOEXEC)
+	return i32(child), i32(fds[0]), ""
+}
+
 addition_reload_spawn :: proc(
 	user: rawptr,
 	phase: Addition_Reload_Phase,
 	binary, payload: string,
 ) -> (
 	i32,
+	i32,
 	string,
 ) {
-	args: [6]cstring
+	binary_c := strings.clone_to_cstring(binary, context.temp_allocator)
 	if phase == .Load {
-		args = {
-			"/usr/bin/sudo",
-			"-n",
-			strings.clone_to_cstring(binary, context.temp_allocator),
-			"--load-sa",
-			strings.clone_to_cstring(payload, context.temp_allocator),
-			nil,
-		}
-	} else {
-		args = {
-			strings.clone_to_cstring(binary, context.temp_allocator),
-			"--check-sa",
-			nil,
-			nil,
-			nil,
-			nil,
-		}
+		// The root side resolves the payload itself, so the sudoers rule can
+		// pin `shoji --load-sa` exactly.
+		args := [5]cstring{"/usr/bin/sudo", "-n", binary_c, "--load-sa", nil}
+		return spawn_with_stderr_pipe(args[:])
 	}
-	pid: posix.pid_t
-	if posix.posix_spawn(
-		   &pid,
-		   args[0],
-		   nil,
-		   nil,
-		   &args[0],
-		   _NSGetEnviron()^,
-	   ) !=
-	   nil {
-		return 0, "cannot start scripting-addition recovery subprocess"
-	}
-	return i32(pid), ""
+	args := [3]cstring{binary_c, "--check-sa", nil}
+	return spawn_with_stderr_pipe(args[:])
 }
 addition_reload_backoff :: proc(r: ^Addition_Reload, now: time.Time) {
 	r.retry_delay =
@@ -304,6 +352,9 @@ addition_reload_backoff :: proc(r: ^Addition_Reload, now: time.Time) {
 addition_reload_tick :: proc(r: ^Addition_Reload, dock: i32, now: time.Time) {
 	if r.payload == "" {
 		return
+	}
+	if r.output_open && !output_tail_drain(&r.output, r.output_fd) {
+		addition_reload_close_output(r)
 	}
 	if dock != r.dock {
 		r.dock = dock
@@ -322,94 +373,133 @@ addition_reload_tick :: proc(r: ^Addition_Reload, dock: i32, now: time.Time) {
 	if spawn == nil {
 		spawn = addition_reload_spawn
 	}
-	pid, err := spawn(r.user, r.phase, r.binary, r.payload)
+	pid, output_fd, err := spawn(r.user, r.phase, r.binary, r.payload)
 	if err != "" || pid <= 0 {
-		fmt.eprintln("shoji: payload recovery:", err)
+		if output_fd >= 0 {posix.close(posix.FD(output_fd))}
+		cause := fmt.tprintf("Dock payload recovery: %s", err)
+		fmt.eprintln("shoji:", cause)
+		addition_reload_record_failure(r, cause, "", now)
 		addition_reload_backoff(r, now)
 		return
 	}
+	addition_reload_close_output(r)
+	r.output = {}
+	r.output_fd = output_fd
+	r.output_open = output_fd >= 0
+	r.spawned_at = now
 	r.child, r.child_dock = pid, dock
 }
+
+addition_reload_record_failure :: proc(
+	r: ^Addition_Reload,
+	cause, crash_report: string,
+	now: time.Time,
+) {
+	transition := payload_health_failure(&r.health, cause, crash_report, now)
+	if transition != .None {
+		r.transition = transition
+	}
+}
+
+// Collects the finished child's output, forwards it to the log, and returns
+// the evidence-based cause plus any crash report written since the spawn.
+addition_reload_collect :: proc(
+	r: ^Addition_Reload,
+	exit: Child_Exit,
+) -> (
+	cause, crash_report: string,
+) {
+	if r.output_open {
+		output_tail_drain(&r.output, r.output_fd)
+		addition_reload_close_output(r)
+	}
+	output := output_tail_text(&r.output)
+	if output != "" {
+		fmt.eprint(output)
+		if !strings.has_suffix(output, "\n") {fmt.eprintln()}
+	}
+	action := r.phase == .Load ? "Dock payload load failed" : "Dock payload check failed"
+	cause = payload_failure_cause(action, exit, output)
+	directory := r.crash_directory
+	if directory == "" {
+		directory = user_crash_report_directory()
+	}
+	if directory != "" {
+		crash_report = crash_report_newest(directory, CRASH_REPORT_PREFIX, r.spawned_at)
+	}
+	return
+}
+
 addition_reload_finished :: proc(
 	r: ^Addition_Reload,
 	child: i32,
-	success: bool,
+	exit: Child_Exit,
 	now: time.Time,
 ) -> bool {
 	if child == 0 || child != r.child {
 		return false
 	}
 	r.child = 0
+	success := child_exit_ok(exit)
+	cause, crash_report := "", ""
+	if !success {
+		cause, crash_report = addition_reload_collect(r, exit)
+	} else {
+		addition_reload_close_output(r)
+	}
 	// A subprocess completing for an old Dock cannot establish current health.
 	if r.child_dock != r.dock {
 		return true
 	}
 	if r.phase == .Check {
-		if success {
-			r.healthy = true
-			r.retry_delay = 0
-			fmt.eprintln("shoji: Dock payload is ready")
-		} else if !r.loaded {
-			r.phase = .Load
-			r.next_attempt = now
-		} else {
-			fmt.eprintln(
-				"shoji: loaded payload handshake failed; retrying verification",
-			)
-			addition_reload_backoff(r, now)
-		}
+		addition_reload_check_finished(r, success, cause, crash_report, now)
 	} else {
-		r.phase = .Check
-		if success {
-			r.loaded = true
-			r.next_attempt = now
-		} else {
-			fmt.eprintln(
-				"shoji: payload reload failed; retrying (noninteractive sudo permission is required)",
-			)
-			addition_reload_backoff(r, now)
-		}
+		addition_reload_load_finished(r, success, cause, crash_report, now)
 	}
 	return true
 }
 
-// Experimental WindowServer integration
-// ------------------------------------------------------------------------
+addition_reload_check_finished :: proc(
+	r: ^Addition_Reload,
+	success: bool,
+	cause, crash_report: string,
+	now: time.Time,
+) {
+	if success {
+		r.healthy = true
+		r.retry_delay = 0
+		if transition := payload_health_success(&r.health, now); transition != .None {
+			r.transition = transition
+		}
+		fmt.eprintln("shoji: Dock payload is ready")
+	} else if !r.loaded {
+		// Expected before the first load: the payload is not resident yet.
+		r.phase = .Load
+		r.next_attempt = now
+	} else {
+		fmt.eprintln("shoji: loaded payload handshake failed; retrying verification:", cause)
+		addition_reload_record_failure(r, cause, crash_report, now)
+		addition_reload_backoff(r, now)
+	}
+}
 
-windowserver_check :: proc() -> (ws_wire.Capabilities, string) {
-	fd := connect_socket(fmt.tprintf("/tmp/shoji-ws_%d.socket", getuid()))
-	if fd < 0 {
-		return {},
-			"WindowServer experimental payload is not loaded; use --load-ws only in the test VM"
+addition_reload_load_finished :: proc(
+	r: ^Addition_Reload,
+	success: bool,
+	cause, crash_report: string,
+	now: time.Time,
+) {
+	r.phase = .Check
+	if success {
+		r.loaded = true
+		r.next_attempt = now
+		return
 	}
-	defer close(fd)
-
-	uid, gid: u32
-	if getpeereid(fd, &uid, &gid) != 0 || uid != ws_wire.UID {
-		return {}, "unexpected WindowServer payload socket owner"
+	if crash_report != "" {
+		fmt.eprintf("shoji: %s; crash report: %s; retrying\n", cause, crash_report)
+	} else {
+		fmt.eprintf("shoji: %s; retrying\n", cause)
 	}
-
-	packet := ws_wire.begin(.Handshake)
-	if !write_all(fd, ws_wire.finish(&packet)) {
-		return {}, "could not send WindowServer payload handshake"
-	}
-	status: [1]u8
-	if !read_exact(fd, status[:]) {
-		return {}, "WindowServer payload did not acknowledge the handshake"
-	}
-	if status[0] != u8(ws_wire.Status.OK) {
-		return {}, fmt.tprintf(
-			"WindowServer payload returned %v",
-			ws_wire.Status(status[0]),
-		)
-	}
-	data: [len(ws_wire.VERSION) + 5]u8
-	if !read_exact(fd, data[:]) {
-		return {}, "incomplete WindowServer payload handshake"
-	}
-	caps, ok := ws_wire.decode_handshake(data[:])
-	if !ok {
-		return {}, "incompatible WindowServer payload protocol"
-	}
-	return caps, ""
+	addition_reload_record_failure(r, cause, crash_report, now)
+	addition_reload_backoff(r, now)
 }

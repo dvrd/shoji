@@ -1,5 +1,3 @@
-#+build darwin
-
 package shoji
 
 // Experimental WindowServer adapter (C4). Two layers:
@@ -33,7 +31,7 @@ Ws_Gate_Probe :: struct {
 	detail:    string,
 }
 
-WS_TGATE_STATUS_PATH :: "/private/tmp/shoji-ws-observer-tgate-26A434.bin"
+WS_TGATE_STATUS_PATH :: ws.TGATE_STATUS_PATH
 WS_CONTROLLER_REQUEST_PATH :: "/private/tmp/shoji-gate-controller-request"
 WS_CONTROLLER_RESPONSE_PATH :: "/private/tmp/shoji-gate-controller-response"
 WS_DISABLE_SENTINEL :: "/Library/GPUBundles/ShojiWindowServerProbe/DISABLED"
@@ -410,9 +408,32 @@ ws_mach_exchange :: proc(user: rawptr, command: ws.Gate_Command, arg0, arg1: u64
 	defer ws.gate_mach_port_destroy(m.task, reply_port)
 	if !ws.gate_store_u32(msg.bytes[:], 12, reply_port) {return}
 	options := u32(ws.MACH_MSG_SEND) | u32(ws.MACH_MSG_RECEIVE) | u32(ws.MACH_RCV_TIMEOUT)
-	// Holds are frame-scale in production (LOCKS.md); 250 ms bounds a stuck gate.
+	// A hold serializes all transaction dispatch, so production holds are
+	// frame-scale; 250 ms bounds a stuck gate.
 	if ws.gate_mach_msg(&msg.bytes[0], options, u32(n), len(msg.bytes), reply_port, 250, 0) != 0 {return}
 	return ws.gate_unpack_reply(msg.bytes[:])
+}
+
+// Session-rendezvous fallback, as in the experiment gate client. The root
+// helper delivers the right this way when it cannot obtain this task's port
+// (task_for_pid returns 5 for the client on a 26B123 M1 Max). It polls the
+// rendezvous for 10 s after claiming request.<pid>, so registering after the
+// file handoff times out still meets it. Registration fails harmlessly when
+// another process holds the name.
+WS_RENDEZVOUS_TIMEOUT_MS :: 3000
+
+ws_mach_rendezvous :: proc(task: u32, timeout_ms: u32) -> (service: u32, ok: bool) {
+	bootstrap, bootstrap_ok := ws.gate_process_bootstrap_port()
+	if !bootstrap_ok {return}
+	rendezvous: u32
+	if ws.gate_mach_port_allocate(task, ws.MACH_PORT_RIGHT_RECEIVE, &rendezvous) != 0 {return}
+	defer ws.gate_mach_port_destroy(task, rendezvous)
+	if ws.gate_bootstrap_register(bootstrap, ws.GATE_RENDEZVOUS_NAME, rendezvous) != 0 {return}
+	message: Ws_Mach_Buffer
+	options := u32(ws.MACH_MSG_RECEIVE) | u32(ws.MACH_RCV_TIMEOUT)
+	size := u32(len(message.bytes))
+	if ws.gate_mach_msg(&message.bytes[0], options, 0, size, rendezvous, timeout_ms, 0) != 0 {return}
+	return ws.gate_handshake_send_right(message.bytes[:])
 }
 
 // Task-port handoff: publish request.<pid>; the root helper inserts a send
@@ -471,12 +492,21 @@ ws_adapter_open :: proc(a: ^Ws_Adapter, enabled: bool, timeout: time.Duration = 
 		a.state = .Absent
 		return
 	}
-	a.mach.task = ws.gate_mach_task_self()
-	service, ok := ws_mach_handoff(a.mach.task, timeout)
+	task := ws.gate_mach_task_self()
+	service, ok := ws_mach_handoff(task, timeout)
+	if !ok {
+		service, ok = ws_mach_rendezvous(task, WS_RENDEZVOUS_TIMEOUT_MS)
+	}
 	if !ok {
 		a.state = .Absent
 		return
 	}
+	ws_adapter_connect(a, task, service)
+}
+
+// Takes ownership of `service` (a send right to the gate) and claims it.
+ws_adapter_connect :: proc(a: ^Ws_Adapter, task, service: u32) {
+	a.mach.task = task
 	a.mach.service = service
 	a.exchange = ws_mach_exchange
 	a.user = &a.mach

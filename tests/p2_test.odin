@@ -287,9 +287,12 @@ command_client_waits_for_valid_delayed_reply_fragments :: proc(t: ^testing.T) {
 	writer := Delayed_Command_Response{fd = fds[1]}
 	thread: posix.pthread_t
 	if !testing.expect(t, posix.pthread_create(&thread, nil, write_delayed_command_response, &writer) == nil) { return }
-	code := mac.client_receive_response(fds[0])
+	reply := strings.builder_make(context.temp_allocator)
+	failed, err := mac.client_receive_response(fds[0], &reply)
 	posix.pthread_join(thread)
-	testing.expect_value(t, code, 0)
+	testing.expect_value(t, err, "")
+	testing.expect(t, !failed)
+	testing.expect_value(t, strings.to_string(reply), "[]\n")
 	testing.expect(t, writer.finished)
 }
 write_slow_bytes :: proc "c" (user: rawptr) -> rawptr {

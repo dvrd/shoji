@@ -361,3 +361,52 @@ install_entry_via_alias :: proc(state: ^Hook_State, entry, replacement: u64, exp
 	hook_sys_icache_invalidate(rawptr(uintptr(entry)), 4)
 	return (^u32)(uintptr(entry))^ == branch
 }
+
+ALIAS_WORDS_LIMIT :: 4
+
+// Replaces up to ALIAS_WORDS_LIMIT consecutive instruction words on one page
+// through a temporary writable alias, as write_inline_loop_via_alias does.
+// The page must already be privatized, and the caller must hold an execution
+// barrier with no thread inside the replaced range. Returns false without
+// writing when the live words differ from expected.
+write_words_via_alias :: proc(
+	address: u64,
+	expected, replacement: []u32,
+	deallocate: Deallocate,
+) -> bool {
+	count := len(expected)
+	if deallocate == nil || address & 3 != 0 || count == 0 || count > ALIAS_WORDS_LIMIT ||
+	   len(replacement) != count {return false}
+	page_size := mach.vm_page_size
+	if page_size == 0 || page_size & (page_size - 1) != 0 {return false}
+	page := address & ~(page_size - 1)
+	if address + u64(count) * 4 > page + page_size {return false}
+	live := ([^]u32)(uintptr(address))
+	for index in 0 ..< count {if live[index] != expected[index] {return false}}
+	alias: u64
+	current, maximum: i32
+	task := hook_mach_task_self()
+	remapped := hook_mach_vm_remap(task, &alias, page_size, 0, 1, task, page, 0, &current, &maximum, 1)
+	if remapped != 0 {return false}
+	// A failed alias release leaks one page mapping; the patch result stands.
+	defer deallocate(task, alias, page_size)
+	if hook_mach_vm_protect(task, alias, page_size, 0, 1 | 2) != 0 {return false}
+	patch := ([^]u32)(uintptr(alias + (address - page)))
+	for index in 0 ..< count {if patch[index] != expected[index] {return false}}
+	for index in 0 ..< count {patch[index] = replacement[index]}
+	hook_sys_icache_invalidate(rawptr(uintptr(address)), uint(count * 4))
+	for index in 0 ..< count {if live[index] != replacement[index] {return false}}
+	return true
+}
+
+// Encodes `adrp xd, target@PAGE; add xd, xd, target@PAGEOFF` for an adrp at
+// pc. Fails when the target page is outside adrp's +/-4 GiB range.
+encode_adrp_add :: proc(pc, target: u64, register: u32) -> (words: [2]u32, ok: bool) {
+	if register > 30 {return}
+	pages := i64(target >> 12) - i64(pc >> 12)
+	if pages < -(1 << 20) || pages >= 1 << 20 {return}
+	immediate := u32(pages) & 0x1fffff
+	words[0] = 0x90000000 | (immediate & 3) << 29 | (immediate >> 2) << 5 | register
+	words[1] = 0x91000000 | u32(target & 0xfff) << 10 | register << 5 | register
+	return words, true
+}

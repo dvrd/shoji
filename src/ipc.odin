@@ -1,9 +1,8 @@
-#+build darwin
-
 package shoji
 
 import n "native"
 import "core:fmt"
+import "core:strings"
 import posix "core:sys/posix"
 import "core:time"
 
@@ -40,45 +39,56 @@ socket_path :: proc() -> string {
 }
 
 client :: proc(args: []string) -> int {
+	out := strings.builder_make(context.temp_allocator)
+	failed, err := client_exchange(args, &out)
+	if err != "" {
+		fmt.eprintln("shoji:", err)
+		return 1
+	}
+	if failed {
+		fmt.eprint(strings.to_string(out))
+		return 1
+	}
+	fmt.print(strings.to_string(out))
+	return 0
+}
+
+// Sends one command and collects the daemon's reply into `out`. `failed` is
+// the daemon's verdict; `err` is a transport error (no reply was received).
+client_exchange :: proc(args: []string, out: ^strings.Builder) -> (failed: bool, err: string) {
 	data, ok := encode_message(args)
 	if !ok {
-		fmt.eprintln("shoji: invalid or oversized message")
-		return 1
+		return false, "invalid or oversized message"
 	}
 	defer delete(data)
 	fd := connect_socket(socket_path())
 	if fd < 0 {
-		fmt.eprintln("shoji: cannot connect to daemon")
-		return 1
+		return false, "cannot connect to daemon"
 	}
 	defer close(fd)
 	if !write_all(fd, data) {
-		fmt.eprintln("shoji: failed to send message")
-		return 1
+		return false, "failed to send message"
 	}
 	shutdown(fd, 1)
-	return client_receive_response(fd)
+	return client_receive_response(fd, out)
 }
 
-client_receive_response :: proc(fd: i32) -> int {
+client_receive_response :: proc(fd: i32, out: ^strings.Builder) -> (failed: bool, err: string) {
 	// Native desktop actions can exceed the transport's two-second idle limit.
 	// Bound the entire reply instead of resetting a timeout for each fragment.
 	deadline := time.time_add(time.now(), 15 * time.Second)
 	first := true
-	failed := false
 	buffer: [8192]u8
 	for {
 		if !wait_socket(fd, 1, deadline) {
-			fmt.eprintln("shoji: cannot read daemon response before deadline")
-			return 1
+			return false, "cannot read daemon response before deadline"
 		}
 		n := recv(fd, &buffer[0], len(buffer), 0x80) // MSG_DONTWAIT
 		if n < 0 && (__error()^ == 4 || __error()^ == 35) {
 			continue
 		}
 		if n < 0 {
-			fmt.eprintln("shoji: response read failed")
-			return 1
+			return false, "response read failed"
 		}
 		if n == 0 {
 			break
@@ -89,17 +99,12 @@ client_receive_response :: proc(fd: i32) -> int {
 			offset = 1
 		}
 		first = false
-		if failed {
-			fmt.eprint(string(buffer[offset:n]))
-		} else {
-			fmt.print(string(buffer[offset:n]))
-		}
+		strings.write_string(out, string(buffer[offset:n]))
 	}
 	if first {
-		fmt.eprintln("shoji: daemon returned no response")
-		return 1
+		return false, "daemon returned no response"
 	}
-	return failed ? 1 : 0
+	return failed, ""
 }
 
 // Nonblocking command server

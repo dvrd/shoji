@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Disposable Shoji Test guest only. Runs the Mach gate client as the desktop
 // user and hands over the gate send right from WindowServer's task as root
 // (task-port handoff; bootstrap_look_up from WindowServer is denied on

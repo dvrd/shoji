@@ -1,7 +1,7 @@
-package main
+package payload
 
 import "base:intrinsics"
-import hook "../../../src/experimental/window_server"
+import hook "../window_server"
 
 layout_plan: hook.Layout_Plan
 layout_generation: u32

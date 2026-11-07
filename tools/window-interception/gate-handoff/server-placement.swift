@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Exact-build, disposable-window placement through the server ordering seam.
 // This collects geometry evidence; it does not certify frame atomicity.
 // usage: server-placement.swift X Y [release|timeout|cancel]
@@ -21,7 +21,7 @@ func sh(_ launch: String, _ args: [String], toFile: String? = nil, background: B
     p.waitUntilExit(); return (p.terminationStatus, o, p)
 }
 func out1(_ launch: String, _ args: [String]) -> String { sh(launch, args).1.trimmingCharacters(in: .whitespacesAndNewlines) }
-func gateCtl(_ args: [String]) -> String { sh("swift", [src + "/gate-ctl.swift"] + args).1 }
+func gateCtl(_ args: [String]) -> String { sh(src + "/gate-ctl.swift", args).1 }
 func grep(_ s: String, _ pat: String, _ g: Int = 1) -> String? {
     guard let re = try? NSRegularExpression(pattern: pat),
           let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)), let r = Range(m.range(at: g), in: s) else { return nil }

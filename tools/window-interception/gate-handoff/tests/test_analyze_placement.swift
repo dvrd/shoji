@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Black-box test for analyze-placement.swift. Run: swift gate-handoff/tests/test_analyze_placement.swift
 import Foundation
 
@@ -37,9 +37,9 @@ func newDir() -> String {
 }
 func run(_ dir: String, _ data: [UInt8], expected: (Int, Int)? = nil) -> (code: Int32, out: String) {
     fm.createFile(atPath: dir + "/response.bin", contents: Data(data))
-    var args = ["swift", tool, dir]
+    var args = [dir]
     if let (x, y) = expected { args += ["--expected-position", "\(x)", "\(y)"] }
-    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/env"); p.arguments = args
+    let p = Process(); p.executableURL = URL(fileURLWithPath: tool); p.arguments = args
     let o = Pipe(); p.standardOutput = o; p.standardError = Pipe()
     try? p.run(); let out = String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""; p.waitUntilExit()
     return (p.terminationStatus, out)

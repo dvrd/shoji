@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // C2 ordering-receipt experiment: arm a watch on a fixture window, trigger an
 // owner-side focus change, and consume the once-only ordering receipt — no AX
 // readback polling. Run as shoji-test on the guest with an unlocked GUI.
@@ -21,7 +21,7 @@ func sh(_ launch: String, _ args: [String], toFile: String? = nil, background: B
     var o = ""; if let pipe = pipe { o = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "" }
     p.waitUntilExit(); return (p.terminationStatus, o, p)
 }
-func gateCtl(_ args: [String]) -> String { sh("swift", [src + "/gate-ctl.swift"] + args).1 }
+func gateCtl(_ args: [String]) -> String { sh(src + "/gate-ctl.swift", args).1 }
 func grep(_ s: String, _ pat: String, _ g: Int = 1) -> String? {
     guard let re = try? NSRegularExpression(pattern: pat),
           let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)), let r = Range(m.range(at: g), in: s) else { return nil }

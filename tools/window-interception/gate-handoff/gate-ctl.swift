@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Send one command to the persistent gate controller and print its response.
 // Single driver at a time (the sequence file is not locked).
 // usage: gate-ctl.swift <command> [args...]

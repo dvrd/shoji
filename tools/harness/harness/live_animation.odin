@@ -39,11 +39,10 @@ restart_dock :: proc(
 ) -> (
 	err: string,
 ) {
-	exe, payload := tc.binary(c, "shoji"), tc.binary(c, "shoji-sa.dylib")
-	if _, err = tc.run(
-		c,
-		[]string{"sudo", "-n", "-l", "--", exe, "--load-sa", payload},
-	); err != "" {
+	// --load-sa takes no path; shoji loads the payload beside itself.
+	exe := tc.binary(c, "shoji")
+	if _, err = tc.run(c, []string{"sudo", "-n", "-l", "--", exe, "--load-sa"});
+	   err != "" {
 		return err
 	}
 	target := fmt.tprintf("gui/%d/com.apple.Dock.agent", uid)
@@ -88,7 +87,7 @@ restart_dock :: proc(
 			"Dock restart was not observed; recovery was requested without loading the payload" \
 		)
 	}
-	if _, err = tc.run(c, []string{"sudo", "-n", exe, "--load-sa", payload});
+	if _, err = tc.run(c, []string{"sudo", "-n", exe, "--load-sa"});
 	   err != "" {
 		return err
 	}

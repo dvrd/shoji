@@ -1,14 +1,16 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // Disposable Shoji Test guest only. Restarts WindowServer when an observer is
-// already mapped, then loads cctor22 and proves the Mach gate. Run over SSH
+// already mapped, then loads cctor23 and proves the Mach gate. Run over SSH
 // from the host as root. HUP is ignored; the controller is left running.
 // usage: run-experiment.swift [--preflight]
 import Foundation
 
 let fm = FileManager.default
+// Build under test; must match the payload built with -define:SHOJI_WS_BUILD.
+let wsBuild = ProcessInfo.processInfo.environment["SHOJI_WS_BUILD"] ?? "26B123"
 let src = "/Users/Shared/shoji-ws-observer.Qwiazd"
-let dst = "/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor22.dylib"
-let tgate = "/private/tmp/shoji-ws-observer-tgate-26A434.bin"
+let dst = "/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor23.dylib"
+let tgate = "/private/tmp/shoji-ws-observer-tgate-\(wsBuild).bin"
 let log = "/tmp/shoji-run-experiment.log"
 let exitfile = "/tmp/shoji-run-experiment.exit"
 let ctlLog = "/tmp/shoji-gate-controller.log"
@@ -82,7 +84,7 @@ if args.count > 1 || (args.count == 1 && args[0] != "--preflight") {
 if geteuid() != 0 { eprint("Run with sudo on the disposable guest."); exit(1) }
 let build = sh("/usr/bin/sw_vers", ["-buildVersion"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
 let vmm = sh("/usr/sbin/sysctl", ["-n", "kern.hv_vmm_present"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
-if build != "26A434" || vmm != "1" { eprint("Disposable 26A434 virtual machine required."); exit(1) }
+if build != wsBuild || vmm != "1" { eprint("Disposable \(wsBuild) virtual machine required."); exit(1) }
 if args.first == "--preflight" {
     print("Disposable VM/build preflight passed; no changes made. Loader ABI checks still required.")
     exit(0)
@@ -100,7 +102,7 @@ emit("start \(Date())")
 if !fm.isExecutableFile(atPath: src + "/shoji-loader")
     || !fm.fileExists(atPath: src + "/shoji-ws-observer.dylib")
     || !fm.isExecutableFile(atPath: src + "/shoji-gate-client") {
-    emit("Missing cctor22 binaries in \(src)"); finish(1)
+    emit("Missing cctor23 binaries in \(src)"); finish(1)
 }
 
 let old = pgrep(["-x", "WindowServer"]).first
@@ -123,16 +125,16 @@ guard let wsPid = pid else { emit("WindowServer did not come back."); finish(1) 
 emit("WindowServer PID: \(wsPid)")
 
 sh("/usr/bin/install", ["-o", "root", "-g", "wheel", "-m", "644", src + "/shoji-ws-observer.dylib", dst])
-for f in ["/private/tmp/shoji-ws-observer-started-26A434.bin",
-          "/private/tmp/shoji-ws-observer-status-26A434.bin",
+for f in ["/private/tmp/shoji-ws-observer-started-\(wsBuild).bin",
+          "/private/tmp/shoji-ws-observer-status-\(wsBuild).bin",
           tgate,
           "/private/tmp/shoji-ws-observer-request",
-          "/private/tmp/shoji-ws-observer-response-26A434.bin"] { try? fm.removeItem(atPath: f) }
+          "/private/tmp/shoji-ws-observer-response-\(wsBuild).bin"] { try? fm.removeItem(atPath: f) }
 
 emit(sh(src + "/shoji-loader", ["--windowserver", "\(wsPid)", dst],
         env: ["SHOJI_WINDOWSERVER_EXPERIMENT": "1"]).out)
 emit("WindowServer after load: \(pgrep(["-x", "WindowServer"]).first.map(String.init) ?? "none")")
-emit(sh("/bin/ls", ["-l", "/private/tmp/shoji-ws-observer-started-26A434.bin", tgate]).out)
+emit(sh("/bin/ls", ["-l", "/private/tmp/shoji-ws-observer-started-\(wsBuild).bin", tgate]).out)
 
 // Task-port handoff does not need the session bootstrap port (offset 128, u64 LE).
 var bootstrapPort: UInt64 = 0

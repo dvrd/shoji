@@ -52,7 +52,7 @@ escape :: proc(value: string) -> string {
 configuration :: proc(
 	binary, logs: string,
 	config: string = "",
-	payload: string = "",
+	dock_payload := false,
 ) -> (
 	string,
 	string,
@@ -65,13 +65,13 @@ configuration :: proc(
 		return "", "binary must be an executable regular file"
 	}
 	args := make([dynamic]string); append(&args, binary)
-	for value, i in ([2]string{config, payload}) {
-		if value != "" {
-			path := real(value); if !regular(path) {
-				return "", "config and payload must be regular files"
-			}; append(&args, i == 0 ? "-c" : "--sa", path)
-		}
+	if config != "" {
+		path := real(config)
+		if !regular(path) {return "", "config must be a regular file"}
+		append(&args, "-c", path)
 	}
+	// The daemon resolves the Dock payload beside its own binary.
+	if dock_payload {append(&args, "--sa")}
 	b := strings.builder_make(context.allocator)
 	strings.write_string(
 		&b,
@@ -129,9 +129,9 @@ install :: proc(
 	m: Service_Manager,
 	binary: string,
 	config: string = "",
-	payload: string = "",
+	dock_payload := false,
 ) -> string {
-	data, err := configuration(binary, logs_path(m), config, payload)
+	data, err := configuration(binary, logs_path(m), config, dock_payload)
 	if err != "" {
 		return err
 	}
@@ -161,9 +161,13 @@ service_start :: proc(m: Service_Manager) -> string {
 		return cat("launchctl bootstrap failed: ", r.diagnostic)
 	}; return ""
 }
-service_start_configured :: proc(m: Service_Manager, binary, config, payload: string) -> string {
+service_start_configured :: proc(
+	m: Service_Manager,
+	binary, config: string,
+	dock_payload: bool,
+) -> string {
 	if !exists(plist_path(m)) {
-		if err := install(m, binary, config, payload); err != "" {
+		if err := install(m, binary, config, dock_payload); err != "" {
 			return err
 		}
 	}
@@ -317,13 +321,13 @@ service_cli :: proc(args: []string, default_binary: string) -> int {
 	configure_signals()
 	if len(args) == 0 || args[0] == "--help" {
 		fmt.println(
-			"Usage: shoji service plist|install|start|stop|restart|status|uninstall [--binary PATH] [--config PATH] [--sa PATH]",
+			"Usage: shoji service plist|install|start|stop|restart|status|uninstall [--binary PATH] [--config PATH] [--sa] [--verbose]",
 		); return 0
 	}
 	if os.get_euid() == 0 {
 		fmt.eprintln("service: run as the logged-in user, not root"); return 1
 	}
-	o, err := parse(args[1:], []string{"binary", "config", "sa"}, nil)
+	o, err := parse(args[1:], []string{"binary", "config"}, []string{"sa", "verbose"})
 	if err != "" || len(o.positionals) != 0 {
 		fmt.eprintln("service:", err, "unexpected arguments"); return 1
 	}
@@ -337,7 +341,7 @@ service_cli :: proc(args: []string, default_binary: string) -> int {
 			get(o, "binary", default_binary),
 			logs_path(m),
 			get(o, "config"),
-			get(o, "sa"),
+			o.flags["sa"],
 		); err = e; if err == "" {
 			fmt.println(text)
 		}
@@ -346,13 +350,13 @@ service_cli :: proc(args: []string, default_binary: string) -> int {
 			m,
 			get(o, "binary", default_binary),
 			get(o, "config"),
-			get(o, "sa"),
+			o.flags["sa"],
 		)
 	case "start":
 		binary := get(o, "binary", default_binary)
 		err = service_accessibility(m, default_binary, binary)
 		if err == "" {
-			err = service_start_configured(m, binary, get(o, "config"), get(o, "sa"))
+			err = service_start_configured(m, binary, get(o, "config"), o.flags["sa"])
 		}
 	case "stop":
 		err = stop(m)
@@ -361,8 +365,8 @@ service_cli :: proc(args: []string, default_binary: string) -> int {
 	case "uninstall":
 		err = uninstall(m)
 	case "status":
-		r := launch(m, "print", target(m)); fmt.print(r.out, r.diagnostic)
-		return r.code
+		// launchd reports the process; the daemon reports degraded features.
+		return service_status(m, o.flags["verbose"])
 	case:
 		err = "unknown service command"
 	}

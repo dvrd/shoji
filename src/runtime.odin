@@ -1,5 +1,3 @@
-#+build darwin
-
 package shoji
 
 import recovery "dock"
@@ -30,49 +28,46 @@ stop_handler :: proc "c" (signal: posix.Signal) {
 	sync.atomic_store(&stop_requested, 1)
 }
 
-run_config :: proc(path: string) -> bool {
-	if path == "" {
-		return true
-	}
-	// The path is passed as argv, never interpolated into shell source.
-	argv := [3]cstring {
-		"/bin/sh",
-		strings.clone_to_cstring(path, context.temp_allocator),
-		nil,
-	}
-	pid: posix.pid_t
-	if posix.posix_spawn(
-		   &pid,
-		   "/bin/sh",
-		   nil,
-		   nil,
-		   &argv[0],
-		   _NSGetEnviron()^,
-	   ) !=
-	   nil {
-		fmt.eprintf("shoji: cannot execute config %s\n", path)
-		return false
-	}
-	return true
-}
-
+// Runs the startup configuration once. It waits for a verified Dock payload
+// so payload-dependent settings apply, but not indefinitely: once recovery is
+// reported as failed, the rest of the configuration still applies.
 startup_config_start :: proc(
 	path: string,
 	reload: ^Addition_Reload,
 	started: ^bool,
-	launch: proc(_: string) -> bool = run_config,
+	launch: proc(_: string) -> bool = nil,
+	run: ^Config_Run = nil,
 ) -> bool {
 	if started^ {
 		return true
 	}
-	if path != "" && reload.payload != "" && !reload.healthy {
+	waiting := reload.payload != "" && !reload.healthy && reload.health.state != .Failed
+	if path != "" && waiting {
 		return true
 	}
-	if !launch(path) {
+	launched := launch != nil ? launch(path) : config_run_start(run, path)
+	if !launched {
 		return false
 	}
 	started^ = true
 	return true
+}
+
+// shojirc sets the focus ring's style through the command socket, so it runs
+// after the daemon starts. Drawing the ring before it finishes would flash
+// the default style. The hold is bounded so a slow or hung configuration,
+// or a long Dock payload wait, cannot hide focus feedback indefinitely.
+FOCUS_RING_CONFIG_HOLD :: 15 * time.Second
+
+focus_ring_hold_tick :: proc(state: ^State, run: ^Config_Run, start, now: time.Time) {
+	if !state.focus_ring_held {
+		return
+	}
+	if !run.report.finished && time.diff(start, now) < FOCUS_RING_CONFIG_HOLD {
+		return
+	}
+	state.focus_ring_held = false
+	focus_ring_tick(state)
 }
 
 default_config :: proc() -> string {
@@ -283,10 +278,15 @@ run :: proc(
 		state.manager.ws_debug = ws_debug
 	}
 	defer ws_adapter_close(&state.ws)
-	refresh(&state)
-	state.opening_tracking = true
+	attach: Ws_Attach_Runtime
+	ws_attach_runtime_start(&attach, &state.ws, &state.manager)
+	defer ws_attach_runtime_stop(&attach)
 	config := strings.clone(config_path == "" ? default_config() : config_path)
 	defer delete(config)
+	state.focus_ring_held = config != ""
+	ring_hold_start := time.now()
+	refresh(&state)
+	state.opening_tracking = true
 	if config != "" && !os.exists(config) {
 		fmt.eprintf("shoji: config does not exist: %s\n", config)
 		return 1
@@ -300,7 +300,10 @@ run :: proc(
 	}
 	defer workspace_stop(&state)
 	config_started := false
-	if !startup_config_start(config, &reload, &config_started) {
+	health := Runtime_Health{reload = &reload, attach = &attach}
+	defer health_stop(&health)
+	health_start(&health, &state.manager)
+	if !startup_config_start(config, &reload, &config_started, run = &health.config) {
 		return 1
 	}
 	if !config_started {
@@ -335,9 +338,12 @@ run :: proc(
 				state.workspace_events.dock_pid,
 				time.now(),
 			)
-			if !startup_config_start(config, &reload, &config_started) {
+			if !startup_config_start(config, &reload, &config_started, run = &health.config) {
 				return 1
 			}
+			health_tick(&health, time.now())
+			ws_attach_tick(&attach, time.now())
+			focus_ring_hold_tick(&state, &health.config, ring_hold_start, time.now())
 			animation_recovery_tick(&state, time.now())
 			desktop_commands_tick(&commands, &state, &last_refresh, time.now())
 			moving := motion_active(&state)
@@ -403,12 +409,9 @@ run :: proc(
 				if pid <= 0 {
 					break
 				}
-				addition_reload_finished(
-					&reload,
-					i32(pid),
-					posix.WIFEXITED(status) && posix.WEXITSTATUS(status) == 0,
-					time.now(),
-				)
+				if !ws_attach_child_finished(&attach, i32(pid), status, time.now()) {
+					health_child_finished(&health, i32(pid), status, time.now())
+				}
 			}
 		}
 	}

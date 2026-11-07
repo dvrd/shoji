@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 // C2 production prerequisite: does the ordering receipt fire when a window is
 // raised the way Shoji raises it — from another process? Methods:
 //   owner       fixture raises its own window (orderFrontRegardless)
@@ -27,7 +27,7 @@ func sh(_ launch: String, _ args: [String], capture: Bool = true, toFile: String
     var o = ""; if let pipe = pipe { o = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "" }
     p.waitUntilExit(); return (p.terminationStatus, o, p)
 }
-func gateCtl(_ args: [String]) -> String { sh("swift", [src + "/gate-ctl.swift"] + args).1 }
+func gateCtl(_ args: [String]) -> String { sh(src + "/gate-ctl.swift", args).1 }
 func grep(_ s: String, _ pat: String, _ g: Int = 1) -> String? {
     guard let re = try? NSRegularExpression(pattern: pat),
           let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)), let r = Range(m.range(at: g), in: s) else { return nil }

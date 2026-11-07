@@ -1,5 +1,3 @@
-#+build darwin
-
 package shoji
 
 import wire "dock"
@@ -2164,6 +2162,7 @@ focus_ring_fail :: proc(state: ^State, err: string) {
 focus_ring_tick :: proc(state: ^State) {
 	w := state.manager.windows[state.manager.focused]
 	if state.read_only ||
+	   state.focus_ring_held ||
 	   w == nil ||
 	   (state.connection == 0 && state.feedback_backend.create == nil) {
 		focus_ring_stop(state); tab_indicator_stop(state); return

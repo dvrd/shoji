@@ -10,14 +10,14 @@ positions, then release — so a rearrangement lands in a single frame.
 The **payload logic ships in `src/`** (`src/experimental/window_server/` and
 `src/experimental/window_server_payload/` → `bin/shoji-ws.dylib`); production
 Shoji drives it directly over an authenticated Mach channel (the "gate", see
-`src/ws_adapter_darwin.odin`). Everything here is the **disposable, build-pinned
+`src/ws_adapter.odin`). Everything here is the **disposable, build-pinned
 (26A434) experiment harness** around that engine — it is not a product feature.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `windowserver-ordering-observer/` | Experiment build of the payload: `package main`, imports the `src/` logic, adds an in-memory event ring + bounded holds + a standalone gate controller. Built pinned to one guest build. |
+| `src/experimental/window_server_payload/` | (Moved to `src/`.) The payload itself. `task build:windowserver-ordering-observer` builds it with the gate-client CDHash pinned for these experiments; `task build:windowserver-payload` builds the shipped copy. |
 | `windowserver-payload-probe/` | Minimal payload used to probe load/permission on a build. |
 | `gate-client/` | CLI to poke the gate by hand: `hello`, `bounds WID`, `place WID X Y`, `dump`. Test driver only. |
 | `gate-handoff/` | Standalone gate-owner process + `gate-ctl.swift`/`gate-handoff-run.swift` wrappers that stage a whole layout (`layout-begin`/`add`/`arm`). Test driver only. |

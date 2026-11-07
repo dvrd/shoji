@@ -1,7 +1,34 @@
-# WindowServer ordering observer experiment
+# WindowServer gate payload
 
-This is a disposable, exact-build experiment for the `Shoji Test` VirtualBuddy
-guest only. It is not a production Shoji feature. It implements an observer and
+Status (2026-11-07): this package is the payload Shoji loads into WindowServer
+(`task build:windowserver-payload` → `bin/shoji-ws.dylib`, loaded by
+`shoji --ws-attach`). The test harness builds the same source with its gate
+client's CDHash pinned (`task build:windowserver-ordering-observer` →
+`bin/shoji-ws-observer.dylib`). Live-verified on a physical M1 Max running
+26B123: ordering hook, transaction-table gate (dispatch redirected to a private
+table copy because `__AUTH_CONST` cannot be made writable) and C1/C2/C4 through
+the Shoji daemon.
+
+## Production attach
+
+1. `task install:windowserver` installs the payload root-owned in
+   `/Library/GPUBundles/ShojiWindowServerProbe/` and prints the sudoers line.
+2. `shoji -m config windowserver_gate on` (in shojirc) makes the daemon run
+   `sudo -n shoji --ws-attach` in the background; the config run never waits.
+3. `--ws-attach` (root, no arguments) refuses on the `DISABLED` sentinel, another
+   build, or a payload/directory writable by anyone but root. It injects unless
+   the status file proves this WindowServer already serves a gate, adds its own
+   CDHash to the `clients` allowlist (newest 16 kept) and hands a send right to
+   the daemon's session rendezvous. The daemon still has to pass HELLO.
+4. Transient failures retry 5 times (2 s doubling to 30 s); refusals (exit 3)
+   stop at once. `shoji service status` shows the `gate` row and its cause.
+
+The history below is the original experiment log, kept as evidence.
+
+## Original experiment (26A434 VM)
+
+This began as a disposable, exact-build experiment for the `Shoji Test` VirtualBuddy
+guest only. It implements an observer and
 a bounded experimental ordering hold, not a proven complete presentation gate.
 
 The experiment targets one recovered 26A434 SkyLight function,
@@ -89,7 +116,7 @@ Validated in the disposable guest on 2026-10-30 and 2026-10-31:
   landed 38–43 ms after each forward (baseline: 119 ms unheld, virtual-
   display cadence). The gate holds actual presentation for the intra-space
   z-order channel, per WindowServer's own display-time metadata.
-- Static coverage map (2,569 visibility-relevant functions, `COVERAGE.md`):
+- Static coverage map (2,569 visibility-relevant functions):
   the hook fully covers intra-space z-order visibility, but space
   membership/switching, surface bind/opacity/bounds, and window
   bounds/transform bypass it — all transaction-mediated via
@@ -137,7 +164,7 @@ before WindowServer use.
   Display-time metadata is not physical scanout; capture can omit frames.
 - Coverage is limited to the intra-space z-order channel. Space switches,
   surface updates and bounds/transform changes use separate
-  transaction-mediated paths (`COVERAGE.md`) and are not gated.
+  transaction-mediated paths and are not gated.
 - A complete presentation gate for all channels would need the commit-seam
   or per-family mutator hooks; that choice needs dispatch analysis of
   `PKGTransactionCommit`.

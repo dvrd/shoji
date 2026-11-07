@@ -33,6 +33,15 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		return failure("opacity settings are global")
 	}
 	switch name {
+	case "windowserver_gate":
+		if s != nil { return failure("windowserver_gate is global") }
+		if m.ws_gate_control == nil {
+			return failure("windowserver_gate needs the daemon")
+		}
+		if setting && value != "on" && value != "off" {
+			return failure("windowserver_gate expects on or off")
+		}
+		return m.ws_gate_control(m.ws_gate_user, value)
 	case "tab_indicator_gap":
 		if s != nil { return failure("tab_indicator_gap is global") }
 		if !setting { return success(fmt.tprintf("%g", m.tab_indicator_gap)) }

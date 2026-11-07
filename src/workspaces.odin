@@ -1,5 +1,3 @@
-#+build darwin
-
 package shoji
 
 import "base:intrinsics"

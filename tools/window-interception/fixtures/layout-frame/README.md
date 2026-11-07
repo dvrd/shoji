@@ -80,9 +80,9 @@ native movement itself fails after previous movements succeeded.
 
 ```sh
 task build:windowserver-ordering-observer build:gate-client build:layout-frame build:layout-fixture
-swift tools/window-interception/lifecycle/test_report.swift
-swift tools/window-interception/gate-handoff/tests/test_analyze_placement.swift
-swift tools/window-interception/fixtures/layout-frame/test_analyze.swift
+tools/window-interception/lifecycle/test_report.swift
+tools/window-interception/gate-handoff/tests/test_analyze_placement.swift
+tools/window-interception/fixtures/layout-frame/test_analyze.swift
 ```
 
 The capturer is packaged as `bin/Shoji Layout Capture.app` with
@@ -110,7 +110,7 @@ permission. OS refusal still fails the capture.
 Copy a completed run back to local ignored artifacts, then:
 
 ```sh
-swift tools/window-interception/fixtures/layout-frame/analyze.swift RUN_DIRECTORY
+tools/window-interception/fixtures/layout-frame/analyze.swift RUN_DIRECTORY
 ```
 
 Keep raw PNGs, `frames.jsonl`, fixture events, controller responses and the

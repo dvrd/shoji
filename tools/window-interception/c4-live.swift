@@ -1,5 +1,11 @@
-#!/usr/bin/env swift
-// C4 live acceptance on the disposable 26A434 guest. Run as root (sudo).
+#!/usr/bin/swift
+// C4 live acceptance (SHOJI_WS_BUILD, default 26B123). Run as root (sudo).
+// Default target: the disposable VM guest. With a leading --host, this machine's
+// own login session: repo bin/ and scripts in place, the invoking sudo user, and
+// the Shoji.app binary that holds Accessibility approval. Host `daemon` stops the
+// user's Shoji service for the run and restarts it on exit. Host `install` is
+// refused; inject with the host run script instead.
+//   c4-live.swift [--host] MODE
 //   c4-live.swift install   reinstall the observer (SIGKILLs WindowServer)
 //   c4-live.swift run       Shoji's adapter path (GUI logged in + unlocked, 2 Spaces)
 //   c4-live.swift controller  (re)start the experiment controller as gate owner
@@ -10,12 +16,36 @@
 import Foundation
 
 let fm = FileManager.default
+// Build under test; must match the payload built with -define:SHOJI_WS_BUILD.
+let wsBuild = ProcessInfo.processInfo.environment["SHOJI_WS_BUILD"] ?? "26B123"
 let env = ProcessInfo.processInfo.environment
-let src = "/Users/Shared/shoji-ws-observer.Qwiazd"
+var rawArgs = Array(CommandLine.arguments.dropFirst())
+let host = rawArgs.first == "--host"
+if host { rawArgs.removeFirst() }
+// Repo root: two directories above this script (tools/window-interception/).
+let repo = URL(fileURLWithPath: CommandLine.arguments[0],
+               relativeTo: URL(fileURLWithPath: fm.currentDirectoryPath))
+    .standardizedFileURL.deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().path
+let src = host ? repo + "/bin" : "/Users/Shared/shoji-ws-observer.Qwiazd"
 let c4 = src + "/c4"
-let tgate = "/private/tmp/shoji-ws-observer-tgate-26A434.bin"
+let shojiBin = host ? repo + "/bin/Shoji.app/Contents/MacOS/shoji" : c4 + "/shoji"
+// `--load-sa` takes no path: shoji loads the payload in its bundle's
+// Resources (host) or beside the binary (guest c4 directory).
+let saPath = host ? repo + "/bin/Shoji.app/Contents/Resources/shoji-sa.dylib" : c4 + "/shoji-sa.dylib"
+let testUser = host ? (env["SUDO_USER"] ?? "") : "shoji-test"
+let serviceLabel = "tech.shoji.window-manager"
+func scriptPath(_ name: String) -> String {
+    if !host { return src + "/" + name }
+    switch name {
+    case "trust-client.swift": return repo + "/tools/window-interception/lifecycle/" + name
+    case "spaces.swift": return repo + "/tools/window-interception/gate-handoff/" + name
+    default: return repo + "/tools/window-interception/" + name
+    }
+}
+let tgate = "/private/tmp/shoji-ws-observer-tgate-\(wsBuild).bin"
 let req = "/private/tmp/shoji-gate-handoff-request"
-let response = "/private/tmp/shoji-ws-observer-response-26A434.bin"
+let response = "/private/tmp/shoji-ws-observer-response-\(wsBuild).bin"
 
 signal(SIGHUP, SIG_IGN)
 
@@ -77,33 +107,38 @@ func waitUntil(_ tries: Int, _ ms: UInt32, _ cond: () -> Bool) -> Bool {
 if env["SHOJI_WINDOWSERVER_DISABLE"] == "1" || fm.fileExists(atPath: "/Library/GPUBundles/ShojiWindowServerProbe/DISABLED") {
     die("WindowServer experiment disabled; no changes made.", 3)
 }
-if geteuid() != 0 { die("Run with sudo on the disposable guest.", 1) }
-if capture("/usr/bin/sw_vers", ["-buildVersion"]).out.trimmingCharacters(in: .whitespacesAndNewlines) != "26A434"
-    || capture("/usr/sbin/sysctl", ["-n", "kern.hv_vmm_present"]).out.trimmingCharacters(in: .whitespacesAndNewlines) != "1" {
-    die("Disposable 26A434 virtual machine required.", 1)
+if geteuid() != 0 { die("Run with sudo.", 1) }
+if capture("/usr/bin/sw_vers", ["-buildVersion"]).out.trimmingCharacters(in: .whitespacesAndNewlines) != wsBuild {
+    die("macOS build \(wsBuild) required.", 1)
 }
+if !host && capture("/usr/sbin/sysctl", ["-n", "kern.hv_vmm_present"]).out.trimmingCharacters(in: .whitespacesAndNewlines) != "1" {
+    die("Disposable \(wsBuild) virtual machine required (or pass --host).", 1)
+}
+if host && (testUser.isEmpty || testUser == "root") { die("--host needs sudo from the logged-in user.", 1) }
 
-let argv = Array(CommandLine.arguments.dropFirst())
+let argv = rawArgs
 let mode = argv.first ?? ""
 
 func swiftScript(_ name: String, _ a: [String] = [], asUser: String? = nil, toFile: String? = nil, background: Bool = false) -> Int32 {
-    run("swift", [src + "/" + name] + a, asUser: asUser, toFile: toFile, background: background)
+    // Scripts run through their #!/usr/bin/swift shebang (Apple's toolchain).
+    run(scriptPath(name), a, asUser: asUser, toFile: toFile, background: background)
 }
 
 switch mode {
 case "install":
-    guard fm.isExecutableFile(atPath: c4 + "/shoji"), fm.fileExists(atPath: c4 + "/shoji-sa.dylib") else {
-        die("missing \(c4)/shoji or shoji-sa.dylib", 1)
+    if host { die("--host install is not supported; inject with the host run script.", 2) }
+    guard fm.isExecutableFile(atPath: shojiBin), fm.fileExists(atPath: saPath) else {
+        die("missing \(shojiBin) or shoji-sa.dylib", 1)
     }
-    _ = swiftScript("trust-client.swift", [c4 + "/shoji"])
+    _ = swiftScript("trust-client.swift", [shojiBin])
     exit(swiftScript("run-experiment.swift"))   // mirrors `exec`
 case "run", "controller", "daemon", "trust":
     break
 default:
-    die("usage: c4-live.swift install | run | controller | trust | daemon", 2)
+    die("usage: c4-live.swift [--host] install | run | controller | trust | daemon", 2)
 }
 
-if mode == "run" || mode == "daemon" { _ = swiftScript("trust-client.swift", [c4 + "/shoji"]) }
+if mode == "run" || mode == "daemon" { _ = swiftScript("trust-client.swift", [shojiBin]) }
 
 guard fm.fileExists(atPath: tgate) else { die("observer not installed (no tgate status); run install first", 1) }
 let ws = pgrep(["-x", "WindowServer"]).first.map(String.init) ?? ""
@@ -117,7 +152,7 @@ func startController(toFile: String? = nil) -> Bool {
     }
     rmGlob(req); rmGlob("/private/tmp/shoji-gate-handoff-response")
     for f in ["/tmp/shoji-gate-controller.log", "/private/tmp/shoji-gate-controller-request", "/private/tmp/shoji-gate-controller-response"] { try? fm.removeItem(atPath: f) }
-    _ = run("/usr/bin/nohup", ["sudo", "-u", "shoji-test", src + "/shoji-gate-client", "serve"], toFile: "/tmp/shoji-gate-controller.log", background: true)
+    _ = run("/usr/bin/nohup", ["sudo", "-u", testUser, src + "/shoji-gate-client", "serve"], toFile: "/tmp/shoji-gate-controller.log", background: true)
     waitUntil(100, 50) { globExists("/private/tmp", "shoji-gate-handoff-request.") }
     _ = run(src + "/shoji-gate-handoff", [ws])
     waitUntil(40, 250) { fileHasLinePrefix("/tmp/shoji-gate-controller.log", "owner ") }
@@ -126,12 +161,40 @@ func startController(toFile: String? = nil) -> Bool {
     return fileHasLinePrefix("/tmp/shoji-gate-controller.log", "owner ")
 }
 
+// Asks the payload to write its event ring (response.bin), delivering the gate
+// right through the root handoff, which falls back to the session rendezvous.
+func dumpRing(_ outFile: String) {
+    rmGlob(req); rmGlob("/private/tmp/shoji-gate-handoff-response")
+    try? fm.removeItem(atPath: response)
+    _ = run(src + "/shoji-gate-client", ["dump"], asUser: testUser, toFile: outFile, background: true)
+    waitUntil(100, 50) { globExists("/private/tmp", "shoji-gate-handoff-request.") }
+    _ = capture(src + "/shoji-gate-handoff", [ws])
+    waitUntil(80, 50) { ((try? fm.attributesOfItem(atPath: response)[.size]) as? Int ?? 0) > 0 }
+}
+
+// Host daemon runs replace the user's own Shoji service for the test and put
+// it back on every exit path, including failures.
+var serviceStopped = false
+func restoreService() {
+    guard host, serviceStopped else { return }
+    serviceStopped = false
+    let uid = capture("/usr/bin/id", ["-u", testUser]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+    let home = FileManager.default.homeDirectory(forUser: testUser)?.path ?? ""
+    let plist = home + "/Library/LaunchAgents/\(serviceLabel).plist"
+    let r = capture("/bin/launchctl", ["bootstrap", "gui/\(uid)", plist])
+    if r.code == 0 { print("restored \(serviceLabel)") }
+    else { print("FAILED to restore \(serviceLabel) (\(r.code)): \(r.out)run: shoji service start") }
+}
+// Every daemon-mode exit after the service stops goes through here. atexit is
+// not used: handlers registered by an interpreted (JIT) script did not run.
+func finish(_ code: Int32) -> Never { restoreService(); exit(code) }
+
 func loadDock(uid: String) -> Bool {
     var i = 0
-    while run("/bin/launchctl", ["asuser", uid, c4 + "/shoji", "--load-sa", c4 + "/shoji-sa.dylib"]) != 0 {
+    while run("/bin/launchctl", ["asuser", uid, shojiBin, "--load-sa"]) != 0 {
         i += 1; if i >= 15 { print("Dock payload did not load"); return false }; sleep(2)
     }
-    return run(c4 + "/shoji", ["--check-sa"], asUser: "shoji-test") == 0
+    return run(shojiBin, ["--check-sa"], asUser: testUser) == 0
 }
 
 if mode == "controller" { exit(startController() ? 0 : 1) }
@@ -146,7 +209,7 @@ if mode == "trust" {
     func report(_ tag: String, _ dir: String? = nil) {
         rmGlob(req); rmGlob("/private/tmp/shoji-gate-handoff-response")
         let target = out + "/" + tag + ".txt"
-        _ = run(c4 + "/shoji", ["--ws-report"] + (dir.map { [$0] } ?? []), asUser: "shoji-test", toFile: target, background: true)
+        _ = run(shojiBin, ["--ws-report"] + (dir.map { [$0] } ?? []), asUser: testUser, toFile: target, background: true)
         waitUntil(60, 50) { globExists("/private/tmp", "shoji-gate-handoff-request.") }
         _ = capture(src + "/shoji-gate-handoff", [ws])
         usleep(400_000)   // let the backgrounded --ws-report finish writing
@@ -159,7 +222,7 @@ if mode == "trust" {
     print("== T1 no clients file → refused")
     _ = swiftScript("trust-client.swift", ["--clear"]); report("t1-cleared"); check("t1-cleared", "refused (status 4")
     print("== T2 group-writable clients file → ignored")
-    _ = swiftScript("trust-client.swift", [c4 + "/shoji"]); chmod(clients, 0o664); report("t2-unsafe"); check("t2-unsafe", "refused (status 4")
+    _ = swiftScript("trust-client.swift", [shojiBin]); chmod(clients, 0o664); report("t2-unsafe"); check("t2-unsafe", "refused (status 4")
     print("== T3 trusted → serving, no payload rebuild")
     chmod(clients, 0o644); report("t3-trusted"); check("t3-trusted", "adapter serving")
     print("== T4 event ring export")
@@ -196,12 +259,12 @@ if mode == "daemon" {
     let suffix = app.isEmpty ? "" : "-" + String(app.map { $0.isLetter || $0.isNumber ? $0 : "-" })
     let out = "/tmp/shoji-c4-daemon" + suffix
     try? fm.removeItem(atPath: out); try? fm.createDirectory(atPath: out, withIntermediateDirectories: true); chmod(out, 0o777)
-    let uid = capture("/usr/bin/id", ["-u", "shoji-test"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+    let uid = capture("/usr/bin/id", ["-u", testUser]).out.trimmingCharacters(in: .whitespacesAndNewlines)
     let label = "tech.shoji.c4-daemon"
-    func m(_ a: [String]) -> Int32 { run(c4 + "/shoji", ["-m"] + a, asUser: "shoji-test") }
-    func mOut(_ a: [String]) -> String { capture(c4 + "/shoji", ["-m"] + a, asUser: "shoji-test").out }
+    func m(_ a: [String]) -> Int32 { run(shojiBin, ["-m"] + a, asUser: testUser) }
+    func mOut(_ a: [String]) -> String { capture(shojiBin, ["-m"] + a, asUser: testUser).out }
 
-    _ = run("/bin/launchctl", ["asuser", uid, "sudo", "-u", "shoji-test", "caffeinate", "-u", "-t", "2"])
+    _ = run("/bin/launchctl", ["asuser", uid, "sudo", "-u", testUser, "caffeinate", "-u", "-t", "2"])
     if capture("/usr/sbin/ioreg", ["-n", "Root", "-d1"]).out.contains("\"CGSSessionScreenIsLocked\"=Yes") {
         die("screen is locked: AX cannot identify windows; unlock (or reboot with auto-login) and rerun", 1)
     }
@@ -214,15 +277,27 @@ if mode == "daemon" {
     <plist version="1.0"><dict>
     <key>Label</key><string>\(label)</string>
     <key>RunAtLoad</key><true/>
-    <key>ProgramArguments</key><array><string>\(c4)/shoji</string><string>-c</string><string>\(out)/empty.conf</string></array>
+    <key>ProgramArguments</key><array><string>\(shojiBin)</string><string>-c</string><string>\(out)/empty.conf</string></array>
     <key>EnvironmentVariables</key><dict><key>SHOJI_WS_ADAPTER</key><string>1</string></dict>
     <key>StandardErrorPath</key><string>\(out)/daemon.log</string>
     <key>StandardOutPath</key><string>\(out)/daemon.log</string>
     </dict></plist>
     """
     try? plist.write(toFile: out + "/\(label).plist", atomically: true, encoding: .utf8)
+    if host && capture("/bin/launchctl", ["print", "gui/\(uid)/\(serviceLabel)"]).code == 0 {
+        // One window manager at a time: the test daemon needs the command socket.
+        _ = capture("/bin/launchctl", ["bootout", "gui/\(uid)/\(serviceLabel)"])
+        serviceStopped = true
+        print("stopped \(serviceLabel) for the test; it is restored on exit")
+        // Interrupts restore too; the run is single-threaded and short.
+        signal(SIGINT) { _ in finish(130) }
+        signal(SIGTERM) { _ in finish(143) }
+        waitUntil(40, 250) { capture("/bin/launchctl", ["print", "gui/\(uid)/\(serviceLabel)"]).code != 0 }
+    } else if host {
+        print("\(serviceLabel) is not loaded; nothing to restore afterwards (start it with: shoji service start)")
+    }
     _ = capture("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
-    waitUntil(40, 250) { capture("/bin/launchctl", ["print", "gui/\(uid)/\(label)"]).code == 0 || !pgrep(["-f", "^\(c4)/shoji -c"]).isEmpty } // true while still present
+    waitUntil(40, 250) { capture("/bin/launchctl", ["print", "gui/\(uid)/\(label)"]).code == 0 || !pgrep(["-f", "^\(shojiBin) -c"]).isEmpty } // true while still present
     rmGlob(req); rmGlob("/private/tmp/shoji-gate-handoff-response")
     _ = run("/bin/launchctl", ["bootstrap", "gui/\(uid)", out + "/\(label).plist"])
     waitUntil(60, 50) { globExists("/private/tmp", "shoji-gate-handoff-request.") }
@@ -230,12 +305,12 @@ if mode == "daemon" {
     waitUntil(40, 250) { fileContains(out + "/daemon.log", "listening on") }
     print((try? String(contentsOfFile: out + "/daemon.log", encoding: .utf8)) ?? "")
     if !fileContains(out + "/daemon.log", "WindowServer adapter serving") {
-        print("daemon is not the gate owner"); _ = run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"]); exit(1)
+        print("daemon is not the gate owner"); _ = run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"]); finish(1)
     }
 
     func item(_ tag: String) -> String {
         let f = out + "/item-\(tag).txt"
-        _ = run(src + "/shoji-ws-ordering-trigger", ["--no-hold", "--report-frame", "--delay", "100", "--visible-ms", "40000"], asUser: "shoji-test", toFile: f, background: true)
+        _ = run(src + "/shoji-ws-ordering-trigger", ["--no-hold", "--report-frame", "--delay", "100", "--visible-ms", "40000"], asUser: testUser, toFile: f, background: true)
         waitUntil(100, 50) { fileHasLinePrefix(f, "window=") }
         for line in ((try? String(contentsOfFile: f, encoding: .utf8)) ?? "").split(separator: "\n") where line.hasPrefix("window=") {
             return String(line.dropFirst(7).prefix { $0.isNumber })
@@ -259,7 +334,7 @@ if mode == "daemon" {
         let frame = jsonObject(mOut(["query", "--windows", "--window", wid]))["frame"] as? [String: Any] ?? [:]
         func r(_ k: String) -> Int { Int((frame[k] as? Double ?? 0).rounded()) }
         let ax = [r("x"), r("y"), r("w"), r("h")]
-        let slsStr = capture(src + "/shoji-gate-client", ["bounds", wid], asUser: "shoji-test").out
+        let slsStr = capture(src + "/shoji-gate-client", ["bounds", wid], asUser: testUser).out
         let sls = boundsInts(slsStr)
         let verdict = (sls != nil && zip(ax, sls!).allSatisfy { abs($0 - $1) <= 1 }) ? "SYNC" : "DESYNC"
         let line = "\(verdict) \(tag) window=\(wid) ax=(\(ax.map(String.init).joined(separator: " "))) ws=(\(sls?.map(String.init).joined(separator: " ") ?? ""))\n"
@@ -271,10 +346,10 @@ if mode == "daemon" {
     var a = ""
     if !app.isEmpty {
         let appArgs = (env["APP_ARGS"].map { $0.split(separator: " ").map(String.init) }) ?? []
-        _ = run("/bin/launchctl", ["asuser", uid, "sudo", "-u", "shoji-test", "open", "-a", app, "--args"] + appArgs)
+        _ = run("/bin/launchctl", ["asuser", uid, "sudo", "-u", testUser, "open", "-a", app, "--args"] + appArgs)
         guard let w = appWindow(match) else {
             print("no tiled window for \(app)"); try? mOut(["query", "--windows"]).write(toFile: out + "/windows-fail.json", atomically: true, encoding: .utf8)
-            _ = run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"]); exit(1)
+            _ = run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"]); finish(1)
         }
         a = w
     } else { a = item("a") }
@@ -283,30 +358,42 @@ if mode == "daemon" {
     print("items a=\(a) b=\(b)")
     _ = m(["config", "window_animation_duration", "0"])
     if jsonArray(mOut(["query", "--spaces"])).count < 2 { _ = m(["space", "--create"]); sleep(1) }
+    let spaceCount = jsonArray(mOut(["query", "--spaces"])).count
     _ = m(["config", "--space", "1", "layout", "bsp"]); _ = m(["config", "--space", "2", "layout", "bsp"]); usleep(1_500_000)
     _ = m(["debug", "motion", "start"])
     try? mOut(["query", "--windows"]).write(toFile: out + "/windows-before.json", atomically: true, encoding: .utf8)
     print("== C1 swap"); _ = m(["window", a, "--swap", b]); usleep(500_000)
-    _ = run(src + "/shoji-gate-client", ["bounds", a], asUser: "shoji-test"); _ = run(src + "/shoji-gate-client", ["bounds", b], asUser: "shoji-test")
+    _ = run(src + "/shoji-gate-client", ["bounds", a], asUser: testUser); _ = run(src + "/shoji-gate-client", ["bounds", b], asUser: testUser)
     syncCheck("c1", a); syncCheck("c1", b)
-    print("== C2 focus"); _ = m(["window", a, "--focus"]); usleep(300_000); _ = m(["window", b, "--focus"]); usleep(300_000)
-    print("== C4 space"); _ = m(["window", a, "--space", "2"]); usleep(500_000)
-    _ = run(src + "/shoji-gate-client", ["bounds", a], asUser: "shoji-test"); _ = run(src + "/shoji-gate-client", ["spaces", a], asUser: "shoji-test")
-    syncCheck("c4", a)
+    print("== C2 focus")
+    for wid in [a, b] {
+        _ = m(["window", wid, "--focus"]); usleep(300_000)
+        let focused = jsonObject(mOut(["query", "--windows", "--window", wid]))["has-focus"] as? Bool ?? false
+        let line = "\(focused ? "FOCUS" : "NOFOCUS") c2 window=\(wid)\n"
+        print(line, terminator: "")
+        if let fh = FileHandle(forWritingAtPath: out + "/sync.txt") { fh.seekToEndOfFile(); fh.write(Data(line.utf8)); try? fh.close() }
+    }
+    if spaceCount < 2 {
+        // A sync line here would only prove the window stayed put.
+        print("SKIP c4: needs a second Space (Mission Control +); creating one was refused")
+    } else {
+        print("== C4 space"); _ = m(["window", a, "--space", "2"]); usleep(500_000)
+        _ = run(src + "/shoji-gate-client", ["bounds", a], asUser: testUser); _ = run(src + "/shoji-gate-client", ["spaces", a], asUser: testUser)
+        syncCheck("c4", a)
+    }
     try? mOut(["debug", "motion", "dump"]).write(toFile: out + "/motion.json", atomically: true, encoding: .utf8)
     try? mOut(["debug", "ws", "dump"]).write(toFile: out + "/ws-debug.txt", atomically: true, encoding: .utf8)
     print((try? String(contentsOfFile: out + "/ws-debug.txt", encoding: .utf8)) ?? "")
     try? mOut(["query", "--windows"]).write(toFile: out + "/windows-after.json", atomically: true, encoding: .utf8)
     _ = run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
-    if !app.isEmpty { _ = run("/bin/launchctl", ["asuser", uid, "sudo", "-u", "shoji-test", "osascript", "-e", "quit app \"\(app)\""]) }
+    if !app.isEmpty { _ = run("/bin/launchctl", ["asuser", uid, "sudo", "-u", testUser, "osascript", "-e", "quit app \"\(app)\""]) }
     usleep(500_000)
-    _ = swiftScript("gate-handoff-run.swift", ["dump"], toFile: out + "/dump.txt")
-    usleep(400_000)
+    dumpRing(out + "/dump.txt")
     try? fm.removeItem(atPath: out + "/response.bin"); try? fm.copyItem(atPath: response, toPath: out + "/response.bin")
-    _ = startController(toFile: out + "/controller-after.txt")
+    if !host { _ = startController(toFile: out + "/controller-after.txt") }
     _ = run("/usr/bin/pgrep", ["-x", "WindowServer"])
     print("DONE out=\(out)")
-    exit(0)
+    finish(0)
 }
 
 // ---- default: adapter battery (run) ------------------------------------
@@ -314,12 +401,12 @@ let out = "/tmp/shoji-c4-live"
 try? fm.removeItem(atPath: out); try? fm.createDirectory(atPath: out, withIntermediateDirectories: true); chmod(out, 0o755)
 print("start \(Date()) WindowServer=\(ws)")
 
-let uid = capture("/usr/bin/id", ["-u", "shoji-test"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+let uid = capture("/usr/bin/id", ["-u", testUser]).out.trimmingCharacters(in: .whitespacesAndNewlines)
 var i = 0
-while run("/bin/launchctl", ["asuser", uid, c4 + "/shoji", "--load-sa", c4 + "/shoji-sa.dylib"]) != 0 {
+while run("/bin/launchctl", ["asuser", uid, shojiBin, "--load-sa"]) != 0 {
     i += 1; if i >= 15 { die("Dock payload did not load", 1) }; sleep(2)
 }
-if run(c4 + "/shoji", ["--check-sa"], asUser: "shoji-test") != 0 { die("Dock payload not answering", 1) }
+if run(shojiBin, ["--check-sa"], asUser: testUser) != 0 { die("Dock payload not answering", 1) }
 
 _ = swiftScript("spaces.swift", toFile: out + "/spaces.txt")
 let spacesTxt = (try? String(contentsOfFile: out + "/spaces.txt", encoding: .utf8)) ?? ""
@@ -336,7 +423,7 @@ print("active=\(active) target=\(target)")
 var wid = ""
 func fixture(_ tag: String) {
     let f = out + "/fixture-\(tag).txt"
-    _ = run(src + "/shoji-ws-ordering-trigger", ["--no-hold", "--delay", "100", "--visible-ms", "30000"], asUser: "shoji-test", toFile: f, background: true)
+    _ = run(src + "/shoji-ws-ordering-trigger", ["--no-hold", "--delay", "100", "--visible-ms", "30000"], asUser: testUser, toFile: f, background: true)
     waitUntil(100, 50) { fileHasLinePrefix(f, "window=") }
     wid = ""
     for l in ((try? String(contentsOfFile: f, encoding: .utf8)) ?? "").split(separator: "\n") where l.hasPrefix("window=") { wid = String(l.dropFirst(7).prefix { $0.isNumber }) }
@@ -347,7 +434,7 @@ func fixture(_ tag: String) {
 func shojiMove(_ tag: String, _ wid: String, _ space: String, _ x: String, _ y: String, _ extra: [String: String] = [:]) {
     rmGlob(req); rmGlob("/private/tmp/shoji-gate-handoff-response")
     let f = out + "/" + tag + ".txt"
-    let code = run(c4 + "/shoji", ["--ws-space-move", wid, space, x, y], asUser: "shoji-test", env: extra, toFile: f, background: true)
+    let code = run(shojiBin, ["--ws-space-move", wid, space, x, y], asUser: testUser, env: extra, toFile: f, background: true)
     _ = code
     waitUntil(40, 50) { globExists("/private/tmp", "shoji-gate-handoff-request.") }
     if globExists("/private/tmp", "shoji-gate-handoff-request.") {
@@ -357,7 +444,7 @@ func shojiMove(_ tag: String, _ wid: String, _ space: String, _ x: String, _ y: 
     // the backgrounded shoji writes its own result; give it a moment
     usleep(500_000)
     for extraCmd in [["bounds", wid], ["spaces", wid]] {
-        let r = capture(src + "/shoji-gate-client", extraCmd, asUser: "shoji-test")
+        let r = capture(src + "/shoji-gate-client", extraCmd, asUser: testUser)
         if let fh = FileHandle(forWritingAtPath: f) { fh.seekToEndOfFile(); fh.write(Data(r.out.utf8)); try? fh.close() }
     }
     print("== \(tag)"); print((try? String(contentsOfFile: f, encoding: .utf8)) ?? "")
@@ -380,8 +467,7 @@ shojiMove("t4-reclaim-place", wid, target, "600", "400", ["SHOJI_WS_ADAPTER": "1
 fixture("b")
 shojiMove("t5-reclaim-again", wid, target, "700", "450", ["SHOJI_WS_ADAPTER": "1"])
 
-_ = swiftScript("gate-handoff-run.swift", ["dump"], toFile: out + "/dump.txt")
-usleep(400_000)
+dumpRing(out + "/dump.txt")
 try? fm.removeItem(atPath: out + "/response.bin"); try? fm.copyItem(atPath: response, toPath: out + "/response.bin")
 _ = startController(toFile: out + "/controller-after.txt")
 _ = run("/usr/bin/pgrep", ["-x", "WindowServer"])
