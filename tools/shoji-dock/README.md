@@ -40,7 +40,7 @@ The scanner parses thin and universal 64-bit Mach-O images, selecting arm64e pre
 
 The scan profile is a set of existing version-specific Shoji patterns, not an assertion that the input OS is supported. A snapshot from an existing supported version uses its own profile. Unknown versions default to the latest existing profile, `26.6`; use `--profile 15.6` or another known version explicitly when useful. Comparison defaults to the baseline profile.
 
-The explicit `27.0.1` offline profile matches all seven targets uniquely in build 26A434 and is selected automatically for that snapshot version. This does not enable the normal payload on macOS 27. `task addition:macos27` builds a separate opt-in candidate for runtime validation, at `bin/macos27/shoji-sa.dylib`, without installing or loading it. Later 27.x profiles are not inferred.
+The explicit `27.0.1` offline profile matches all seven targets uniquely in build 26A434 and is selected automatically for that snapshot version. Later 27.x profiles are not inferred.
 
 Statuses distinguish `matched`, `moved`, `ambiguous`, `missing`, `no_pattern` and `invalid_global_reference`. A decoded global reference is an address calculation, not proof of the pointed-to object's identity. Scan exits 1 if any target is unresolved or ambiguous; this is an analysis result, not a command failure. Usage, file, tool and download errors exit 2. Successful commands exit 0.
 

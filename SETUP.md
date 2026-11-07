@@ -1,7 +1,7 @@
 # Shoji setup
 
-The current validation target is macOS 15.6 (24G84), Apple Silicon. Basic window
-management and Space operations have passed live checks. Experimental animations default off.
+The target is macOS 27.2 (26B123), Apple Silicon. Basic window management and
+Space operations have passed live checks. Experimental animations default off.
 
 ## Configuration
 

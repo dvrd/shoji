@@ -1,20 +1,27 @@
 # WindowServer gate payload
 
-Status (2026-11-07): this package is the payload Shoji loads into WindowServer
+This package is the payload Shoji loads into WindowServer
 (`task build:windowserver-payload` → `bin/shoji-ws.dylib`, loaded by
-`shoji --ws-attach`). The test harness builds the same source with its gate
-client's CDHash pinned (`task build:windowserver-ordering-observer` →
-`bin/shoji-ws-observer.dylib`). Live-verified on a physical M1 Max running
-26B123: ordering hook, transaction-table gate (dispatch redirected to a private
-table copy because `__AUTH_CONST` cannot be made writable) and C1/C2/C4 through
-the Shoji daemon.
+`shoji --ws-attach`). The gate engine it serves lives in
+`src/windowserver/gate/`; the daemon side is `src/ws_adapter.odin` and
+`src/ws_attach_runtime.odin`. The test harness builds the same source with its
+gate client's CDHash pinned (`task build:windowserver-ordering-observer` →
+`bin/shoji-ws-observer.dylib`).
+
+Supported build: macOS 26B123 (`BUILD` in `src/windowserver/gate/target.odin`),
+live-verified on a physical M1 Max: ordering hook, transaction-table gate
+(dispatch redirected to a private table copy because `__AUTH_CONST` cannot be
+made writable) and C1/C2/C4 through the Shoji daemon. Every other build, and
+every refused or failed state, falls back to Shoji's native Accessibility paths.
 
 ## Production attach
 
 1. `task install:windowserver` installs the payload root-owned in
    `/Library/GPUBundles/ShojiWindowServerProbe/` and prints the sudoers line.
+   See [SIP.md](../../../SIP.md) for the privileged setup.
 2. `shoji -m config windowserver_gate on` (in shojirc) makes the daemon run
    `sudo -n shoji --ws-attach` in the background; the config run never waits.
+   Outside the daemon, `SHOJI_WS_ADAPTER=1` opts a process in.
 3. `--ws-attach` (root, no arguments) refuses on the `DISABLED` sentinel, another
    build, or a payload/directory writable by anyone but root. It injects unless
    the status file proves this WindowServer already serves a gate, adds its own
@@ -23,120 +30,82 @@ the Shoji daemon.
 4. Transient failures retry 5 times (2 s doubling to 30 s); refusals (exit 3)
    stop at once. `shoji service status` shows the `gate` row and its cause.
 
-The history below is the original experiment log, kept as evidence.
+The payload stays resident until WindowServer exits; there is no live unload.
+Logging out does not restart WindowServer, so a new payload needs
+`sudo killall -9 WindowServer` (this logs you out).
 
-## Original experiment (26A434 VM)
+## Authorization
 
-This began as a disposable, exact-build experiment for the `Shoji Test` VirtualBuddy
-guest only. It implements an observer and
-a bounded experimental ordering hold, not a proven complete presentation gate.
+The gate's Mach owner is first-HELLO-wins, identified by audit-token PID and
+PID version. Every command requires an authorized client CDHash, read through
+`csops_audittoken`, so a client cannot claim an identity. Two sources
+authorize a client:
 
-The experiment targets one recovered 26A434 SkyLight function,
-`CGXOrderWindowListSpaceSwitchOptions`, only after validating the loaded image's
-UUID, mapped text range, slide and entry bytes. The observer records bounded
-events in memory and forwards unarmed calls immediately. File I/O happens on a
-separate control thread, never in the ordering callback.
+- CDHashes pinned at build time (the harness gate client only).
+- The `clients` allowlist beside the payload (one 40-hex CDHash per line),
+  reread on every HELLO. `--ws-attach` adds the running binary itself;
+  `tools/window-interception/lifecycle/trust-client.swift` replaces the list
+  by hand. The payload ignores the file unless the file and its directory are
+  root-owned and not group- or world-writable (`gate_allowlist_trusted`).
 
-## Current result
+Trust comes from root ownership: anything that can write the allowlist already
+has root. A Shoji update therefore needs no payload rebuild, and the
+Accessibility grant survives because TCC keys on the signing certificate.
+An owner that dies is reclaimed by the next verified HELLO, only when
+`kill(pid, 0)` reports ESRCH.
 
-Updated 2026-11-04: the server-context placement report
-records the current authenticated Mach controller, generation-aware hold,
-exact-build helper verification and corrected pointer ABI. Three placements
-have matching internal and independent external bounds. Timeout and
-cancellation preserve the original position; the corrected session remained
-healthy throughout. This is disposable-fixture geometry evidence, not a
-complete presentation gate or production integration. See that report for
-the retained first failure and current limitations.
+## Failure and recovery
 
-The subsequent C1 fixture experiment passes
-captured multi-window layout acceptance: 18 changes over three runs, zero
-mixed gated frames, maximum ordering callback 0.472 ms. This remains scoped
-to two owned, fixed-size windows on the disposable build; it is not the
-production Shoji adapter or a universal presentation guarantee.
+Recovery is bounded at every level:
 
-## Historical ordering and visibility results
+1. A claimed hold fails open at its 3 s deadline (`held=2`) and forwards the
+   original call, so a dead or stalled controller never pins a window.
+2. A controller polls its gate right (`mach_port_type`) and exits when the gate
+   dies instead of racing a successor.
+3. Owner death is reclaimed by the next verified HELLO (above).
+4. The kill switch refuses injection before anything is touched:
+   `sudo touch /Library/GPUBundles/ShojiWindowServerProbe/DISABLED`
+   (`lifecycle/sentinel.swift`), or `SHOJI_WINDOWSERVER_DISABLE=1`. It does not
+   unload a resident payload; it takes effect at the next WindowServer start.
 
-Validated in the disposable guest on 2026-10-30 and 2026-10-31:
+Do not unhook live code or retry injection blindly after a crash: keep the
+crash report, set the kill switch, restart WindowServer and attach again.
 
-- WindowServer loaded the observer at a known image base and remained healthy.
-- The payload installed a two-phase inline absolute jump. No nearby allocation
-  or unsafe code cave was used.
-- The first word was temporarily changed to `B .` under an all-other-threads
-  barrier; after callers parked only at the entry, the complete 16-byte jump was
-  published and the barrier released.
-- `SLSOrderWindow` from a guest trigger reached the observer. In one clean run,
-  calls changed from 57 to 59; the new events were window `75`, operation `1`
-  and window `75`, operation `0`, both returning `0`.
-- Timestamped events record Mach time before and after the forwarded original.
-- A targeted gate can hold one window ID before forwarding. A hidden trigger
-  window existed in the window list during the hold with
-  `kCGWindowIsOnscreen=false` and zero bounds.
-- External `hold <window-id>` and `release` control requests work through the
-  bounded control thread. A released hold records `held=1`; a missing release
-  records `held=2`, times out, and forwards the original call rather than
-  hanging WindowServer.
-- The latest clean install used 21 threads and left WindowServer running after
-  release and timeout runs. With the 1 ms control poll, a release already
-  written before the callback enters completes with `held=1` and a duration of
-  23,907 Mach ticks. A missing release records `held=2`, times out, and then
-  forwards normally.
-- Barrier retry diagnostics identified the transient failure precisely: a
-  suspended thread had not yet reported a stopped/waiting state before the old
-  1,000-cycle spin expired. The current barrier waits up to 20 ms per thread.
-- A compiled visibility sampler (2 ms CGWindowList cadence, Mach timestamps)
-  replaced `swift -e`, whose compile latency missed every transition. A
-  run-loop-pumped AppKit trigger window goes onscreen ~38.5k ticks (~1.6 ms)
-  after the unheld ordering call; without pumping, AppKit emits no ordering
-  call at all and the window never becomes visible. Raw `SLSOrderWindow` on a
-  never-ordered-in AppKit window leaves it `onscreen=false` with zero bounds.
-- Gated visibility run (window 76): the ordering call held 14,828,413 ticks
-  (~618 ms), was released externally, and forwarded with `result=0`. Every
-  sampler observation completing during the hold showed `onscreen=false`. One
-  query issued ~63k ticks into the hold blocked for ~656 ms and returned only
-  ~41 ms after the forward, already showing `onscreen=true` with real bounds:
-  the held call stalls dependent window-list service, so no observer can see
-  post-ordering state during the hold. The window-list visibility transition
-  is gated by the release; pixel-level presentation remains unproven.
-- Control-channel defects were observed live and fixed in the cctor13 build:
-  a stale request file re-armed/re-executed every 1 ms poll; the hold claim
-  was a racy load-then-store (now a single atomic exchange); the timeout
-  counted `usleep` iterations and overslept 3 s into 4.8 s (now a
-  `mach_absolute_time` deadline); bulk event copies could tear against the
-  writer (now per-event seqlock with a `torn` counter, response version 3);
-  response writes truncated in place and a reader copied 0 bytes mid-rewrite
-  (now published by rename).
-- cctor13 validation (fresh WindowServer, PID 90073): one `dump` produces one
-  response write; each hold produces exactly one held event (no rearm);
-  released hold 590.4 ms with `held=1`; timeout 3.002 s against the 3.000 s
-  deadline with `held=2`; 10/10 racing response copies complete; `torn=0`;
-  WindowServer healthy with no new crash reports.
-- Pixel-level verification (ScreenCaptureKit, per-window stream, n=3):
-  externally released holds of 601–622 ms presented **zero complete frames**
-  of the held window inside the hold window; the first complete frame
-  landed 38–43 ms after each forward (baseline: 119 ms unheld, virtual-
-  display cadence). The gate holds actual presentation for the intra-space
-  z-order channel, per WindowServer's own display-time metadata.
-- Static coverage map (2,569 visibility-relevant functions):
-  the hook fully covers intra-space z-order visibility, but space
-  membership/switching, surface bind/opacity/bounds, and window
-  bounds/transform bypass it — all transaction-mediated via
-  `PKGTransactionCommit` (four XPC commit endpoints, indirect dispatch).
+## macOS updates
 
-Evidence:
+Exact-build checks make an OS update fail safe. The loader and payload verify
+the SkyLight image UUID and the hooked entry bytes; a mismatch installs
+nothing, the adapter finds no gate (`Absent`) and Shoji uses native paths.
+`shoji --ws-report` then shows `payload supports 26B123: no`.
 
-- `artifacts/vm-probe/ws-existing-hook-events-20261030-175037/`
-- `artifacts/vm-probe/ws-sls-delta-20261030-175458/delta.json`
-- `artifacts/vm-probe/ws-timed-delta-live-20261030-184210/delta.json`
-- `artifacts/vm-probe/ws-hold-visibility-sample-20261031-111348/`
-- `artifacts/vm-probe/ws-gate-release-final-20261031-143821/`
-- `artifacts/vm-probe/ws-gate-timeout-20261031-143838/`
-- `artifacts/vm-probe/ws-gate-wait-staged-20261031-192837/`
-- `artifacts/vm-probe/ws-gate-lowlatency-final-20261031-212932/`
-- `artifacts/vm-probe/ws-visibility-gated-20261101-131239/`
-- `artifacts/vm-probe/ws-gate-hardened-staged-20261101-132853/`
-- `artifacts/vm-probe/ws-gate-hardened-result-20261101-140003/`
+Porting a new build:
 
-## Response format (version 3)
+1. `rea/port-build.swift BUILD DYLD_CACHE` writes `model.json` (UUID, entry
+   bytes, dispatch table, op map). Ghidra is needed only when the diff shows
+   changes.
+2. `rea/diff-build.swift REF_TAG NEW_TAG` prints `PORT CLEAN` or `PORT NEEDED`
+   with the changed fields. Never copy offsets forward on static analysis alone.
+3. Update the build constants (`target.odin`, `gate_expected.odin`,
+   `WS_SUPPORTED_BUILD`), then run `task test` and the ABI selftests
+   (`task build:windowserver-abi-selftest`, `build:windowserver-hook-selftest`).
+4. Live acceptance: `task windowserver:live -- trust`, then `run` and `daemon`.
+5. Mark the build supported only after step 4 passes.
+
+## Diagnostics
+
+`shoji --ws-report [DIR]` prints the macOS build against the supported build,
+the kill switch, payload sha256 and residency, this binary's CDHash, allowlist
+trust and membership, and the gate state. With `DIR` it also exports the event
+ring (`ws-ring.bin` and decoded `ws-ring.json`), through the daemon
+(`debug ws dump`) when the daemon owns the gate, otherwise by claiming the gate
+briefly.
+
+`tools/window-interception/lifecycle/report.swift PATH/response.bin` decodes a
+saved ring offline with the same refusal rules (truncated, torn and
+inconsistent snapshots are refused). Keep credentials and SSH keys out of
+diagnostic bundles.
+
+### Ring format (version 3)
 
 40-byte header: `magic[8]`, `version`, `calls`, `entry`, `branch_word` (u64
 each), then `timebase_numer`, `timebase_denom`, `torn` (u32 each) and 4 bytes
@@ -146,45 +115,36 @@ of alignment padding. Then 256 events of 104 bytes: `sequence`, `connection`,
 `sequence` is zero for empty or dropped (torn) slots and is published last by
 the writer; `held` is 0 normally, 1 when externally released, 2 on timeout.
 
-Earlier failures and crash reports are retained. The most important were a
-`pthread_create` pointer-authentication failure, a wrong 48-bit strip mask,
-failed constructor execution, duplicate invocation overwriting status, and
-transient thread-barrier entry failure. The working loader resolves
-`shoji_ws_observer_start` with `dlsym`, reports `dladdr` on that symbol, calls
-it through a same-section `BLRAA` helper, retries bounded barrier entry, and
-uses a one-shot start guard. Local self-injection validates the explicit path
-before WindowServer use.
+## What the experiment established
 
-## Boundaries
+The gate began as a disposable VM experiment on 26A434 (October 2026). Its
+conclusions still shape the design:
 
-- The gate is proven to delay a matching ordering call before forwarding, the
-  delayed call effects the window-list visibility transition, and no
-  complete frame of the held window is presented during the hold
-  (ScreenCaptureKit display-time metadata, virtual-display guest).
-  Display-time metadata is not physical scanout; capture can omit frames.
-- Coverage is limited to the intra-space z-order channel. Space switches,
-  surface updates and bounds/transform changes use separate
-  transaction-mediated paths and are not gated.
-- A complete presentation gate for all channels would need the commit-seam
-  or per-family mutator hooks; that choice needs dispatch analysis of
-  `PKGTransactionCommit`.
-- The payload and hook are resident until WindowServer exits; no live unhook
-  is claimed.
-- The current VM has a live observer. Do not run another observer build in the
-  same WindowServer session; restart the disposable session first.
-- Production use would need a completely different support, recovery, update
-  and code-signing story. SIP must not be disabled on a user machine for
-  Shoji.
+- The hook is a two-phase inline absolute jump published under an
+  all-other-threads barrier (first word `B .`, then the full 16 bytes). Barrier
+  entry accepts suspended threads that are stopped, waiting, halted or in an
+  uninterruptible wait, bounded at 20 ms per thread.
+- Ordering-callback work stays in memory; file I/O runs on a separate control
+  thread. Event copies use a per-event seqlock, responses are published by
+  rename, and hold deadlines use `mach_absolute_time`.
+- A held `CGXOrderWindowListSpaceSwitchOptions` call holds presentation:
+  ScreenCaptureKit saw zero complete frames of the held window during
+  600 ms holds, and the first frame landed 38–43 ms after release.
+- The ordering hook covers intra-space z-order only. Space switches, surface
+  updates and bounds/transform changes go through `PKGTransactionCommit`,
+  which is why the payload also gates the transaction dispatch table.
+- Earlier failures worth remembering: a `pthread_create` pointer-authentication
+  fault, a wrong 48-bit strip mask, duplicate invocation overwriting status,
+  and a stale request file re-arming every poll.
 
 ## Build
 
 ```sh
-task build:windowserver-ordering-observer
+task build:windowserver-payload           # bin/shoji-ws.dylib (production)
+task build:windowserver-ordering-observer # harness build with the client pinned
 task build:windowserver-ordering-trigger
 task build:windowserver-visibility-sampler
-task loader
 ```
 
-The payload build is intentionally ad-hoc signed for the disposable guest.
-The loader's `--self-test-windowserver-payload` mode validates explicit symbol
+The loader's `--self-test-windowserver-payload` mode validates symbol
 invocation in its own process before any WindowServer run.

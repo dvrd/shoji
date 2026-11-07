@@ -6,8 +6,8 @@ run must not be interpreted as feature parity.
 
 Reference: asmvik/yabai `dd845723416f5fe92af49fad5ebab00369e07edd`.
 
-The active validation target is **macOS 15.6 (24G84), arm64**. Other releases are
-outside this validation milestone.
+The target is **macOS 27.2 (26B123), arm64**. Earlier milestones were validated
+on macOS 15.6 (24G84); other releases are not validated.
 Dock injection is all-Odin. On arm64, `shoji --load-sa` spawns `bin/shoji-loader`, an Odin arm64e companion built with the compiler patch in `tools/odin-arm64e.patch` (header normalized to arm64e ABI v0 before ad-hoc signing); the kernel refuses remote thread creation in the arm64e Dock from a plain arm64 process, so the companion is required — upstream yabai likewise uses a separate arm64e loader. Intel Shoji injects in-process. The former MIT-licensed Objective-C loader (`loader_arm64e.m`) was removed after the Odin loader passed live Dock injection on 2026-10-05 on macOS 15.6 / Apple M1 Max. See [the arm64e notes](tools/ARM64E.md).
 
 ## Implemented
@@ -75,9 +75,9 @@ from yabai's event queue and notification processing.
 
 ## Mouse implementation
 
-`src/layout_input.odin` handles global settings, anchored resize geometry, ancestor
-split selection and cross-Space drop mutations. `src/input.odin` owns
-the session event tap and click replay; it coalesces drag points for processing
+`src/pointer_drag.odin` handles anchored resize geometry, ancestor split
+selection and cross-Space drop mutations; `src/gesture_routing.odin` routes
+gestures. `src/pointer_input.odin` owns the session event tap and click replay; it coalesces drag points for processing
 outside the callback. `autoraise` uses Accessibility; `autofocus` uses the Dock
 focus handler. Mouse follows focus avoids warping after a hover-driven focus.
 Insertion and drag feedback plans are rendered using daemon-owned click-through
@@ -93,7 +93,7 @@ posting events to macOS.
 
 ## Dock implementation
 
-`src/addition/loader` implements Mach allocation/protection, remote thread creation,
+`src/inject` implements Mach allocation/protection, remote thread creation,
 arm64 thread-state conversion, pointer signing, pthread bootstrap and completion
 tracking. The worker detaches itself and publishes the load result, then a separate
 completion flag after its final shared-data access. Failed loads wait for the
@@ -104,7 +104,7 @@ the worker may still be returning through it. Uncertain timeout/failure paths
 retain all buffers to prevent use-after-free.
 `__shoji_boot` contains compiler-generated Odin code, not copied assembly blobs.
 
-`src/addition/payload` implements all 19 upstream operation families plus a tracked
+`src/payloads/dock` implements all 19 upstream operation families plus a tracked
 Space-creation validation extension, with a
 Shoji-specific versioned protocol, bounded reads, statuses and main-thread Dock
 operations. Fades run on the main queue rather than using upstream's worker/barrier

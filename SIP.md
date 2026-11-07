@@ -1,11 +1,14 @@
-# SIP and Dock setup
+# Privileged setup: SIP, Dock and WindowServer
 
-Shoji's optional Dock payload provides native Space operations and some window
-effects. Basic window management does not require it. Loading the payload
-requires changing macOS security settings; disabling System Integrity Protection
-(SIP) reduces protections for the entire Mac. Only enable this if you accept that
-tradeoff. Compatibility is version-specific; macOS 27 has not been fully
-validated.
+Shoji has two optional payloads. Basic window management needs neither.
+
+- The **Dock payload** provides native Space operations and some window effects.
+- The **WindowServer gate** lands layout changes in a single frame.
+
+Loading either requires disabling System Integrity Protection (SIP), which
+reduces protections for the entire Mac, plus one narrow sudoers rule each. Only
+enable them if you accept that tradeoff. Both are exact-version: on an
+unsupported build they refuse to load and Shoji uses its native paths.
 
 ## Disable SIP
 
@@ -60,3 +63,35 @@ options again when running `service install`. The service runs as your user;
 do not start it with `sudo`. If loading fails, check
 `~/Library/Logs/shoji/shoji.err.log`. Loading modifies Dock's running process;
 unsupported macOS versions can cause Dock to crash or restart.
+
+## Enable the WindowServer gate
+
+Supported on macOS 27.2 (26B123) only. Install the payload root-owned:
+
+```sh
+task install:windowserver
+```
+
+It prints the sudoers line for `shoji --ws-attach`, which also takes no
+arguments. Add it to the same `/etc/sudoers.d/shoji` file:
+
+```text
+YOUR_USERNAME ALL=(root) NOPASSWD: /absolute/path/to/Shoji.app/Contents/MacOS/shoji --ws-attach
+```
+
+Then enable it from shojirc:
+
+```sh
+shoji -m config windowserver_gate on
+```
+
+The daemon attaches in the background and retries transient failures;
+`shoji service status` shows the `gate` row and its cause. The payload stays
+loaded until WindowServer exits. Logging out does not restart WindowServer, so
+installing a new payload takes effect after `sudo killall -9 WindowServer`
+(this logs you out).
+
+Kill switch: `sudo touch /Library/GPUBundles/ShojiWindowServerProbe/DISABLED`
+refuses every later attach. It does not unload a payload that is already
+loaded. Details, recovery and diagnostics (`shoji --ws-report`) are in the
+[payload README](src/payloads/windowserver/README.md).

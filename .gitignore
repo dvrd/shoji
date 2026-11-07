@@ -5,7 +5,7 @@ dist/
 bin/
 artifacts/
 __pycache__/
-docs/
+docs/local/
 
 *.dSYM/
 

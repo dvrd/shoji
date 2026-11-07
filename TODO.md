@@ -7,7 +7,7 @@ other window manager feature must be implemented. Items remain open until the
 specified evidence exists. Historical test results are not a substitute for
 revalidating the release candidate.
 
-The current daily-use validation target is macOS 15.6 (24G84) on Apple Silicon.
+The daily-use target is macOS 27.2 (26B123) on Apple Silicon.
 Some owned-window and Space checks have passed there; they do not establish
 complete production readiness. See [port status](PORTING.md) for
 context. Some historical notes contain stale paths or point to local, untracked
