@@ -163,9 +163,8 @@ ws_report_cli :: proc(args: []string) -> int {
 	build := attach.os_build()
 	fmt.printf("macOS build: %s (payload supports %s: %s)\n", build, WS_SUPPORTED_BUILD, build == WS_SUPPORTED_BUILD ? "yes" : "no")
 
-	disable_env := os.get_env(WS_DISABLE_ENV, context.temp_allocator) == "1"
 	sentinel := os.exists(attach.WS_DISABLE_SENTINEL)
-	fmt.printf("kill switch: %s (env %v, sentinel %v)\n", disable_env || sentinel ? "ON" : "off", disable_env, sentinel)
+	fmt.printf("kill switch: %s (%s)\n", sentinel ? "ON" : "off", attach.WS_DISABLE_SENTINEL)
 
 	if payload, _, ok := attach.read_limited(attach.WS_PAYLOAD_PATH, 64 << 20); ok {
 		ctx: sha2.Context_256
@@ -202,23 +201,15 @@ ws_report_cli :: proc(args: []string) -> int {
 	if text, reached := daemon_request({"debug", "ws", "dump"}); reached {
 		fmt.printf("daemon: %s\n", text)
 		dumped = strings.contains(text, "ring=")
-	} else if disable_env || sentinel {
-		fmt.println("gate: not contacted (kill switch)")
 	} else {
-		// No daemon: claim briefly. A live owner refuses us; that is reported.
-		a: Ws_Adapter
-		ws_adapter_open(&a, true)
-		fmt.printf("gate (direct claim): %s\n", ws_adapter_describe(&a))
-		if calls, ok := ws_dump(&a); ok {
-			fmt.printf("gate: %d forwarded calls\n", calls)
-			dumped = true
-		}
-		ws_adapter_close(&a)
+		// Only the daemon holds the gate (through --ws-attach); the report never
+		// claims it, so it cannot disturb a later attach.
+		fmt.println("gate: not contacted (no running daemon)")
 	}
 
 	if out_dir == "" {return 0}
 	if !dumped {
-		fmt.println("event ring: not exported (gate not reachable)")
+		fmt.println("event ring: not exported (needs a daemon serving the gate)")
 		return 1
 	}
 	raw, st, ok := attach.read_limited(WS_RING_PATH, WS_RING_SIZE)

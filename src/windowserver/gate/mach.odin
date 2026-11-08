@@ -82,18 +82,14 @@ MACH_MSG_TYPE_MAKE_SEND :: 20
 MACH_MSG_PORT_DESCRIPTOR :: 0
 MACH_PORT_TYPE_SEND :: 0x00010000
 
-// Reversed rendezvous is dead on macOS 27: WindowServer is denied both
-// bootstrap_register and bootstrap_look_up (1100 BOOTSTRAP_NOT_PRIVILEGED,
-// proven live 2026-11-03; see artifacts/vm-probe/
-// lookup-trace-20261103/). The working rendezvous is a task-port handoff:
-// a root helper copies a send right out of WindowServer's task
-// (mach_port_extract_right COPY_SEND on the gate port published in the
-// tgate status file) and inserts it into the requesting client's task.
-// The client requests the handoff through these files; the response names
-// the inserted right. Authorization stays the audit-token HELLO; possession
-// of the send right alone grants nothing beyond first-HELLO-wins ownership.
-GATE_HANDOFF_REQUEST_PATH :: "/private/tmp/shoji-gate-handoff-request"
-GATE_HANDOFF_RESPONSE_PATH :: "/private/tmp/shoji-gate-handoff-response"
+// WindowServer itself is denied bootstrap_register and bootstrap_look_up on
+// macOS 27 (1100 BOOTSTRAP_NOT_PRIVILEGED, proven live 2026-11-03), so the
+// gate is never looked up by name. `shoji --ws-attach` (root) copies a send
+// right out of WindowServer's task (mach_port_extract_right COPY_SEND on the
+// gate port published in the tgate status file) and sends it to the daemon's
+// session rendezvous (GATE_RENDEZVOUS_NAME), which the daemon registered.
+// Authorization stays the audit-token HELLO; possession of the send right
+// alone grants nothing beyond first-HELLO-wins ownership.
 
 // mach_msg_port_descriptor_t: name, pad1, pad2(u16), disposition(u8), type(u8).
 // Little-endian bitfield order matches this packed layout.

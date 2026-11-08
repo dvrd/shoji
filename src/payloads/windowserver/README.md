@@ -20,7 +20,7 @@ every refused or failed state, falls back to Shoji's native Accessibility paths.
    See [SIP.md](../../../SIP.md) for the privileged setup.
 2. `shoji -m config windowserver_gate on` (in shojirc) makes the daemon run
    `sudo -n shoji --ws-attach` in the background; the config run never waits.
-   Outside the daemon, `SHOJI_WS_ADAPTER=1` opts a process in.
+   This is the only way a process connects to the gate.
 3. `--ws-attach` (root, no arguments) refuses on the `DISABLED` sentinel, another
    build, or a payload/directory writable by anyone but root. It injects unless
    the status file proves this WindowServer already serves a gate, adds its own
@@ -75,7 +75,7 @@ Recovery is bounded at every level:
 3. Owner death is reclaimed by the next verified HELLO (above).
 4. The kill switch refuses injection before anything is touched:
    `sudo touch /Library/GPUBundles/ShojiWindowServerProbe/DISABLED`
-   (remove it to re-enable), or `SHOJI_WINDOWSERVER_DISABLE=1`. It does not
+   (remove it to re-enable). It does not
    unload a resident payload; it takes effect at the next WindowServer start.
 
 Do not unhook live code or retry injection blindly after a crash: keep the
@@ -113,9 +113,9 @@ Porting a new build uses `spelunker-port` from the separate spelunker project
 `shoji --ws-report [DIR]` prints the macOS build against the supported build,
 the kill switch, payload sha256 and residency, this binary's CDHash, allowlist
 trust and membership, and the gate state. With `DIR` it also exports the event
-ring (`ws-ring.bin` and decoded `ws-ring.json`), through the daemon
-(`debug ws dump`) when the daemon owns the gate, otherwise by claiming the gate
-briefly.
+ring (`ws-ring.bin` and decoded `ws-ring.json`) through the daemon
+(`debug ws dump`); without a daemon serving the gate it reports the gate as not
+contacted and never claims it.
 
 The decoder refuses truncated, torn and inconsistent snapshots. Keep
 credentials and SSH keys out of diagnostic bundles.
