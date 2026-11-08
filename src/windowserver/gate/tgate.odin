@@ -12,7 +12,7 @@ foreign import gate_system "system:System"
 
 TGATE_MAGIC :: [8]u8{'W', 'S', 'O', 'B', 'T', 'G', 'A', 'T'}
 // Version 4 adds windowserver_pid; older files cannot be tied to a server.
-TGATE_VERSION :: 4
+TGATE_VERSION :: 5
 
 Tgate_Status :: struct {
 	magic:                                        [8]u8,
@@ -23,7 +23,6 @@ Tgate_Status :: struct {
 	protect_code:                                 i64,
 	mach_port, owner_pid:                         u64,
 	mach_code:                                    i64,
-	bootstrap_port, handshake_sent:               u64,
 	dispatch_site, table_copy:                    u64,
 	windowserver_pid:                             u64,
 }
