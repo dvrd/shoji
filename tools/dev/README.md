@@ -7,8 +7,8 @@ focused tools. Taskfile remains the normal interface for building Shoji.
 ./bin/dev signing setup
 ./bin/dev signing check
 ./bin/dev signing sign bin/shoji.new --install bin/shoji
-./bin/dev toolchain --patch-only
-./bin/dev build-arm64e "$PWD/.toolchain/Odin"
+./bin/dev toolchain
+./bin/dev build-arm64e
 ./bin/dev package --version local
 ./bin/dev clean --dry-run
 ```

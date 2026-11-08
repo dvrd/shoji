@@ -27,10 +27,15 @@ modified; the compiler is built in a temporary directory.
 
 ```sh
 task build:dev
-./bin/dev build-arm64e "$(odin root)"
+./bin/dev build-arm64e
 task build         # payload + loader + executable
 task test:loader   # in-process self-test of the arm64e loader
 ```
+
+`build-arm64e` downloads commit `37d8ab08f`, applies the patches in a temporary
+directory, writes `bin/odin-arm64e`, and deletes the download. Pass a git
+checkout that already contains that commit to skip the download. The kept
+library root is `core` and `base` under `.toolchain/Odin`.
 
 Set `LLVM_CONFIG` for the compiler build if LLVM is not found automatically.
 `ODIN_ARM64E` and `ODIN_ARM64E_ROOT` Task variables can select another patched

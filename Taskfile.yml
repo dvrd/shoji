@@ -91,10 +91,10 @@ tasks:
   build:tools:amd64:
     deps: [build:dev:amd64, build:inspector:amd64, build:harness:amd64]
   compiler:arm64e:
-    desc: Build the isolated arm64e compiler using the pinned source checkout
+    desc: Fetch the pinned Odin commit, patch it, and build bin/odin-arm64e
     deps: [build:dev]
     cmds:
-      - ./bin/dev build-arm64e '{{.ODIN_LIBRARY_ROOT}}'
+      - ./bin/dev build-arm64e
   signing:setup:
     deps: [build:dev]
     desc: Create a persistent local code-signing identity (one-time Keychain setup)
@@ -107,7 +107,7 @@ tasks:
       - ./bin/dev signing check
   toolchain:
     deps: [build:dev]
-    desc: Isolate the pinned Odin libraries from the shared compiler checkout
+    desc: Keep the pinned compiler, core, and base. Sources are fetched only to rebuild.
     cmds:
       - './bin/dev toolchain'
   validate:
@@ -130,7 +130,7 @@ tasks:
       - task: build:inspector
       - |
         if [ ! -x bin/odin-arm64e ]; then
-          ./bin/dev build-arm64e '{{.ODIN_LIBRARY_ROOT}}'
+          ./bin/dev build-arm64e
         fi
       # The service and the --ws-attach sudoers rule run bin/Shoji.app, so
       # install refreshes the bundle too (build:app builds the runtime first).
