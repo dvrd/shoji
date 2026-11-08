@@ -55,6 +55,10 @@ Window :: struct {
 	ax_stale: bool,
 	// Inactive tab hidden through the Dock payload (not drawn, not hit-tested).
 	concealed: bool,
+	// Parked frame clipped to the viewport. Coords are window-local. Cleared
+	// once the frame sits fully inside again.
+	viewport_clipped: bool,
+	clip_x, clip_y, clip_w, clip_h: i32,
 	// The payload refused to conceal; retried once the window is active again.
 	conceal_refused: bool,
 	manage_override: Maybe(bool),
@@ -212,6 +216,9 @@ Manager :: struct {
 	// Frame-atomic position batch through the WindowServer gate (C1). Called with backend_user;
 	// true only when every move was applied. Nil → per-window frames.
 	layout_batch: Layout_Batch,
+	// Dock presentation for viewport clip. Nil skips it (tests, no payload).
+	present: proc(user: rawptr, req: dock.Present_Request) -> string,
+	clip_noted: bool,
 	// While set, scroll_camera_apply stores moves instead of sending them.
 	// layout_frame_submit sends those moves and any owned surfaces together.
 	camera_hold: bool,
@@ -951,6 +958,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		d.window.ax_stale = false
 	}
 	tab_conceal_sync(m, s)
+	viewport_clip_sync(m, s)
 	for _, w in m.windows {
 		if w.space == s.id {
 			w.size_feedback_reflow = false
@@ -995,6 +1003,49 @@ conceal_payload_changed :: proc(m: ^Manager) {
 tab_conceal_sync :: proc(m: ^Manager, s: ^Space) {
 	conceal_payload_changed(m)
 	for pass in ([2]bool{false, true}) {tab_conceal_pass(m, s, pass)}
+}
+
+// Clip the parked frame to this space's viewport. Parking keeps a sliver on
+// the current display; the clip hides the part that would spill onto the next
+// one, and drops hit-testing there too. A frame that fits again restores the
+// full window-local rect. An unchanged rect is not sent.
+viewport_clip_sync :: proc(m: ^Manager, s: ^Space) {
+	if m.present == nil || s.view.layout != .Scroll {return}
+	viewport := s.view.scroll.viewport
+	for _, win in m.windows {
+		if win == nil || win.space != s.id || !managed(win) || win.concealed {continue}
+		x, y, w, h, partial := layout.viewport_clip(win.frame, viewport)
+		kind: u8 = 1
+		if partial && (w <= 0 || h <= 0) {
+			kind = 0
+			x, y, w, h = 0, 0, 0, 0
+		} else if !partial {
+			if !win.viewport_clipped {continue}
+			x, y = 0, 0
+			w = i32(math.round(win.frame.w))
+			h = i32(math.round(win.frame.h))
+			if w <= 0 || h <= 0 {continue}
+		}
+		if win.viewport_clipped == partial &&
+		   win.clip_x == x && win.clip_y == y && win.clip_w == w && win.clip_h == h {
+			continue
+		}
+		req := dock.Present_Request {
+			window = win.id,
+			mask = dock.PRESENT_CLIP | dock.PRESENT_EVENT,
+			event_kind = kind,
+			x = x, y = y, w = w, h = h,
+		}
+		if err := m.present(m.backend_user, req); err != "" {
+			if !m.clip_noted {
+				m.clip_noted = true
+				fmt.eprintln("shoji: viewport clip:", err)
+			}
+			continue
+		}
+		win.viewport_clipped = partial
+		win.clip_x, win.clip_y, win.clip_w, win.clip_h = x, y, w, h
+	}
 }
 
 tab_conceal_pass :: proc(m: ^Manager, s: ^Space, conceal: bool) {

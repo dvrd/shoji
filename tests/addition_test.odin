@@ -73,6 +73,16 @@ addition_protocol_rejects_truncation_and_trailing_bytes :: proc(t: ^testing.T) {
 	req.event_kind = 1
 	req.w = 0
 	testing.expect(t, !dock.present_valid(req))
+	req.mask = dock.PRESENT_CLIP | dock.PRESENT_EVENT
+	req.event_kind = 1
+	req.w = 40
+	req.h = 20
+	testing.expect(t, dock.present_valid(req))
+	req.mask = dock.PRESENT_CLIP
+	req.event_kind = 0
+	testing.expect(t, dock.present_valid(req))
+	req.mask = 16
+	testing.expect(t, !dock.present_valid(req))
 	packet = dock.begin(.Window_List_To_Space)
 	dock.pack(&packet, u64(123));dock.pack(&packet, i32(2));dock.pack(&packet, u32(7))
 	testing.expect(t, !dock.validate(.Window_List_To_Space, dock.finish(&packet)[3:]))

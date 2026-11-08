@@ -374,6 +374,7 @@ state_init :: proc(state: ^State) {
 	state.connection = SLSMainConnectionID()
 	state.dirty = true
 	manager_init(&state.manager, perform_native, state)
+	state.manager.present = viewport_present
 	state.manager.resize_fade = true
 	state.manager.scroll_animate = true
 	state.manager.scroll_frame_pacing = true

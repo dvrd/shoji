@@ -211,14 +211,14 @@ sync, offscreen render, capture, protocol. "Protocol" means Wayland client state
 ## Top gaps by Niri-experience value
 
 1. **Per-frame motion batch (#3, #28, #11).** Smoothness is the main complaint
-   in user acceptance. The gate can already apply moves atomically, but Shoji
-   never uses it during animation.
+   in user acceptance. The gate applies a camera frame in one `LayoutSubmit`
+   (E2, unit tests). Measuring commit-to-present against the display link is F1.
 2. **Foreign clip, alpha and event shape (#9, #10, #42).** These decide whether
    a viewport strip is clean, whether tabs are truly hidden, and whether
    off-screen windows can receive clicks. `PresentApply` can hold the ops.
-   Dock `Window_Present` issues system alpha, event shape and transform in one
-   transaction (unit tests; not live-checked). Clip and shape are held and
-   still have no issuer. Viewport clipping is E4.
+   Dock `Window_Present` issues system alpha, event shape, transform and global
+   clip in one transaction (unit tests; not live-checked). Shape 0x0b is held
+   and still has no issuer. Viewport clipping is E4 and is not live-checked.
 3. **Transform op (#17, #18, #26).** Unlocks the overview, vertical workspace
    slides and the open animation. Whether input maps through a transform is
    unknown.
@@ -247,9 +247,9 @@ builds.
 | --- | --- | --- |
 | E1 | **Done 2026-11-08 (unit tests; no live WindowServer run).** `Capabilities` appends this build's SkyLight UUID and `GATED_OPS`. A trailer that does not match turns gate features off. A reply of exactly `GATE_MSG_SIZE` still honors the feature bit and the item limit. Dock capabilities stay a separate handshake. | A foreign UUID or op set leaves layout features off. An older payload without the trailer keeps working. |
 | E2 | **Done 2026-11-08 (unit tests; no live frame capture).** One held camera frame sends window moves, focus-ring bars and tab indicators in one `LayoutSubmit`, placed from the layout frame. `LAYOUT_LIMIT` is 72. Size changes stay per window. The hold budget stays 8000 µs. Frame-clock alignment is F1. | A held camera tick does not submit until that frame's ring and indicators are queued. A payload that rejects the combined submit still batches the windows. |
-| E3 | **Partial 2026-11-08 (unit tests; no live WindowServer or Dock run).** `PresentApply` holds 0x03, 0x05, 0x0b, 0x0e, 0x0f, 0x2f and 0x45. Dock `Window_Present` issues system alpha (0x0e), event shape (0x45) and transform (0x0f) in one transaction, and restores them when the client exits. Clip (0x2f/0x05) and shape (0x0b) are held but not issued: no confirmed Dock symbol. A Dock restart drops the restore map. | A payload without `GATE_FEATURE_PRESENT` still sends the Dock transaction. The daemon releases the hold when that send returns. |
-| E4 | **Viewport clipping (B01)** using E3 | Checklist B01 passes on one display and on two physical displays. |
-| E5 | **Journal done 2026-11-08 (unit tests; no live Dock restart).** The payload writes `{window, owner, client}` and a boot id to `/tmp/shoji-concealed_<uid>.json`, reloads it on start, and bumps the boot id once per process. A new boot clears `conceal_refused`. Corners, shadows, dialogs and application-driven ordering (B02) stay open. Clip and shape stay unissued. | After a Dock restart the payload still watches concealed windows. A same-boot rewrite does not retry a refused conceal. B02's visual checks remain open. |
+| E3 | **Partial 2026-11-08 (unit tests; no live WindowServer or Dock run).** `PresentApply` holds 0x03, 0x05, 0x0b, 0x0e, 0x0f, 0x2f and 0x45. Dock `Window_Present` issues system alpha (0x0e), event shape (0x45) and transform (0x0f) in one transaction, and restores them when the client exits. Shape (0x0b) is held but not issued. Global clip (0x05) is issued by E4. A Dock restart drops the restore map. | A payload without `GATE_FEATURE_PRESENT` still sends the Dock transaction. The daemon releases the hold when that send returns. |
+| E4 | **Partial 2026-11-08 (unit tests; no live WindowServer or Dock run).** `SLSTransactionSetWindowGlobalClipShape` is present and its prologue matches event shape on 26B123, so the Dock transaction sets it with the same region as the event shape. The parked frame's intersection with the viewport is that region. `scroll_park_frame` stays. B01 is not checked. | One display and two physical displays still need a live pass. A wrong ABI can crash Dock; tests never send the call. |
+| E5 | **Journal done 2026-11-08 (unit tests; no live Dock restart).** The payload writes `{window, owner, client}` and a boot id to `/tmp/shoji-concealed_<uid>.json`, reloads it on start, and bumps the boot id once per process. A new boot clears `conceal_refused`. Corners, shadows, dialogs and application-driven ordering (B02) stay open. Shape 0x0b stays unissued. Global clip is E4. | After a Dock restart the payload still watches concealed windows. A same-boot rewrite does not retry a refused conceal. B02's visual checks remain open. |
 | E6 | **Dialog and floating relationships (P05)**: level, sublevel, ordering groups (0x59–0x5b) and movement groups (0x55–0x57) | Sheets, modals and popovers follow their owner during E2 motion and are never hidden behi
 
 ### Phase F: synchronization

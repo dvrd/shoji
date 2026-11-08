@@ -730,12 +730,17 @@ gate_present_mask_selects_only_issued_ops :: proc(t: ^testing.T) {
 		for gated in gate.GATED_OPS {if gated == op {found = true}}
 		testing.expect(t, found)
 	}
-	mask := gate.present_stage_mask(true, true, false)
+	mask := gate.present_stage_mask(true, true, false, false)
 	testing.expect(t, gate.present_claims(0x0e, mask))
 	testing.expect(t, gate.present_claims(0x45, mask))
 	testing.expect(t, !gate.present_claims(0x0f, mask))
 	testing.expect(t, !gate.present_claims(0x2f, mask))
+	testing.expect(t, !gate.present_claims(0x05, mask))
 	testing.expect(t, !gate.present_claims(0x41, mask))
+	clipped := gate.present_stage_mask(false, false, false, true)
+	testing.expect(t, gate.present_claims(0x05, clipped))
+	testing.expect(t, gate.present_claims(0x2f, clipped))
+	testing.expect(t, !gate.present_claims(0x0b, clipped))
 	testing.expect(t, !gate.present_claims(0x0e, 0))
 	testing.expect(t, !gate.present_claims(0x0e, gate.PRESENT_MASK + 1))
 }
