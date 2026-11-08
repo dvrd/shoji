@@ -91,7 +91,7 @@ no effect).
 | Shadow | 0x48, 0x71, 0x49, 0x53 | [static] |
 | Corner mask and radius | 0x4a; 0x69–0x6f | [static] |
 | Frame sync | `SLSDisableUpdate`/`SLSReenableUpdate` on Shoji's connection only (`src/display_clock.odin`). The four commit endpoints include `sls_transaction_commit_ca`. No vsync or frame-cl
-| Capture | `SLSHWCaptureWindowList` (`src/animation.odin`, `src/resize_transition.odin`); ScreenCaptureKit in `tools/harness/capture-probe` | [live] |
+| Capture | `SLSHWCaptureWindowList` (`src/animation.odin`, `src/resize_transition.odin`) | [live] |
 
 ## Classification
 
@@ -120,7 +120,7 @@ sync, offscreen render, capture, protocol. "Protocol" means Wayland client state
 | 5 | P04: focus ring | Compositor-drawn | Shoji-owned surfaces [live]. Staying aligned during motion depends on E2. | COV (partial) |
 | 6 | P05: parent-aware dialogs and floating layer | Z-order and transient parent | 0x06 level (gated); 0x0c/0x0d sublevel; 0x59–0x5b ordering groups; 0x55–0x57 movement groups so children follow the parent [static]. Doc
 | 7 | P06: fullscreen and maximize semantics | Protocol | AX `AXFullScreen` and zoom, plus layout [doc] | ALT |
-| 8 | P07: measured responsiveness | Capture | ScreenCaptureKit and the layout-frame analyzer [live `layout-frame-20261104`] | ALT |
+| 8 | P07: measured responsiveness | Capture | ScreenCaptureKit and a frame analyzer [live `layout-frame-20261104`, harness removed; see Git history] | ALT |
 | 9 | B01: viewport clipping and off-screen input exclusion | Clip plus input region | 0x2f `SetWindowClipShape`, 0x05 `GlobalClipShape`, 0x0b (gated), 0x45/0x46 `EventShape` [static]. An ordinary-controller clip failed 
 | 10 | B02: inactive-tab concealment | Alpha plus input region | 0x03 alpha (gated), 0x0e system alpha, 0x45 empty event shape, or 0x01 order-out [static] | GATE |
 | 11 | B03: coherent presentation and frame clock | Frame sync (redraw loop) | No frame-clock or vsync hook. The batch skips animation. The `sls_transaction_commit_ca` link has not been mapped. [static] | NEW |

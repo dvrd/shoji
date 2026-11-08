@@ -1,23 +1,6 @@
-# Fixture-only visual swipe experiment
+# Swipe visual experiment (archived)
 
-This diagnostic compares two foreign fixture windows moved by Accessibility and a separate controller-owned blue indicator. It alternates the same 50-step forward/reverse trajectory with and without the `SLSDisableUpdate`/`SLSReenableUpdate` calls used by Shoji. A ScreenCaptureKit display filter includes only those three windows. The program stores per-frame color-edge coordinates and monotonic callback times, not images or application contents, and separately stores call timings.
-
-The fixture must be the same executable, expose exactly two windows with the exact fixture titles and IDs, and run in the logged-in GUI session. The run script installs a temporary title-specific float rule in the active Shoji daemon, launches the fixture, and removes the rule and fixture on exit. It does not restart Shoji, Dock or WindowServer. This test uses private SkyLight APIs and requires existing Accessibility and Screen Recording permissions for the signed controller.
-
-Build and run from the repository root. The persistent signing operation uses Shoji's configured local certificate and designated identifier; it does not replace the installed executable.
-
-```sh
-mkdir -p /tmp/shoji-swift-cache
-CLANG_MODULE_CACHE_PATH=/tmp/shoji-swift-cache xcrun clang -Wall -Wextra -Werror -c \
-  tools/harness/swipe-visual/transaction.c -o /tmp/shoji-swipe-transaction.o
-CLANG_MODULE_CACHE_PATH=/tmp/shoji-swift-cache SWIFT_MODULECACHE_PATH=/tmp/shoji-swift-cache \
-  xcrun swiftc -warnings-as-errors tools/harness/swipe-visual/main.swift /tmp/shoji-swipe-transaction.o \
-    -o /tmp/shoji-swipe-visual.new -F /System/Library/PrivateFrameworks -framework SkyLight
-./bin/dev signing sign /tmp/shoji-swipe-visual.new --install /tmp/shoji-swipe-visual --codesign codesign
-zsh tools/harness/swipe-visual/run.zsh
-```
-
-The controller tests the update-suppression primitive with AX movement and an AppKit indicator. It does not execute the actual Shoji gesture path, use the production focus-ring surfaces or record physical display scanout. ScreenCaptureKit can drop or independently compose frames. A complete color readback does not prove input alignment or uninterrupted presentation. Sampling must be assessed before drawing conclusions, and no precise input-to-photon latency can be inferred from callback timestamps.
+The harness that produced these results was removed on 2026-11-08; its source is in Git history (`tools/harness/swipe-visual`, last at `820a225`).
 
 ## Recorded run: macOS 15.6, 24G84
 

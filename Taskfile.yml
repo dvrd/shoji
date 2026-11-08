@@ -312,17 +312,6 @@ tasks:
       - '{{.ODIN_ARM64E}} build tools/window-interception/rea/abi-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-abi-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-abi-selftest
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-abi-selftest'
-  build:windowserver-permission-probe:
-    deps: [build:inspector]
-    desc: Build the exact-build WindowServer permission experiment (does not load it)
-    env:
-      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
-      ODIN_CLANG_PATH: /usr/bin/clang
-    cmds:
-      - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/windowserver-payload-probe -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-permission-probe.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/inspector normalize-arm64e bin/shoji-ws-permission-probe.dylib
-      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-permission-probe.dylib'
   build:windowserver-ordering-observer:
     deps: [build:gate-client]
     desc: Build the disposable exact-build ordering observer (does not load it)
@@ -420,38 +409,6 @@ tasks:
       - '{{.ODIN_ARM64E}} build tools/window-interception/gate-handoff -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-gate-handoff -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-gate-handoff
       - '{{.CODESIGN}} --force --sign - bin/shoji-gate-handoff'
-  build:capture-probe:
-    desc: Build the disposable guest ScreenCaptureKit frame probe (does not run it)
-    cmds:
-      - mkdir -p bin
-      - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-capture-probe tools/harness/capture-probe/main.swift'
-      - '{{.CODESIGN}} --force --sign - bin/shoji-capture-probe'
-  build:layout-frame:
-    desc: Build the disposable C1 fixture and frame pixel capture (does not run it)
-    cmds:
-      - mkdir -p bin
-      - 'xcrun swiftc -O -module-cache-path /tmp/shoji-c1-module-cache -target arm64-apple-macos14 -F/System/Library/PrivateFrameworks -framework SkyLight -o bin/shoji-layout-frame tools/window-interception/fixtures/layout-frame/main.swift'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.layout-frame bin/shoji-layout-frame'
-      - mkdir -p 'bin/Shoji Layout Capture.app/Contents/MacOS'
-      - cp tools/window-interception/fixtures/layout-frame/Info.plist 'bin/Shoji Layout Capture.app/Contents/Info.plist'
-      - cp bin/shoji-layout-frame 'bin/Shoji Layout Capture.app/Contents/MacOS/shoji-layout-frame'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.layout-frame "bin/Shoji Layout Capture.app"'
-  build:layout-fixture:
-    desc: Build the C1 window fixture without changing the authorized capturer
-    cmds:
-      - mkdir -p bin
-      - 'xcrun swiftc -O -module-cache-path /tmp/shoji-c1-module-cache -target arm64-apple-macos14 -F/System/Library/PrivateFrameworks -framework SkyLight -o bin/shoji-layout-fixture tools/window-interception/fixtures/layout-frame/fixture.swift'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.layout-fixture bin/shoji-layout-fixture'
-  build:focus-fixture:
-    desc: Build the disposable C2 focus/raise fixture (does not run it)
-    cmds:
-      - mkdir -p bin
-      - 'xcrun swiftc -O -module-cache-path /tmp/shoji-c2-module-cache -target arm64-apple-macos14 -F/System/Library/PrivateFrameworks -framework SkyLight -o bin/shoji-focus-fixture tools/window-interception/fixtures/focus-raise/main.swift'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.focus-fixture bin/shoji-focus-fixture'
-      - mkdir -p 'bin/Shoji Focus Lab.app/Contents/MacOS'
-      - cp tools/window-interception/fixtures/focus-raise/Info.plist 'bin/Shoji Focus Lab.app/Contents/Info.plist'
-      - cp bin/shoji-focus-fixture 'bin/Shoji Focus Lab.app/Contents/MacOS/shoji-focus-fixture'
-      - '{{.CODESIGN}} --force --sign - --identifier tech.shoji.focus-fixture "bin/Shoji Focus Lab.app"'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:
