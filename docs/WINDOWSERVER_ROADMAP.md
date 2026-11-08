@@ -9,7 +9,7 @@ quoted below are from 26A434 and differ on 26B123.
 - Niri reference: v26.04, commit `8ed0da44d974c32c6877d2f4630c314da0717ecb`.
   The wiki page list and headings were fetched at that commit.
 - WindowServer models: `artifacts/macos_versions/<build>/model/` (local,
-  produced by `rea/port-build.swift`).
+  produced by `spelunker-port build`, from the separate spelunker project).
 
 The A–D plan that was carried out covered atomic moves (C1), focus receipts (C2),
 Space placement (C3) and an adapter (C4). It did not map the rest of Niri. This
@@ -229,8 +229,8 @@ Niri-experience value. Each command must:
 - be journaled for restoration;
 - degrade per feature, as C4 does.
 
-**Prerequisite:** port and verify each target build with the
-`rea/port-build.swift` pipeline. Ops and offsets must not be carried across
+**Prerequisite:** port and verify each target build with
+`spelunker-port build`. Ops and offsets must not be carried across
 builds.
 
 ### Phase E: presentation primitives
@@ -291,7 +291,7 @@ builds.
 9. Does 0x7a `SetWindowIsActiveOffscreen` keep off-screen windows live for
    overview thumbnails?
 10. Do op numbers and handlers survive the next macOS build? Check with
-    `rea/diff-build.swift` before reusing anything.
+    `spelunker-port diff` before reusing anything.
 
 ## Presentation signals
 

@@ -89,13 +89,17 @@ the SkyLight image UUID and the hooked entry bytes; a mismatch installs
 nothing, the adapter finds no gate (`Absent`) and Shoji uses native paths.
 `shoji --ws-report` then shows `payload supports 26B123: no`.
 
-Porting a new build:
+Porting a new build uses `spelunker-port` from the separate spelunker project
+(`task install:port` there; profile `shoji-windowserver`):
 
-1. `rea/port-build.swift BUILD DYLD_CACHE` writes `model.json` (UUID, entry
-   bytes, dispatch table, op map). Ghidra is needed only when the diff shows
+1. `spelunker-port build --profile shoji-windowserver --cache DYLD_CACHE --out
+   artifacts/macos_versions/BUILD` writes `model/model.json` (UUID, entry
+   bytes, dispatch table, op map) and `model/transaction-dispatch-table.txt`.
+   Ghidra (spelunker's `Support/ghidra`) is needed only when the diff shows
    changes.
-2. `rea/diff-build.swift REF_TAG NEW_TAG` prints `PORT CLEAN` or `PORT NEEDED`
-   with the changed fields. Never copy offsets forward on static analysis alone.
+2. `spelunker-port diff artifacts/macos_versions/REF artifacts/macos_versions/BUILD`
+   prints `PORT CLEAN` or `PORT NEEDED` with the changed fields (exit 0 or 3).
+   Never copy offsets forward on static analysis alone.
 3. Update the build constants (`target.odin`, `gate_expected.odin`,
    `WS_SUPPORTED_BUILD`), then run `task test` and the ABI selftests
    (`task build:windowserver-abi-selftest`, `build:windowserver-hook-selftest`).

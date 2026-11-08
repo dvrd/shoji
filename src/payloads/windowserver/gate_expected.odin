@@ -3,8 +3,8 @@ package windowserver_payload
 import gate "../../windowserver/gate"
 
 // Static op map for each build's transaction dispatch table, generated from
-// artifacts/macos_versions/<build>/model/transaction-dispatch-table.txt by
-// tools/window-interception/rea/ghidra/decode-transaction-table.swift. Op 0x58 is an
+// artifacts/macos_versions/<build>/model/transaction-dispatch-table.txt, which
+// `spelunker-port build` writes (separate spelunker project). Op 0x58 is an
 // empty slot on both builds. Every gated op must be verified against this map
 // before its table entry is swapped.
 when gate.BUILD == "26B123" {
