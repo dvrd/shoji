@@ -390,8 +390,9 @@ macos27_static_profile_keeps_runtime_gate_explicit :: proc(t: ^testing.T) {
  version:=dock.Version{27,0,1}
  testing.expect(t,scan_profile_available(version))
  testing.expect_value(t,dock.supported(version),dock.MACOS27_CANDIDATE)
- testing.expect(t,!dock.supported({27,2,0}))
- testing.expect(t,!scan_profile_available({27,2,0}))
+ testing.expect(t,dock.supported(dock.MACOS27_2))
+ testing.expect(t,!dock.supported({27,3,0}))
+ testing.expect(t,!scan_profile_available({27,3,0}))
  testing.expect_value(t,choose_profile(Bundle{manifest=Manifest{os_version="27.0.1"}},""),"27.0.1")
  definitions:=targets_for(version)
  testing.expect_value(t,len(definitions),7)
