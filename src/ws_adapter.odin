@@ -59,6 +59,12 @@ Ws_Adapter :: struct {
 	// it (one LayoutAdd per item, GATE_LEGACY_LAYOUT_LIMIT items).
 	features:     u64,
 	layout_limit: int,
+	// Set when the trailer names this build's SkyLight UUID and gated ops.
+	// A payload that predates the trailer leaves this false and is still used.
+	identity_ok:    bool,
+	build_uuid:     [16]u8,
+	gated_ops:      [gate.GATE_OP_REPORT_MAX]u32,
+	gated_op_count: int,
 }
 
 // C2: AXRaise is handled by the owning app after the call returns; on the
@@ -364,11 +370,25 @@ ws_adapter_connect :: proc(a: ^Ws_Adapter, task, service: u32) {
 // Ask a serving gate what it supports. A payload that predates the command
 // answers status 1; that, or any failure, keeps the legacy protocol. It does
 // not mark the adapter Lost or record a status: legacy is a normal state.
+// A trailer whose SkyLight UUID or gated-op set is not this build turns the
+// gate features off. Dock capabilities stay on the Dock handshake; a caller
+// that needs both (a transactional Space move) checks that handshake itself.
 ws_adapter_capabilities :: proc(a: ^Ws_Adapter) {
 	a.features, a.layout_limit = 0, 0
+	a.identity_ok = false
+	a.gated_op_count = 0
 	if a.state != .Serving {return}
 	reply, ok := ws_adapter_raw(a, .Capabilities, 0, 0)
 	if !ok || reply.status != WS_STATUS_OK {return}
+	if reply.rejected || (reply.identity && (reply.uuid != gate.ORDERING_IMAGE_UUID || !gate.gated_ops_match(reply.ops[:reply.op_count]))) {
+		return
+	}
+	if reply.identity {
+		a.build_uuid = reply.uuid
+		a.gated_op_count = int(reply.op_count)
+		for i in 0 ..< reply.op_count {a.gated_ops[i] = reply.ops[i]}
+		a.identity_ok = true
+	}
 	a.features = reply.data0
 	a.layout_limit = int(min(reply.data1, u64(gate.LAYOUT_LIMIT)))
 }
@@ -399,7 +419,8 @@ ws_adapter_describe :: proc(a: ^Ws_Adapter) -> string {
 		return fmt.tprintf("WindowServer adapter refused (status %d, owner pid %d); using native paths", a.status, a.owner)
 	case .Serving:
 		protocol := a.features & gate.GATE_FEATURE_LAYOUT_SUBMIT != 0 ? "layout submit" : "legacy layout"
-		return fmt.tprintf("WindowServer adapter serving (%s, %d items)", protocol, ws_layout_limit(a))
+		identity := a.identity_ok ? "identity ok" : "identity unchecked"
+		return fmt.tprintf("WindowServer adapter serving (%s, %d items, %s)", protocol, ws_layout_limit(a), identity)
 	case .Lost:
 		return fmt.tprintf("WindowServer adapter lost (status %d); using native paths", a.status)
 	}
