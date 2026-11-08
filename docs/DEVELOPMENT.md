@@ -51,7 +51,9 @@ Build all tools with `task build:tools`:
 
 `tools/common` holds shared process/path context and the release catalog. Use
 `shoji service` for service control; no development CLI runs in the daemon.
-WindowServer test and porting tooling is in `tools/window-interception/`.
+WindowServer live acceptance is `harness live windowserver`; its ABI and hook
+self-tests are `tools/harness/fixtures/ws-*-selftest`. Per-build porting lives
+in the separate spelunker project (`spelunker-port`).
 
 ```sh
 task check            # strict checks: src, payloads, loader, tools

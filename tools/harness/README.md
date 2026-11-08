@@ -23,9 +23,14 @@ Live checks are explicit:
 ./bin/harness live desktop
 ./bin/harness live spaces
 ./bin/harness live animation
+./bin/harness live windowserver [--move-space]   # task test:windowserver
 ```
 
-The desktop check refuses an existing daemon. Space cleanup uses only the
+The desktop and windowserver checks refuse an existing daemon. The windowserver
+check runs the Shoji.app binary (its sudoers rule and Accessibility approval)
+with `windowserver_gate on` and compares every frame with WindowServer's bounds.
+`fixtures/ws-abi-selftest` and `fixtures/ws-hook-selftest` are the gate's
+in-process ABI and hook self-tests (`task build:windowserver-*-selftest`). Space cleanup uses only the
 returned disposable Space ID. Payload reload/Dock restart requires its explicit
 option and policy/recovery guards. Process cleanup targets owned command groups;
 evidence and cleanup failures produce nonzero results and preserve original errors.

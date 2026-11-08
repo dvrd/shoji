@@ -192,7 +192,7 @@ ws_report_cli :: proc(args: []string) -> int {
 		fmt.printf(
 			"clients file: %d entries, %s, this binary %s\n", r.entries,
 			r.trusted ? "root-owned" : "UNTRUSTED (must be root-owned, not group/world-writable)",
-			r.listed ? "listed" : "NOT listed (run lifecycle/trust-client.sh as root)",
+			r.listed ? "listed" : "NOT listed (the daemon's --ws-attach adds it)",
 		)
 	} else {
 		fmt.println("clients file: absent (only build-time pins can claim the gate)")

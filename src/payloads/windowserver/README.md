@@ -4,9 +4,8 @@ This package is the payload Shoji loads into WindowServer
 (`task build:windowserver-payload` → `bin/shoji-ws.dylib`, loaded by
 `shoji --ws-attach`). The gate engine it serves lives in
 `src/windowserver/gate/`; the daemon side is `src/ws_adapter.odin` and
-`src/ws_attach_runtime.odin`. The test harness builds the same source with its
-gate client's CDHash pinned (`task build:windowserver-ordering-observer` →
-`bin/shoji-ws-observer.dylib`).
+`src/ws_attach_runtime.odin`. `task test:windowserver` is the live acceptance
+check (`tools/harness/harness/live_windowserver.odin`).
 
 Supported build: macOS 26B123 (`BUILD` in `src/windowserver/gate/target.odin`),
 live-verified on a physical M1 Max: ordering hook, transaction-table gate
@@ -52,11 +51,11 @@ PID version. Every command requires an authorized client CDHash, read through
 `csops_audittoken`, so a client cannot claim an identity. Two sources
 authorize a client:
 
-- CDHashes pinned at build time (the harness gate client only).
+- CDHashes pinned at build time (`-define:SHOJI_GATE_CLIENT_CDHASH`; no current
+  build uses it).
 - The `clients` allowlist beside the payload (one 40-hex CDHash per line),
-  reread on every HELLO. `--ws-attach` adds the running binary itself;
-  `tools/window-interception/lifecycle/trust-client.swift` replaces the list
-  by hand. The payload ignores the file unless the file and its directory are
+  reread on every HELLO. `--ws-attach` adds the running binary itself, so a
+  rebuilt Shoji is trusted on its next attach. The payload ignores the file unless the file and its directory are
   root-owned and not group- or world-writable (`gate_allowlist_trusted`).
 
 Trust comes from root ownership: anything that can write the allowlist already
@@ -76,7 +75,7 @@ Recovery is bounded at every level:
 3. Owner death is reclaimed by the next verified HELLO (above).
 4. The kill switch refuses injection before anything is touched:
    `sudo touch /Library/GPUBundles/ShojiWindowServerProbe/DISABLED`
-   (`lifecycle/sentinel.swift`), or `SHOJI_WINDOWSERVER_DISABLE=1`. It does not
+   (remove it to re-enable), or `SHOJI_WINDOWSERVER_DISABLE=1`. It does not
    unload a resident payload; it takes effect at the next WindowServer start.
 
 Do not unhook live code or retry injection blindly after a crash: keep the
@@ -103,7 +102,10 @@ Porting a new build uses `spelunker-port` from the separate spelunker project
 3. Update the build constants (`target.odin`, `gate_expected.odin`,
    `WS_SUPPORTED_BUILD`), then run `task test` and the ABI selftests
    (`task build:windowserver-abi-selftest`, `build:windowserver-hook-selftest`).
-4. Live acceptance: `task windowserver:live -- trust`, then `run` and `daemon`.
+4. Live acceptance: stop the service (`shoji service stop`), run
+   `task test:windowserver -- --move-space`, then `shoji service start`. It runs
+   an isolated daemon with the gate on and checks swap (C1), focus (C2) and a
+   Space move (C4) against WindowServer's own bounds; evidence is printed.
 5. Mark the build supported only after step 4 passes.
 
 ## Diagnostics
@@ -115,10 +117,8 @@ ring (`ws-ring.bin` and decoded `ws-ring.json`), through the daemon
 (`debug ws dump`) when the daemon owns the gate, otherwise by claiming the gate
 briefly.
 
-`tools/window-interception/lifecycle/report.swift PATH/response.bin` decodes a
-saved ring offline with the same refusal rules (truncated, torn and
-inconsistent snapshots are refused). Keep credentials and SSH keys out of
-diagnostic bundles.
+The decoder refuses truncated, torn and inconsistent snapshots. Keep
+credentials and SSH keys out of diagnostic bundles.
 
 ### Ring format (version 3)
 
@@ -155,10 +155,9 @@ conclusions still shape the design:
 ## Build
 
 ```sh
-task build:windowserver-payload           # bin/shoji-ws.dylib (production)
-task build:windowserver-ordering-observer # harness build with the client pinned
-task build:windowserver-ordering-trigger
-task build:windowserver-visibility-sampler
+task build:windowserver-payload        # bin/shoji-ws.dylib
+task build:windowserver-abi-selftest   # owned C/Odin ABI fixture
+task build:windowserver-hook-selftest  # hook install/remove in its own process
 ```
 
 The loader's `--self-test-windowserver-payload` mode validates symbol

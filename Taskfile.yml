@@ -297,7 +297,7 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/rea/hook-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-hook-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '{{.ODIN_ARM64E}} build tools/harness/fixtures/ws-hook-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-hook-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-hook-selftest
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-hook-selftest'
   build:windowserver-abi-selftest:
@@ -308,29 +308,10 @@ tasks:
       ODIN_CLANG_PATH: /usr/bin/clang
     cmds:
       - mkdir -p bin
-      - '/usr/bin/clang -arch arm64e -std=c11 -O2 -Wall -Wextra -Werror -c tools/window-interception/rea/abi-selftest/native.c -o bin/shoji-ws-abi-native.o'
-      - '{{.ODIN_ARM64E}} build tools/window-interception/rea/abi-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-abi-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
+      - '/usr/bin/clang -arch arm64e -std=c11 -O2 -Wall -Wextra -Werror -c tools/harness/fixtures/ws-abi-selftest/native.c -o bin/shoji-ws-abi-native.o'
+      - '{{.ODIN_ARM64E}} build tools/harness/fixtures/ws-abi-selftest -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-abi-selftest -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
       - ./bin/inspector normalize-arm64e bin/shoji-ws-abi-selftest
       - '{{.CODESIGN}} --force --sign - bin/shoji-ws-abi-selftest'
-  build:windowserver-ordering-observer:
-    deps: [build:gate-client]
-    desc: Build the disposable exact-build ordering observer (does not load it)
-    env:
-      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
-      ODIN_CLANG_PATH: /usr/bin/clang
-    cmds:
-      - mkdir -p bin
-      - |
-        client_hash=$(codesign -dvvv bin/shoji-gate-client 2>&1 | sed -n 's/^CDHash=//p')
-        case "$client_hash" in ''|*[!0-9a-f]*) exit 1 ;; esac
-        test "${#client_hash}" = 40
-        # Only the experiment client is pinned at build time. Shoji is trusted
-        # through the root-owned clients file (lifecycle/trust-client.swift), so
-        # rebuilding Shoji never requires a new payload.
-        allow=$client_hash
-        {{.ODIN_ARM64E}} build src/payloads/windowserver "-define:SHOJI_GATE_CLIENT_CDHASH=$allow" -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws-observer.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws-observer-cctor23.dylib"
-      - ./bin/inspector normalize-arm64e bin/shoji-ws-observer.dylib
-      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-observer.dylib'
   build:windowserver-payload:
     deps: [build:step, build:inspector]
     desc: Build the WindowServer gate payload that `shoji --ws-attach` loads (does not load it)
@@ -345,23 +326,12 @@ tasks:
       - '{{.STEP}} ws-payload compile "bin/shoji-ws.dylib: gate code loaded into WindowServer" -- {{.ODIN_ARM64E}} build src/payloads/windowserver -warnings-as-errors -target:darwin_arm64e -target-features:pauth -build-mode:shared -out:bin/shoji-ws.dylib -o:speed -extra-linker-flags:"{{.LINK_FLAGS}} -Wl,-install_name,/Library/GPUBundles/ShojiWindowServerProbe/shoji-ws.dylib"'
       - '{{.STEP}} ws-payload normalize "mark arm64e ABI as preview so WindowServer accepts it" -- ./bin/inspector normalize-arm64e bin/shoji-ws.dylib'
       - '{{.STEP}} ws-payload sign "ad-hoc signature" -- {{.CODESIGN}} --force --sign - bin/shoji-ws.dylib'
-  build:windowserver-ordering-trigger:
-    deps: [build:inspector]
-    desc: Build the disposable guest window-ordering trigger (does not run it)
-    env:
-      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
-      ODIN_CLANG_PATH: /usr/bin/clang
+  test:windowserver:
+    desc: 'Live WindowServer gate acceptance with an isolated daemon (stop the service first). Options after --, e.g. --move-space'
+    deps: [build:harness, build:app]
+    interactive: true
     cmds:
-      - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/fixtures/ordering-trigger -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-ws-ordering-trigger -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/inspector normalize-arm64e bin/shoji-ws-ordering-trigger
-      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-ordering-trigger'
-  build:windowserver-visibility-sampler:
-    desc: Build the disposable guest CGWindowList visibility sampler (does not run it)
-    cmds:
-      - mkdir -p bin
-      - 'xcrun swiftc -O -target arm64-apple-macos14 -o bin/shoji-ws-visibility-sampler tools/window-interception/fixtures/visibility-sampler/main.swift'
-      - '{{.CODESIGN}} --force --sign - bin/shoji-ws-visibility-sampler'
+      - ./bin/harness live windowserver {{.CLI_ARGS}}
   install:windowserver:
     deps: [build:windowserver-payload]
     desc: Install the WindowServer gate payload (sudo) that `config windowserver_gate on` attaches
@@ -380,35 +350,6 @@ tasks:
         printf '  with this line in sudo visudo -f /etc/sudoers.d/shoji:\n\n'
         printf '    %s ALL=(root) NOPASSWD: %s/bin/Shoji.app/Contents/MacOS/shoji --ws-attach\n\n' "$(id -un)" "$PWD"
         printf '  Then add to shojirc: shoji -m config windowserver_gate on\n'
-  windowserver:live:
-    desc: 'Live gate acceptance on this machine (sudo). Mode after --: daemon (default), trust, controller, run'
-    # No build deps on purpose: rebuilding the gate client changes its CDHash,
-    # which the resident payload pins, so a rebuild needs a new injection.
-    interactive: true
-    cmds:
-      - sudo tools/window-interception/c4-live.swift --host {{.CLI_ARGS | default "daemon"}}
-  build:gate-client:
-    deps: [build:inspector]
-    desc: Build the disposable guest Mach gate client (does not run it)
-    env:
-      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
-      ODIN_CLANG_PATH: /usr/bin/clang
-    cmds:
-      - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/gate-client -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-gate-client -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/inspector normalize-arm64e bin/shoji-gate-client
-      - '{{.CODESIGN}} --force --sign - bin/shoji-gate-client'
-  build:gate-handoff:
-    deps: [build:inspector]
-    desc: Build the disposable guest root gate handoff helper (does not run it)
-    env:
-      ODIN_ROOT: '{{.ODIN_ARM64E_ROOT}}'
-      ODIN_CLANG_PATH: /usr/bin/clang
-    cmds:
-      - mkdir -p bin
-      - '{{.ODIN_ARM64E}} build tools/window-interception/gate-handoff -warnings-as-errors -target:darwin_arm64e -target-features:pauth -out:bin/shoji-gate-handoff -o:speed -extra-linker-flags:"{{.LINK_FLAGS}}"'
-      - ./bin/inspector normalize-arm64e bin/shoji-gate-handoff
-      - '{{.CODESIGN}} --force --sign - bin/shoji-gate-handoff'
   addition:amd64:
     desc: Cross-build the Intel Dock payload
     cmds:
