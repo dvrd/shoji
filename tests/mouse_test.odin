@@ -428,3 +428,44 @@ window_resize_handles_work_in_float_layout :: proc(t: ^testing.T) {
 	testing.expect(t, !mac.window_command(&m, []string{"1", "--move", "abs:42:84"}).failed)
 	testing.expect_value(t, w.frame.x, f64(42));testing.expect_value(t, w.frame.y, f64(84))
 }
+
+@(test)
+stack_touch_runs_only_on_builds_with_a_validated_contact_layout :: proc(t: ^testing.T) {
+	testing.expect(t, mac.touch_build_validated("24G84"))
+	testing.expect(t, mac.touch_build_validated("26B123"))
+	testing.expect(t, !mac.touch_build_validated("26B124"))
+	testing.expect(t, !mac.touch_build_validated(""))
+}
+
+@(test)
+three_finger_swipe_on_tabbed_column_steps_tabs_then_columns :: proc(t: ^testing.T) {
+	state: mac.State; r: Recorder; niri_fixture(&state.manager, &r)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
+	m := &state.manager
+	niri_open(m, 2); niri_open(m, 3); niri_open(m, 4)
+	mac.execute(m, {"window", "2", "--stack", "3"})
+	mac.execute(m, {"window", "2", "--column-display", "tabbed"})
+	mac.execute(m, {"config", "tab_indicator_position", "top"})
+	mac.execute(m, {"window", "2", "--focus"})
+	s := m.spaces[0]
+	swipe :: proc(state: ^mac.State, s: ^mac.Space, delta: f64) {
+		state.stack_touch.horizontal_space = s.id
+		state.stack_touch.horizontal_layout = .Scroll
+		state.stack_touch.horizontal_travel, state.stack_touch.horizontal_switched = 0, false
+		state.stack_touch.horizontal_tabs = mac.touch_focus_tabbed(&state.manager, s)
+		// Long travel still commits a single step.
+		for _ in 0 ..< 4 {mac.stack_touch_horizontal(state, delta, 0, false)}
+		mac.stack_touch_horizontal(state, 0, 0, true)
+	}
+	offset := s.view.scroll.offset
+	swipe(&state, s, -.1)
+	testing.expect_value(t, m.focused, u32(3))
+	testing.expect(t, !s.view.scroll.dragging)
+	// Past the last tab the swipe continues into the next column.
+	swipe(&state, s, -.1)
+	testing.expect_value(t, m.focused, u32(4))
+	// Window 4 is a normal column: the swipe pans the camera again.
+	swipe(&state, s, .1)
+	testing.expect(t, m.focused != 4 || s.view.scroll.offset != offset)
+	testing.expect(t, !state.stack_touch.horizontal_tabs)
+}
