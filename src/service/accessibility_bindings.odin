@@ -12,7 +12,6 @@ foreign import accessibility_cf "system:CoreFoundation.framework"
 foreign accessibility_ax {
 	AXIsProcessTrusted :: proc() -> bool ---
 	AXIsProcessTrustedWithOptions :: proc(options: native.Ref) -> bool ---
-	kAXTrustedCheckOptionPrompt: native.Ref
 }
 
 @(default_calling_convention = "c")
@@ -23,5 +22,4 @@ foreign accessibility_cf {
 		count: int,
 		key_callbacks, value_callbacks: native.Ref,
 	) -> native.Ref ---
-	kCFBooleanTrue: native.Ref
 }

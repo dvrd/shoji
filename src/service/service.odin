@@ -187,8 +187,8 @@ service_binary :: proc(m: Service_Manager, fallback: string) -> (string, string)
 }
 
 request_accessibility :: proc() {
-	keys := [1]native.Ref{kAXTrustedCheckOptionPrompt}
-	values := [1]native.Ref{kCFBooleanTrue}
+	keys := [1]native.Ref{native.kAXTrustedCheckOptionPrompt}
+	values := [1]native.Ref{native.kCFBooleanTrue}
 	options := CFDictionaryCreate(nil, &keys[0], &values[0], 1, nil, nil)
 	if options != nil {
 		_ = AXIsProcessTrustedWithOptions(options)

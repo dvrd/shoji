@@ -60,7 +60,6 @@ foreign cf {
 	CFRunLoopRemoveSource :: proc(loop, source, mode: Ref) ---
 	CFRunLoopRunInMode :: proc(mode: Ref, seconds: f64, return_after_source: bool) -> i32 ---
 	kCFRunLoopDefaultMode: Ref
-	kCFBooleanTrue, kCFBooleanFalse: Ref
 }
 @(default_calling_convention = "c")
 foreign cg {
@@ -74,7 +73,6 @@ foreign cg {
 foreign ax {
 	AXIsProcessTrusted :: proc() -> bool ---
 	AXIsProcessTrustedWithOptions :: proc(options: Ref) -> bool ---
-	kAXTrustedCheckOptionPrompt: Ref
 	AXUIElementCreateApplication :: proc(pid: i32) -> Ref ---
 	AXUIElementCopyAttributeValue :: proc(element, attribute: Ref, value: ^Ref) -> i32 ---
 	AXUIElementSetAttributeValue :: proc(element, attribute, value: Ref) -> i32 ---
@@ -503,7 +501,7 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 			if watching {ws_watch(&state.ws, 0)}
 			return "could not activate application"
 		}
-		set_attribute(element, "AXMain", kCFBooleanTrue)
+		set_attribute(element, "AXMain", n.kCFBooleanTrue)
 		raise := cf_string("AXRaise")
 		defer CFRelease(raise)
 		code := AXUIElementPerformAction(element, raise)
@@ -542,7 +540,7 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 		if code := set_attribute(
 			element,
 			"AXMinimized",
-			action.kind == .Minimize ? kCFBooleanTrue : kCFBooleanFalse,
+			action.kind == .Minimize ? n.kCFBooleanTrue : n.kCFBooleanFalse,
 		); code != 0 {
 			return fmt.tprintf("Accessibility minimize failed (%d)", code)
 		}
@@ -550,7 +548,7 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 		if code := set_attribute(
 			element,
 			"AXFullScreen",
-			action.flag ? kCFBooleanTrue : kCFBooleanFalse,
+			action.flag ? n.kCFBooleanTrue : n.kCFBooleanFalse,
 		); code != 0 {
 			return fmt.tprintf("Accessibility fullscreen failed (%d)", code)
 		}
@@ -709,14 +707,14 @@ apply_accessibility_frame :: proc(
 		if enhanced {
 			attributes.set(
 				attributes.user, application,
-				"AXEnhancedUserInterface", kCFBooleanTrue,
+				"AXEnhancedUserInterface", n.kCFBooleanTrue,
 			)
 		}
 	}
 	if enhanced {
 		attributes.set(
 			attributes.user, application,
-			"AXEnhancedUserInterface", kCFBooleanFalse,
+			"AXEnhancedUserInterface", n.kCFBooleanFalse,
 		)
 	}
 	return write_accessibility_frame(

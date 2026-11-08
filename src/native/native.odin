@@ -11,16 +11,24 @@ Rect :: struct {x, y, w, h: f64}
 foreign import libc "system:c"
 foreign import cf "system:CoreFoundation.framework"
 foreign import sls "system:SkyLight.framework"
+foreign import ax "system:ApplicationServices.framework"
 
 Ref :: rawptr
 Point :: struct {x, y: f64}
 @(default_calling_convention = "c")
 foreign cf {
  CFRelease :: proc(ref: Ref) ---
+ // Declared once for every package: Odin renames a foreign variable
+ // declared in two packages (`_kCFBooleanTrue.1`), which fails to link.
+ kCFBooleanTrue, kCFBooleanFalse: Ref
  CFGetTypeID :: proc(ref: Ref) -> uint ---
  CFStringGetTypeID :: proc() -> uint ---
  CFStringGetLength :: proc(ref: Ref) -> int ---
  CFNumberCreate :: proc(allocator: Ref, type: i32, value: rawptr) -> Ref ---
+}
+@(default_calling_convention = "c")
+foreign ax {
+ kAXTrustedCheckOptionPrompt: Ref
 }
 @(default_calling_convention = "c")
 foreign sls {
