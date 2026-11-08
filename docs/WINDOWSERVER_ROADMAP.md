@@ -237,8 +237,8 @@ builds.
 
 | # | Task | Acceptance |
 | --- | --- | --- |
-| E1 | **Capabilities handshake.** The WindowServer payload reports build UUID, gated ops, supported commands and limits. This replaces `Load_Probe`-only (`protocol.odin:12`). Merge it with Dock capabilities and enable o
-| E2 | **Per-frame motion batch.** The motion tick sends camera, window and owned-ring moves through one `LayoutArm` per display frame. Raise `LAYOUT_LIMIT` with a bounded plan. Keep the hold at or under one frame. | The
+| E1 | **Partly done 2026-11-07:** `Capabilities` reports features and the layout item limit; build UUID and gated ops are not reported yet. **Capabilities handshake.** The WindowServer payload reports build UUID, gated ops, supported commands and limits. This replaces `Load_Probe`-only (`protocol.odin:12`). Merge it with Dock capabilities and enable o
+| E2 | **In progress 2026-11-07:** scroll-camera frames batch through `LayoutSubmit` (32 moves, one message); window and ring animations still use per-window writes. **Per-frame motion batch.** The motion tick sends camera, window and owned-ring moves through one `LayoutArm` per display frame. Raise `LAYOUT_LIMIT` with a bounded plan. Keep the hold at or under one frame. | The
 | E3 | **Foreign-op commands.** Add alpha (0x03/0x0e), clip (0x2f/0x05), shape (0x0b), event shape (0x45) and transform (0x0f). They are issued as Dock-connection transactions, staged inside the gated commit, with a rest
 | E4 | **Viewport clipping (B01)** using E3 | Checklist B01 passes on one display and on two physical displays. |
 | E5 | **True tab concealment (B02)** using E3 | Checklist B02 passes, including restoration after interruption. |
