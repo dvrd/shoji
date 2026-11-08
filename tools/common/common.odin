@@ -126,9 +126,8 @@ RELEASE_BINARIES := []string {
 }
 RELEASE_DOCUMENTS := []string {
 	"README.md",
-	"PORTING.md",
-	"VALIDATION.md",
 	"SETUP.md",
+	"SIP.md",
 	"LICENSE",
 }
 release_files :: proc() -> []string {
