@@ -3,9 +3,7 @@ package shoji
 import dock "dock"
 import "core:encoding/json"
 import "core:fmt"
-import "core:os"
 import "core:strings"
-import "core:sys/posix"
 import "core:time"
 
 foreign import recovery_sls "system:SkyLight.framework"
@@ -29,40 +27,12 @@ animation_journal_close :: proc(j: ^Animation_Journal) {
 animation_journal_open :: proc(j: ^Animation_Journal, path: string) -> string {
 	j.path = strings.clone(path)
 	j.entries = make(map[u32]dock.Entry)
-	fd := posix.open(
-		strings.clone_to_cstring(path, context.temp_allocator),
-		{.NOFOLLOW, .NONBLOCK, .CLOEXEC},
-	)
-	if fd < 0 {
-		if posix.errno() == .ENOENT {
-			return ""
-		}
-		return "cannot open animation recovery journal"
+	bytes, found, read_error := private_file_read(path, 65536)
+	if !found && read_error == "" {
+		return ""
 	}
-	defer posix.close(fd)
-	info: posix.stat_t
-	if posix.fstat(fd, &info) != nil ||
-	   !posix.S_ISREG(info.st_mode) ||
-	   u32(info.st_uid) != getuid() ||
-	   info.st_size <= 0 ||
-	   info.st_size > 65536 {
-		return "invalid animation recovery journal file"
-	}
-	bytes := make([]u8, int(info.st_size), context.temp_allocator)
-	offset := 0
-	for offset < len(bytes) {
-		n := posix.read(
-			fd,
-			raw_data(bytes[offset:]),
-			uint(int(len(bytes)) - offset),
-		)
-		if n < 0 && posix.errno() == .EINTR {
-			continue
-		}
-		if n <= 0 {
-			return "cannot read animation recovery journal"
-		}
-		offset += int(n)
+	if read_error != "" {
+		return fmt.tprintf("animation recovery journal: %s", read_error)
 	}
 	data: Journal_Data
 	if json.unmarshal(bytes, &data, allocator = context.temp_allocator) !=
@@ -101,35 +71,9 @@ animation_journal_save :: proc(j: ^Animation_Journal) -> string {
 	if err != nil {
 		return "cannot encode animation recovery journal"
 	}
-	// mkstemp creates mode 0600. fsync before atomic rename ensures a crash
-	// cannot leave a partial journal after the real window has been hidden.
-	temporary := strings.clone_to_cstring(
-		fmt.tprintf("%s.XXXXXX", j.path),
-		context.temp_allocator,
-	)
-	fd := posix.mkstemp(temporary)
-	if fd < 0 {
-		return "cannot create animation recovery journal"
-	}
-	defer posix.close(fd)
-	defer posix.unlink(temporary)
-	offset := 0
-	for offset < len(bytes) {
-		n := posix.write(
-			fd,
-			raw_data(bytes[offset:]),
-			uint(int(len(bytes)) - offset),
-		)
-		if n < 0 && posix.errno() == .EINTR {
-			continue
-		}
-		if n <= 0 {
-			return "cannot write animation recovery journal"
-		}
-		offset += int(n)
-	}
-	if posix.fsync(fd) != nil || os.rename(string(temporary), j.path) != nil {
-		return "cannot commit animation recovery journal"
+	// A crash must not leave a partial journal after a window was hidden.
+	if write_error := private_file_write(j.path, bytes); write_error != "" {
+		return fmt.tprintf("animation recovery journal: %s", write_error)
 	}
 	return ""
 }

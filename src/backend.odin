@@ -248,6 +248,7 @@ Application :: struct {
 }
 
 State :: struct {
+	layout_snapshot: Layout_Snapshot,
 	callback_scratch: Callback_Scratch,
 	opening_tracking: bool,
 	opening_collecting: bool,
@@ -378,6 +379,7 @@ state_init :: proc(state: ^State) {
 state_destroy :: proc(state: ^State) {
 	// Before Accessibility and payload state go: no window stays hidden.
 	tab_conceal_release(&state.manager)
+	layout_snapshot_close(&state.layout_snapshot, &state.manager)
 	defer callback_scratch_destroy(&state.callback_scratch)
 	resize_cover_stop(state)
 	display_clock_stop(&state.display_clock)

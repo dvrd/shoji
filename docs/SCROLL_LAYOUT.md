@@ -220,3 +220,13 @@ launchctl kickstart -k "gui/$(id -u)/tech.shoji.window-manager"
 The installation did not modify shojirc, replace the Dock payload or restart Dock. Backups live under ignored `bin/`; retain them before running `task clean`.
 
 Existing-window resize presentation now supports application-colored content fades, controlled by `window_resize_animation fade|off`. This is independent of the camera spring and does not replace the layout model.
+
+## Restart persistence
+
+The daemon saves each scroll Space's columns to `/tmp/shoji-layout_<uid>.json`
+(every 2 s when they change, and at shutdown): membership, row order, active
+tab, width, full-width and tabbed state. On start it waits for shojirc (at most
+20 s), then rebuilds those columns at the front of the strip. A window is
+placed only if its ID still belongs to the same process, so windows of apps
+that restarted open normally. The file does not survive a reboot, when window
+IDs are reissued anyway. Row height requests are not saved.
