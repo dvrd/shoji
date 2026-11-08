@@ -12,6 +12,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import native "../../../../src/native"
 
 foreign import system "system:System"
 foreign system { proc_pidpath :: proc "c" (pid: i32, buffer: rawptr, size: u32) -> i32 --- }
@@ -45,7 +46,7 @@ async_worker :: proc(_: ^thread.Thread) {
 			focus := request.kind == .Focus
 			code: i32 = -1
 			if focus {
-				_ = mac.set_attribute(element, "AXMain", mac.kCFBooleanTrue)
+				_ = mac.set_attribute(element, "AXMain", native.kCFBooleanTrue)
 				raise := mac.cf_string("AXRaise")
 				code = mac.AXUIElementPerformAction(element, raise)
 				mac.CFRelease(raise)

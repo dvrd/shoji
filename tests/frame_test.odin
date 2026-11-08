@@ -1,6 +1,7 @@
 package tests
 
 import mac "../src"
+import native "../src/native"
 import "core:strings"
 import "core:testing"
 
@@ -21,7 +22,7 @@ frame_set :: proc(user: rawptr, element: mac.Ref, name: string, value: mac.Ref) 
 		return -1
 	}
 	if name == "AXEnhancedUserInterface" {
-		r.enhanced = value == mac.kCFBooleanTrue
+		r.enhanced = value == native.kCFBooleanTrue
 		if r.enhanced {
 			r.restored = true
 		}
