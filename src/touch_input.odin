@@ -131,6 +131,8 @@ Stack_Touch_State :: struct {
 	horizontal_space: u64,
 	horizontal_layout: layout.Layout,
 	horizontal_active, horizontal_switched: bool,
+	// The swipe began on a tabbed column: it steps tabs, not the camera.
+	horizontal_tabs: bool,
 	horizontal_travel: f64,
 	horizontal_direction: i32,
 }
@@ -143,12 +145,23 @@ stack_touch_callback :: proc "c" (_: Ref, contacts: [^]Touch_Contact, count: uin
 	if stack_touch_shared.enabled { stack_swipe_sample(&stack_touch_shared.tracker, contacts[:int(count)], timestamp) }
 }
 
+// Builds where the 96-byte contact layout was checked against a live
+// three-finger capture (26B123: probe 2026-11-07, stable ids and stages,
+// positions in 0..1, velocities matching the swipe direction).
+TOUCH_VALIDATED_BUILDS :: [?]string{"24G84", "26B123"}
+
+touch_build_validated :: proc(build: string) -> bool {
+	for validated in TOUCH_VALIDATED_BUILDS {if build == validated {return true}}
+	return false
+}
+
 stack_touch_start :: proc(state: ^State) -> bool {
 	t := &state.stack_touch
-	// Contact structure offsets are validated only on this host build.
+	// Contact structure offsets are validated only on the listed builds.
 	build: [32]u8; length := uintptr(len(build))
 	if sysctlbyname("kern.osversion", &build[0], &length, nil, 0) != 0 ||
-	   length == 0 || length > uintptr(len(build)) || string(cstring(&build[0])) != "24G84" {
+	   length == 0 || length > uintptr(len(build)) ||
+	   !touch_build_validated(string(cstring(&build[0]))) {
 		return false
 	}
 	t.library = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", 2)
@@ -249,6 +262,7 @@ stack_touch_tick :: proc(
 		s := space_by_id(m, t.horizontal_space)
 		t.horizontal_layout = s != nil ? s.view.layout : .Float
 		t.horizontal_active, t.horizontal_switched, t.horizontal_travel, t.horizontal_direction = false, false, 0, 0
+		t.horizontal_tabs = s != nil && touch_focus_tabbed(m, s)
 		// Require a main-loop observation of the beginning before accepting.
 		if direction != 0 { return }
 	}
@@ -277,6 +291,19 @@ stack_touch_horizontal :: proc(state: ^State, delta, velocity: f64, ended: bool)
 		return
 	}
 	if s.view.layout != .Scroll { return }
+	if t.horizontal_tabs {
+		// One step per swipe, like the BSP Space switch. Directional focus
+		// walks the tabs (top bar) and continues into the adjacent column.
+		t.horizontal_travel -= delta
+		if !t.horizontal_switched && math.abs(t.horizontal_travel) >= TOUCH_TAB_STEP_TRAVEL {
+			t.horizontal_switched = true
+			direction := t.horizontal_travel > 0 ? "east" : "west"
+			if response := execute(m, {"window", "--focus", direction}); response.failed {
+				fmt.eprintln("shoji: three-finger tab swipe:", response.text)
+			}
+		}
+		return
+	}
 	if delta != 0 {
 		t.horizontal_travel -= delta
 		if math.abs(delta) >= .001 { t.horizontal_direction = delta > 0 ? -1 : 1 }
@@ -297,6 +324,15 @@ stack_touch_horizontal :: proc(state: ^State, delta, velocity: f64, ended: bool)
 		if math.abs(t.horizontal_travel) >= .025 { step = t.horizontal_travel > 0 ? 1 : -1 }
 		if err := scroll_finish_pan(m, s, release_velocity, true, step); err != "" { fmt.eprintln("shoji: three-finger scroll release:", err) }
 	}
+}
+
+// Normalized trackpad travel that commits one tab step.
+TOUCH_TAB_STEP_TRAVEL :: .08
+
+touch_focus_tabbed :: proc(m: ^Manager, s: ^Space) -> bool {
+	if s.view.layout != .Scroll {return false}
+	n := layout.find(s.view.root, m.focused)
+	return n != nil && n.column_tabbed && n.count > 1
 }
 
 stack_swipe_apply :: proc(state: ^State, focus: u32, generation: u64, direction: i32) {

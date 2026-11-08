@@ -89,8 +89,9 @@ For optional trackpad navigation, add these settings to `shojirc`:
 "$SHOJI" -m config stack_swipe on
 ```
 
-Horizontal three-finger swipes navigate scrolling columns; in BSP they switch
-native Spaces when the Dock payload is enabled. Vertical three-finger swipes
+Horizontal three-finger swipes navigate scrolling columns; on a tabbed column
+each swipe moves one tab, continuing into the adjacent column past the first or
+last tab. In BSP they switch native Spaces when the Dock payload is enabled. Vertical three-finger swipes
 navigate BSP stacks. Disable conflicting macOS trackpad gestures in System
 Settings if they take over the swipe.
 
