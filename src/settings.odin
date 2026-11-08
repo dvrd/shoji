@@ -105,6 +105,21 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 			return failure("scroll_frame_pacing expects on or off")
 		}
 		m.scroll_frame_pacing = value == "on"
+	case "tab_conceal":
+		if s != nil {
+			return failure("tab_conceal is global")
+		}
+		if !setting {
+			return success(m.tab_conceal ? "on" : "off")
+		}
+		if value != "on" && value != "off" {
+			return failure("tab_conceal expects on or off")
+		}
+		m.tab_conceal = value == "on"
+		if !m.tab_conceal {tab_conceal_release(m)}
+		for space in m.spaces {
+			if err := flush(m, space); err != "" {return failure(err)}
+		}
 	case "scroll_animation":
 		if s != nil {
 			return failure("scroll_animation is global")

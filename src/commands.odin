@@ -211,6 +211,7 @@ Window_JSON :: struct {
 	is_floating:          bool `json:"is-floating"`,
 	is_sticky:            bool `json:"is-sticky"`,
 	is_grabbed:           bool `json:"is-grabbed"`,
+	is_concealed:         bool `json:"is-concealed"`,
 }
 
 Space_JSON :: struct {
@@ -269,6 +270,7 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 		subrole              = w.subrole,
 		root_window          = w.root_window.? or_else true,
 		is_grabbed           = w.grabbed,
+		is_concealed         = w.concealed,
 		scratchpad           = w.scratchpad,
 		opacity              = w.opacity,
 		layer                = w.layer,

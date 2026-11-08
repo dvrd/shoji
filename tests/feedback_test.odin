@@ -984,3 +984,61 @@ floating_pointer_drag_defers_desktop_discovery_until_release :: proc(
 	mac.desktop_refresh_tick(&state, &last, now, refresh_command_space)
 	testing.expect_value(t, state.manager.active_space, u64(200))
 }
+
+@(test)
+destroyed_floating_window_drops_its_ring_before_the_structural_refresh :: proc(
+	t: ^testing.T,
+) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	fixture(&state.manager, &actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update}
+	defer mac.feedback_stop(&state)
+	testing.expect_value(t, mac.flush(&state.manager, state.manager.spaces[0]), "")
+	w := state.manager.windows[1]; w.floating = true
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, r.created, 8)
+	state.windows = make(map[u32]mac.Ref); defer delete(state.windows)
+	other := mac.cf_string("other window"); defer mac.CFRelease(other)
+	element := mac.cf_string("floating owner"); defer mac.CFRelease(element)
+	state.windows[1] = element; state.windows[2] = other
+	// Another window closing leaves the ring alone.
+	mac.window_destroyed(&state, other)
+	testing.expect_value(t, r.destroyed, 0)
+	mac.window_destroyed(&state, element)
+	testing.expect_value(t, r.destroyed, 8)
+	// The window is still known until the refresh, but the ring stays down.
+	testing.expect(t, state.manager.windows[1] != nil)
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, r.created, 8)
+}
+
+@(test)
+new_tab_keeps_the_tab_bar_while_the_window_is_prepared :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	niri_fixture(&state.manager, &actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update}
+	defer mac.feedback_stop(&state)
+	niri_open(&state.manager, 2)
+	mac.execute(&state.manager, {"window", "1", "--stack", "2"})
+	mac.execute(&state.manager, {"window", "1", "--column-display", "tabbed"})
+	mac.execute(&state.manager, {"window", "1", "--focus"})
+	mac.focus_ring_tick(&state)
+	created, destroyed := r.created, r.destroyed
+	testing.expect_value(t, state.tab_indicator.count, 2)
+	// The new window has focus but is still being prepared concealed.
+	w := mac.discover_window(&state.manager, {id = 30, pid = 70, role = "AXWindow", subrole = "AXStandardWindow", space = 100, display = 10, frame = {100, 100, 440, 288}})
+	mac.focus_window(&state.manager, 30)
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, r.destroyed, destroyed)
+	testing.expect_value(t, r.created, created)
+	testing.expect_value(t, state.tab_indicator.count, 2)
+	// The hold is bounded: a window that never joins releases the decorations.
+	state.focus_ring.pending_since = time.tick_add(state.focus_ring.pending_since, -time.Second)
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, state.tab_indicator.count, 0)
+	testing.expect(t, w.opening.phase == .Pending)
+}

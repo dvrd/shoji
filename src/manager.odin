@@ -114,6 +114,7 @@ Action_Kind :: enum {
 	Space_Create,
 	Space_Destroy,
 	Space_Move,
+	Conceal,
 }
 
 Action :: struct {
@@ -142,6 +143,8 @@ Manager :: struct {
 	resize_fade: bool,
 	motion_trace: Motion_Trace,
 	scroll_animate: bool,
+	// B02: conceal inactive tabs instead of only ordering them behind.
+	tab_conceal: bool,
 	scroll_frame_pacing: bool,
 	scroll_time: f64,
 	scroll_options: layout.Scroll_Options,
@@ -384,7 +387,12 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 	}
 	apply_rules(m, w, initial = true)
 	if s := space_by_id(m, w.space); s != nil && layout_admitted(w) {
+		insertion := s.view.insertion
 		layout.add(&s.view, w.id, window_insertion(m, &s.view))
+		motion_trace_join(m, s, w.id, "layout-join")
+		if insertion != 0 && s.view.insertion == 0 {
+			motion_trace_record(&m.motion_trace, {kind = "insert-consumed", window = w.id, space = s.id, value = f64(insertion)})
+		}
 	}
 	return w
 }
@@ -401,6 +409,7 @@ window_insertion :: proc(m: ^Manager, v: ^layout.View) -> u32 {
 
 remove_window :: proc(m: ^Manager, id: u32) {
 	if w, ok := m.windows[id]; ok {
+		motion_trace_record(&m.motion_trace, {kind = "window-removed", window = id, space = w.space})
 		for &rule in m.rules {
 			if rule.pending_window == id {
 				rule.pending_window = 0
@@ -828,12 +837,66 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		d.window.frame = d.frame
 		d.window.ax_stale = false
 	}
+	tab_conceal_sync(m, s)
 	for _, w in m.windows {
 		if w.space == s.id {
 			w.size_feedback_reflow = false
 		}
 	}
 	return ""
+}
+
+// The most recent inactive tab (order[1]) stays drawn as a standby directly
+// behind the active one. Closing the active tab or opening a new, not yet
+// drawn one then exposes that tab instead of the desktop until the next flush.
+TAB_STANDBY :: 1
+
+tab_concealable :: proc(s: ^Space, id: u32) -> bool {
+	if s.view.layout != .Scroll {return false}
+	n := layout.find(s.view.root, id)
+	if n == nil || !n.column_tabbed {return false}
+	for i in TAB_STANDBY + 1 ..< n.count {if n.order[i] == id {return true}}
+	return false
+}
+
+// B02: ordering alone leaves an inactive tab's edges visible and its frame
+// clickable. Concealment hides it from drawing and hit-testing; the payload
+// reveals it on its own if this daemon dies.
+// Reveals run before conceals: a tab switch shows the new tab (already raised
+// above) before hiding the old one, so no frame shows neither.
+tab_conceal_sync :: proc(m: ^Manager, s: ^Space) {
+	for pass in ([2]bool{false, true}) {tab_conceal_pass(m, s, pass)}
+}
+
+tab_conceal_pass :: proc(m: ^Manager, s: ^Space, conceal: bool) {
+	for _, w in m.windows {
+		if w == nil || w.space != s.id {continue}
+		want := m.tab_conceal && managed(w) && w.windowed_frame == nil && tab_concealable(s, w.id)
+		if !want {w.conceal_refused = false}
+		if want != conceal {continue}
+		if want == w.concealed || (want && w.conceal_refused) {continue}
+		if err := perform(m, {kind = .Conceal, window = w.id, flag = want}); err != "" {
+			// A refused conceal keeps today's ordered-behind tab. A failed
+			// reveal stays recorded and is retried by the next flush.
+			if want {w.conceal_refused = true}
+			fmt.eprintln("shoji: tab concealment:", err)
+			continue
+		}
+		w.concealed = want
+		motion_trace_record(&m.motion_trace, {kind = want ? "tab-conceal" : "tab-reveal", window = w.id, space = s.id})
+	}
+}
+
+// Reveals every concealed window, at shutdown or when concealment is disabled.
+tab_conceal_release :: proc(m: ^Manager) {
+	for _, w in m.windows {
+		if w == nil || !w.concealed {continue}
+		if err := perform(m, {kind = .Conceal, window = w.id, flag = false}); err != "" {
+			fmt.eprintln("shoji: tab reveal:", err)
+			continue
+		}
+		w.concealed = false
+	}
 }
 
 select_space :: proc(m: ^Manager, text: string) -> ^Space {

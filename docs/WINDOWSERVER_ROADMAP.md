@@ -241,7 +241,7 @@ builds.
 | E2 | **In progress 2026-11-07:** scroll-camera frames batch through `LayoutSubmit` (32 moves, one message); window and ring animations still use per-window writes. **Per-frame motion batch.** The motion tick sends camera, window and owned-ring moves through one `LayoutArm` per display frame. Raise `LAYOUT_LIMIT` with a bounded plan. Keep the hold at or under one frame. | The
 | E3 | **Foreign-op commands.** Add alpha (0x03/0x0e), clip (0x2f/0x05), shape (0x0b), event shape (0x45) and transform (0x0f). They are issued as Dock-connection transactions, staged inside the gated commit, with a rest
 | E4 | **Viewport clipping (B01)** using E3 | Checklist B01 passes on one display and on two physical displays. |
-| E5 | **True tab concealment (B02)** using E3 | Checklist B02 passes, including restoration after interruption. |
+| E5 | **In progress 2026-11-07:** `tab_conceal on` conceals inactive tabs through the Dock payload (`Window_Conceal`); the payload reveals them if the concealing daemon exits. Not yet journaled across a Dock restart. **True tab concealment (B02)** using E3 | Checklist B02 passes, including restoration after interruption. |
 | E6 | **Dialog and floating relationships (P05)**: level, sublevel, ordering groups (0x59–0x5b) and movement groups (0x55–0x57) | Sheets, modals and popovers follow their owner during E2 motion and are never hidden behi
 
 ### Phase F: synchronization
@@ -271,9 +271,12 @@ builds.
 ## Open questions that need live tests
 
 1. Do Dock-connection *transactions* that set alpha, clip, event shape,
-   transform or corner radius take effect on foreign windows on 26B123? A
-   system-alpha readback was inconclusive on 24G84 (see "Transaction return
-   values" in `tools/DOCK_COMPATIBILITY.md`).
+   transform or corner radius take effect on foreign windows on 26B123?
+   **Partly answered 2026-11-07 (live, Mail):** system alpha 0 plus an empty
+   event shape in one Dock transaction hides the window and lets clicks
+   through; alpha alone leaves it catching clicks. Reveal (alpha 1, event
+   shape = window rectangle) restores drawing and input in place. Clip,
+   transform and corner radius are still open.
 2. Does a 0x0f window transform also transform hit-testing?
 3. Can holds of 2 ms or less at 120 Hz run continuously without visibly
    stalling other clients? WindowServer serializes globally while holding (B2).

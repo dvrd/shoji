@@ -38,7 +38,7 @@ proxy_diagnostics_preserve_the_first_native_failure :: proc(t: ^testing.T) {
 
 @(test)
 addition_protocol_rejects_truncation_and_trailing_bytes :: proc(t: ^testing.T) {
-	for code in 1 ..= 20 {
+	for code in 1 ..= int(dock.Opcode.Window_Conceal) {
 		op := dock.Opcode(code);n := dock.expected_size(op)
 		if n < 0 {continue}
 		data: [32]u8

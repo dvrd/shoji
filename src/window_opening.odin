@@ -205,11 +205,16 @@ admit_window :: proc(
 	if v.layout == .Scroll && target.h > v.scroll.viewport.h {
 		o.wait = .Space; return false, ""
 	}
+	// A new column grows in from half size at its trailing edge. A new tab
+	// covers its column's existing frame, so it is prepared at that final frame
+	// and revealed already sized, with nothing to animate.
+	joins_tabs := v.layout == .Scroll && n.column_tabbed && n.count > 1
 	vertical :=
 		v.layout == .Scroll || n.parent == nil || n.parent.split == .Vertical
-	trailing := v.layout == .Scroll || n.parent == nil || n == n.parent.right
+	trailing := !joins_tabs && (v.layout == .Scroll || n.parent == nil || n == n.parent.right)
 	seed := target
-	if vertical {
+	if joins_tabs {
+	} else if vertical {
 		seed.w = max(1, target.w * 0.5)
 	} else {
 		seed.h = max(1, target.h * 0.5)
@@ -286,6 +291,7 @@ admit_window :: proc(
 	}
 	old := s.view; s.view = v; v = old
 	o.phase = .Opening
+	motion_trace_join(m, s, w.id, "opening-join")
 	if err := flush(m, s); err != "" {
 		return true, err
 	}

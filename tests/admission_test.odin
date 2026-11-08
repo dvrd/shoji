@@ -197,3 +197,55 @@ explicit_tiled_layout_adopts_existing_windows_without_admitting_pending_ones :: 
 	testing.expect(t, layout.find(s.view.root, w.id) != nil)
 	testing.expect(t, layout.find(s.view.root, pending.id) == nil)
 }
+
+// Tests run on parallel threads; each keeps its own record.
+@(private = "file", thread_local)
+seeds: [4]e.Rect
+@(private = "file", thread_local)
+seed_count: int
+
+@(private = "file")
+preparation_accept_seed :: proc(m: ^e.Manager, w: ^e.Window, seed: e.Rect) -> (e.Rect, bool, string) {
+	if seed_count < len(seeds) {seeds[seed_count] = seed}
+	seed_count += 1
+	return seed, true, ""
+}
+
+@(test)
+new_tab_is_prepared_and_revealed_at_the_column_frame :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	seed_count = 0
+	niri_open(&m, 2); niri_open(&m, 3)
+	e.execute(&m, {"window", "2", "--stack", "3"})
+	e.execute(&m, {"window", "2", "--column-display", "tabbed"})
+	e.execute(&m, {"window", "2", "--focus"})
+	e.execute(&m, {"window", "--insert", "stack"})
+	s := e.space_by_id(&m, 100)
+	tab := m.windows[2].frame
+	w := e.discover_window(&m, {id = 30, pid = 70, role = "AXWindow", subrole = "AXStandardWindow", space = 100, display = 10, frame = {100, 100, 440, 288}})
+	e.focus_window(&m, 30)
+	admitted, err := e.admit_window(&m, w, {prepare = preparation_accept_seed})
+	testing.expect_value(t, err, ""); testing.expect(t, admitted)
+	n := layout.find(s.view.root, 30)
+	testing.expect(t, n != nil && n.column_tabbed && n.count == 3)
+	// Prepared once, at the tab frame itself: no half-width slide-in.
+	testing.expect_value(t, seed_count, 1)
+	testing.expect_value(t, seeds[0].w, tab.w)
+	testing.expect_value(t, seeds[0].h, tab.h)
+	testing.expect_value(t, w.frame.w, tab.w)
+}
+
+@(test)
+new_column_still_grows_in_from_half_width :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	seed_count = 0
+	w := e.discover_window(&m, {id = 30, pid = 70, role = "AXWindow", subrole = "AXStandardWindow", space = 100, display = 10, frame = {100, 100, 440, 288}})
+	admitted, _ := e.admit_window(&m, w, {prepare = preparation_accept_seed})
+	testing.expect(t, admitted)
+	n := layout.find(e.space_by_id(&m, 100).view.root, 30)
+	target := layout.scroll_window_frame(&e.space_by_id(&m, 100).view, n, 30, false)
+	testing.expect_value(t, seed_count, 1)
+	testing.expect(t, seeds[0].w < target.w)
+}

@@ -57,6 +57,10 @@ foreign sls {
 	SLSTransactionSetWindowSystemAlpha :: proc(transaction: m.Ref, wid: u32, alpha: f32) ---
 	SLSTransactionAddWindowToSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
 	SLSTransactionRemoveWindowFromSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
+	SLSTransactionSetWindowEventShape :: proc(transaction: m.Ref, wid: u32, region: m.Ref) ---
+	CGSNewEmptyRegion :: proc(region: ^m.Ref) -> i32 ---
+	CGSNewRegionWithRect :: proc(rect: ^m.Rect, region: ^m.Ref) -> i32 ---
+	CGSReleaseRegion :: proc(region: m.Ref) -> i32 ---
 }
 @(default_calling_convention = "c")
 foreign sys {
@@ -350,6 +354,80 @@ tick_proxy_recovery :: proc() {
 	}
 	for window in done {delete_key(&hidden_proxies, window)}
 }
+// A concealed window is invisible and lets clicks through, so it must never
+// outlive the Shoji process that concealed it. Each entry remembers that
+// client; tick_concealed reveals the window once the client has exited.
+// A Dock restart drops this table (the concealing daemon still owns them).
+CONCEALED_LIMIT :: 256
+CONCEALED_CHECK_INTERVAL :: 250 * time.Millisecond
+Concealed :: struct {
+	owner:  i32, // window owner connection, guards against ID reuse
+	client: i32, // concealing process
+}
+concealed: map[u32]Concealed
+concealed_checked: time.Time
+
+peer_pid :: proc(fd: i32) -> i32 {
+	pid: i32;size := posix.socklen_t(size_of(pid))
+	// SOL_LOCAL (0), LOCAL_PEERPID (2) from <sys/un.h>.
+	if posix.getsockopt(posix.FD(fd), 0, posix.Sock_Option(2), &pid, &size) != .OK {return 0}
+	return pid
+}
+
+conceal_request :: proc(id: u32, conceal: bool, client: i32, diagnostic: ^dock.Native_Failure) -> dock.Status {
+	if !conceal {
+		delete_key(&concealed, id)
+		return conceal_window(id, false, diagnostic)
+	}
+	// Refuse what the watchdog could not undo.
+	if client <= 0 {return .Operation_Failed}
+	owner, exists := payload_recovery_owner(nil, id)
+	if !exists {return .Operation_Failed}
+	if len(concealed) >= CONCEALED_LIMIT && id not_in concealed {return .Operation_Failed}
+	concealed[id] = {owner, client}
+	result := conceal_window(id, true, diagnostic)
+	if result != .OK {delete_key(&concealed, id)}
+	return result
+}
+
+tick_concealed :: proc() {
+	if len(concealed) == 0 {return}
+	now := time.now()
+	if time.diff(concealed_checked, now) < CONCEALED_CHECK_INTERVAL {return}
+	concealed_checked = now
+	done := make([dynamic]u32, 0, 8, context.temp_allocator)
+	for id, entry in concealed {
+		owner, exists := payload_recovery_owner(nil, id)
+		if !exists || owner != entry.owner {append(&done, id);continue}
+		// ESRCH: the client is gone. EPERM still means it is alive.
+		if posix.kill(posix.pid_t(entry.client), posix.Signal(0)) != .OK && posix.errno() == .ESRCH {
+			if conceal_window(id, false, nil) == .OK {append(&done, id)}
+		}
+	}
+	for id in done {delete_key(&concealed, id)}
+}
+
+conceal_window :: proc(id: u32, conceal: bool, diagnostic: ^dock.Native_Failure) -> dock.Status {
+	region: m.Ref
+	if conceal {
+		if code := CGSNewEmptyRegion(&region); code != 0 || region == nil {return .Operation_Failed}
+	} else {
+		// No getter exists for the previous event shape; the window's own
+		// rectangle is the shape AppKit installs for an ordinary window.
+		frame: m.Rect
+		if m.SLSGetWindowBounds(g.cid, id, &frame) != 0 {return .Operation_Failed}
+		local := m.Rect{0, 0, frame.w, frame.h}
+		if code := CGSNewRegionWithRect(&local, &region); code != 0 || region == nil {return .Operation_Failed}
+	}
+	defer _ = CGSReleaseRegion(region)
+	transaction := SLSTransactionCreate(g.cid)
+	if transaction == nil {dock.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
+	defer m.CFRelease(transaction)
+	SLSTransactionSetWindowSystemAlpha(transaction, id, conceal ? 0 : 1)
+	SLSTransactionSetWindowEventShape(transaction, id, region)
+	SLSTransactionCommit(transaction, 1)
+	return .OK
+}
 fades: map[u32]Fade
 status :: proc(code: i32) -> dock.Status {return code == 0 ? .OK : .Operation_Failed}
 tick_fades :: proc() {
@@ -362,7 +440,7 @@ tick_fades :: proc() {
 	}
 	for id in done {delete_key(&fades, id)}
 }
-window_action :: proc(op: dock.Opcode, r: ^dock.Reader, diagnostic: ^dock.Native_Failure) -> dock.Status {
+window_action :: proc(op: dock.Opcode, r: ^dock.Reader, diagnostic: ^dock.Native_Failure, client: i32) -> dock.Status {
 	if op == .Window_To_Space || op == .Window_List_To_Space {
 		sid := dock.unpack(r, u64);if sid == 0 {return .Invalid_Message}
 		values := make([dynamic]u64, 0, 8, context.temp_allocator)
@@ -468,6 +546,10 @@ window_action :: proc(op: dock.Opcode, r: ^dock.Reader, diagnostic: ^dock.Native
 		if op == .Window_Shadow {tags = 1 << 3;set = !set}
 		if set {return status(SLSSetWindowTags(g.cid, id, &tags, 64))}
 		return status(SLSClearWindowTags(g.cid, id, &tags, 64))
+	case .Window_Conceal:
+		conceal := dock.unpack(r, u8)
+		if conceal > 1 {return .Invalid_Message}
+		return conceal_request(id, conceal == 1, client, diagnostic)
 	case .Window_Focus:
 		if g.focus == nil || dock.focus_target_blocked(g.version) {return .Unsupported}
 		owner: i32;psn: PSN
@@ -540,23 +622,26 @@ Request :: struct {
 	ctx:    runtime.Context,
 	native_failure: dock.Native_Failure,
 	created_space: u64,
+	// Process ID of the requesting client (LOCAL_PEERPID), 0 if unknown.
+	client: i32,
 }
 main_request :: proc "c" (user: rawptr) {
 	req := (^Request)(user);context = req.ctx
 	pool := m.pool_push();defer m.pool_pop(pool)
-	if req.tick {tick_fades();tick_proxy_recovery();return}
+	if req.tick {tick_fades();tick_proxy_recovery();tick_concealed();return}
 	if !dock.validate(req.op, req.bytes) {req.result = .Invalid_Message;return}
 	if req.op == .Handshake {req.result = .OK;return}
 	r := dock.reader(req.bytes)
 	if (req.op >= .Space_Focus && req.op <= .Space_Move) || req.op == .Space_Create_Tracked {
 		req.result = space_action(req.op, &r, &req.created_space)
-	} else {req.result = window_action(req.op, &r, &req.native_failure)}
+	} else {req.result = window_action(req.op, &r, &req.native_failure, req.client)}
 }
 initialize_payload :: proc "c" (unused: rawptr) {
 	context = runtime.default_context()
 	pool := m.pool_push();defer m.pool_pop(pool)
-	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys, .Space_Transaction};if g.add != nil {g.caps += {.Tracked_Space_Create}}
+	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys, .Space_Transaction, .Window_Conceal};if g.add != nil {g.caps += {.Tracked_Space_Create}}
 	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]dock.Entry)
+	concealed = make(map[u32]Concealed)
 }
 listen_fd: i32 = -1
 serve :: proc "c" (unused: rawptr) -> rawptr {
@@ -598,9 +683,10 @@ serve_one :: proc(fd: i32) {
 	buffer: [dock.MAX_PACKET]u8
 	if !m.read_exact(fd, buffer[:count], deadline) {return}
 	req := Request {
-		op    = dock.Opcode(buffer[0]),
-		bytes = buffer[1:count],
-		ctx   = context,
+		op     = dock.Opcode(buffer[0]),
+		bytes  = buffer[1:count],
+		ctx    = context,
+		client = peer_pid(fd),
 	}
 	dispatch_sync_f(dispatch_get_main_queue(), &req, sign_c(main_request))
 	if req.result != .OK && req.native_failure.stage != .None {

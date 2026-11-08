@@ -2,6 +2,7 @@ package shoji
 
 import "core:fmt"
 import "core:math"
+import "core:time"
 import layout "layout"
 
 foreign import feedback_sls "system:SkyLight.framework"
@@ -42,6 +43,25 @@ Focus_Ring :: struct {
 	failed: bool,
 	order_dirty: bool,
 	bars: [8]Feedback_Window,
+	// Focused window still being prepared by the opening pipeline, and since when.
+	pending: u32,
+	pending_since: time.Tick,
+}
+
+// A new window takes focus before admission while it is prepared concealed
+// (about 100 ms). Decorations keep showing the column it is joining until then,
+// so a new tab does not blink the tab bar. Bounded so a window that waits for
+// room or readiness cannot freeze the decorations.
+FOCUS_RING_OPENING_HOLD :: 500 * time.Millisecond
+
+focus_ring_opening_hold :: proc(state: ^State, w: ^Window) -> bool {
+	ring := &state.focus_ring
+	if w == nil || w.opening.phase != .Pending || ring.owner == 0 {
+		ring.pending = 0; return false
+	}
+	now := time.tick_now()
+	if ring.pending != w.id {ring.pending, ring.pending_since = w.id, now}
+	return time.tick_diff(ring.pending_since, now) < FOCUS_RING_OPENING_HOLD
 }
 
 Tab_Indicator_State :: struct {
@@ -75,16 +95,20 @@ tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
 		plan := Feedback_Plan{window = relative, frame = tabs[i].frame, color = color, solid = true}
 		if plan != bar.plan {
 			indicator.order_dirty = true
-			if bar.surface.id != 0 && bar.plan.window == plan.window && bar.plan.color == plan.color && backend.update != nil {
+			// A new owner window only needs the reorder below; only a color
+			// change redraws. The replacement exists before the old bar goes, so
+			// a tab switch or a new tab never shows a gap in the bar.
+			if bar.surface.id != 0 && bar.plan.color == plan.color && backend.update != nil {
 				if err := backend.update(state, bar.surface, plan.frame); err != "" {
 					backend.destroy(state, bar.surface); bar.surface = {}
 					fmt.eprintln("shoji: tab indicator:", err)
 				}
 			} else {
-				if bar.surface.id != 0 { backend.destroy(state, bar.surface) }
+				old := bar.surface
 				err: string
 				bar.surface, err = backend.create(state, plan)
 				if err != "" { fmt.eprintln("shoji: tab indicator:", err) }
+				if old.id != 0 { backend.destroy(state, old) }
 			}
 			bar.plan = plan
 		}
@@ -174,6 +198,7 @@ focus_ring_fail :: proc(state: ^State, err: string) {
 
 focus_ring_tick :: proc(state: ^State) {
 	w := state.manager.windows[state.manager.focused]
+	if focus_ring_opening_hold(state, w) {return}
 	if state.read_only ||
 	   state.focus_ring_held ||
 	   w == nil ||
