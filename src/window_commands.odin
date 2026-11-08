@@ -463,7 +463,9 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 				n.windows[a], n.windows[b] = n.windows[b], n.windows[a]
 				return result(flush(m, s))
 			}
-			if !layout.swap(n, other) {
+			swapped :=
+				s.view.layout == .Scroll ? layout.swap_columns(n, other) : layout.swap(n, other)
+			if !swapped {
 				return failure("windows are already in the same stack")
 			}
 			if s.view.layout == .Scroll { s.view.scroll.fill_after_removal = true }
@@ -561,6 +563,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			return failure("insert expects north, east, south, west, or stack")
 		}
 		n.insert_first = operand == "west" || operand == "north"
+		motion_trace_record(&m.motion_trace, {kind = "insert-armed", window = w.id, space = s.id, status = n.insert_stack ? 1 : 0})
 		s.view.insertion = w.id
 	case "--move", "--resize":
 		parts := strings.split(operand, ":", context.temp_allocator)

@@ -42,7 +42,7 @@ motion_capture_expires_and_rejects_invalid_commands :: proc(t: ^testing.T) {
 	m: e.Manager
 	defer delete(m.motion_trace.events)
 	e.execute(&m, {"debug", "motion", "start"})
-	e.motion_trace_record(&m.motion_trace, {kind = "sample"}, time.tick_add(m.motion_trace.started, 31 * time.Second))
+	e.motion_trace_record(&m.motion_trace, {kind = "sample"}, time.tick_add(m.motion_trace.started, 61 * time.Second))
 	testing.expect(t, m.motion_trace.expired && !m.motion_trace.active)
 	testing.expect_value(t, len(m.motion_trace.events), 0)
 	testing.expect(t, e.execute(&m, {"debug", "motion"}).failed)

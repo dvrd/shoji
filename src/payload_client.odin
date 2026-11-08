@@ -141,6 +141,12 @@ addition_action :: proc(action: Action) -> string {
 	packet: dock.Packet
 
 	#partial switch action.kind {
+	case .Conceal:
+		if .Window_Conceal not_in caps {
+			return "Dock payload lacks window concealment; restart Dock and the Shoji service"
+		}
+		packet = dock.begin(.Window_Conceal); dock.pack(&packet, action.window)
+		dock.pack(&packet, u8(action.flag ? 1 : 0))
 	case .Order:
 		packet = dock.begin(.Window_Order); dock.pack(&packet, action.window)
 		dock.pack(&packet, i32(action.value))

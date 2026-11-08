@@ -408,6 +408,33 @@ swap :: proc(a, b: ^Node) -> bool {
 	return true
 }
 
+// Scroll columns trade places whole: width policy, display mode (tabbed,
+// full width) and row heights belong to the column's windows, not to its slot
+// in the strip. Only tree links and slot geometry stay behind.
+swap_columns :: proc(a, b: ^Node) -> bool {
+	if !leaf(a) || !leaf(b) || a == b {
+		return false
+	}
+	Slot :: struct {
+		parent, left, right: ^Node,
+		frame, minimum:      Rect,
+		ratio:               f64,
+		split:               Split,
+	}
+	keep :: proc(n: ^Node) -> Slot {
+		return {n.parent, n.left, n.right, n.frame, n.minimum, n.ratio, n.split}
+	}
+	put :: proc(n: ^Node, s: Slot) {
+		n.parent, n.left, n.right = s.parent, s.left, s.right
+		n.frame, n.minimum, n.ratio, n.split = s.frame, s.minimum, s.ratio, s.split
+		n.zoom = nil
+	}
+	slot_a, slot_b := keep(a), keep(b)
+	a^, b^ = b^, a^
+	put(a, slot_a); put(b, slot_b)
+	return true
+}
+
 rotate :: proc(n: ^Node, degrees: int) {
 	if n == nil || leaf(n) {
 		return

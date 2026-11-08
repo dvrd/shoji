@@ -330,6 +330,7 @@ observer_callback :: proc "c" (
 	}
 	if name == "AXUIElementDestroyed" {
 		state.structural_dirty = true; opening_destroyed(state, element)
+		window_destroyed(state, element)
 		return
 	}
 	// AXCreated can precede AXWindowCreated for AppKit, but also announces
@@ -339,6 +340,19 @@ observer_callback :: proc "c" (
 			   attribute_text(element, "AXRole") == "AXWindow") {
 		state.structural_dirty = true
 		opening_created(state, observer, element)
+	}
+}
+
+// The structural refresh that removes a closed window runs on a later loop
+// iteration. Until then the focus ring and tab indicator would outline an
+// empty frame, so mark the window ordered out (as focus_ring_prune_unordered
+// does) and drop its decorations now.
+window_destroyed :: proc(state: ^State, element: Ref) {
+	for id, ref in state.windows {
+		if ref == nil || !CFEqual(ref, element) {continue}
+		if w := state.manager.windows[id]; w != nil {w.ordered_in = false}
+		if id == state.focus_ring.owner {focus_ring_stop(state); tab_indicator_stop(state)}
+		return
 	}
 }
 
@@ -362,6 +376,8 @@ state_init :: proc(state: ^State) {
 }
 
 state_destroy :: proc(state: ^State) {
+	// Before Accessibility and payload state go: no window stays hidden.
+	tab_conceal_release(&state.manager)
 	defer callback_scratch_destroy(&state.callback_scratch)
 	resize_cover_stop(state)
 	display_clock_stop(&state.display_clock)
@@ -448,7 +464,8 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 	   action.kind == .Sticky ||
 	   action.kind == .Shadow ||
 	   action.kind == .Order ||
-	   action.kind == .Scale {
+	   action.kind == .Scale ||
+	   action.kind == .Conceal {
 		err := addition_action(action); if err == "" {
 			state.dirty = true
 			focus_ring_note_action(state, action)

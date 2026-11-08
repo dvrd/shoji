@@ -586,7 +586,14 @@ dock_space_transaction_opcode_is_fixed_size :: proc(t: ^testing.T) {
 	data: [20]u8
 	testing.expect(t, dock.validate(.Window_To_Space_Transaction, data[:]))
 	testing.expect(t, !dock.validate(.Window_To_Space_Transaction, data[:12]))
-	testing.expect(t, !dock.validate(dock.Opcode(u8(dock.Opcode.Window_To_Space_Transaction) + 1), data[:]))
+}
+
+@(test)
+dock_conceal_opcode_is_window_and_flag :: proc(t: ^testing.T) {
+	data: [5]u8
+	testing.expect(t, dock.validate(.Window_Conceal, data[:]))
+	testing.expect(t, !dock.validate(.Window_Conceal, data[:4]))
+	testing.expect(t, !dock.validate(dock.Opcode(u8(dock.Opcode.Window_Conceal) + 1), data[:]))
 }
 
 @(test)
