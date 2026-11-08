@@ -279,6 +279,9 @@ State :: struct {
 	// Owned surfaces queued for the open camera layout batch.
 	frame_owned: [OWNED_BATCH_LIMIT]Layout_Move,
 	frame_owned_count: int,
+	// Ring and tab bars ride the camera batch. Off: releasing the origin
+	// placement left the ring at its creation origin for a frame (flicker).
+	feedback_batch_origin: bool,
 	focus_geometry_dirty: bool,
 	focus_frame_probe: proc(state: ^State, window: u32) -> (Rect, bool),
 	focus_scroll_pending: u32,

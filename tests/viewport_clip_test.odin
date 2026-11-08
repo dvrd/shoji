@@ -3,6 +3,7 @@ package tests
 import e "../src"
 import dock "../src/dock"
 import layout "../src/layout"
+import "core:math"
 import "core:testing"
 
 @(test)
@@ -54,6 +55,7 @@ viewport_clip_sync_sends_overflow_then_restores :: proc(t: ^testing.T) {
 	clip_count = 0
 	clip_fail = ""
 	m.present = clip_record
+	m.viewport_clip = true
 	win := m.windows[1]
 	view := m.spaces[0].view.scroll.viewport
 	win.frame = {1200, 0, 400, 400}
@@ -86,4 +88,28 @@ viewport_clip_sync_sends_overflow_then_restores :: proc(t: ^testing.T) {
 	testing.expect_value(t, clip_seen[2].event_kind, u8(0))
 	testing.expect_value(t, clip_seen[2].w, i32(0))
 	testing.expect(t, win.viewport_clipped)
+}
+
+@(test)
+viewport_clip_off_repairs_each_window_once :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder
+	niri_fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	clip_count = 0
+	clip_fail = ""
+	m.present = clip_record
+	win := m.windows[m.focused]
+	e.viewport_clip_sync(&m, m.spaces[0])
+	testing.expect_value(t, clip_count, 2)
+	testing.expect_value(t, clip_seen[0].window, win.id)
+	testing.expect_value(t, clip_seen[0].mask, dock.PRESENT_CLIP)
+	testing.expect_value(t, clip_seen[0].event_kind, u8(1))
+	testing.expect_value(t, clip_seen[0].w, i32(65536))
+	testing.expect_value(t, clip_seen[1].mask, dock.PRESENT_EVENT)
+	testing.expect_value(t, clip_seen[1].x, i32(0))
+	testing.expect_value(t, clip_seen[1].y, i32(0))
+	testing.expect_value(t, clip_seen[1].w, i32(math.round(win.frame.w)))
+	testing.expect_value(t, clip_seen[1].h, i32(math.round(win.frame.h)))
+	e.viewport_clip_sync(&m, m.spaces[0])
+	testing.expect_value(t, clip_count, 2)
 }

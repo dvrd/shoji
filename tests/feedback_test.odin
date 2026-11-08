@@ -122,6 +122,35 @@ scroll_focus_change_reuses_the_ring_surfaces :: proc(t: ^testing.T) {
 }
 
 @(test)
+scroll_focus_travel_hides_the_ring_until_the_window_arrives :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	fixture(&state.manager, &actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update}
+	defer mac.feedback_stop(&state)
+	testing.expect(t, !mac.execute(&state.manager, {"space", "--layout", "scroll"}).failed)
+	mac.focus_ring_tick(&state)
+	testing.expect(t, state.focus_ring.owner != 0)
+	w := state.manager.windows[state.manager.focused]
+	rest := w.frame
+	w.frame = {4000, rest.y, rest.w, rest.h}
+	state.manager.spaces[0].view.scroll.motion.active = true
+	destroyed := r.destroyed
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, state.focus_ring.owner, u32(0))
+	testing.expect(t, r.destroyed > destroyed)
+	for bar in state.focus_ring.bars {
+		testing.expect_value(t, bar.surface.id, u32(0))
+	}
+	w.frame = rest
+	state.manager.spaces[0].view.scroll.motion.active = false
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, state.focus_ring.owner, w.id)
+	testing.expect_value(t, state.focus_ring.bars[0].plan.frame.x, rest.x + state.manager.focus_ring.radius)
+}
+
+@(test)
 scroll_ring_tracks_observed_window_during_motion :: proc(t: ^testing.T) {
 	state: mac.State; actions: Recorder; r: Animation_Recorder
 	fixture(&state.manager, &actions)
