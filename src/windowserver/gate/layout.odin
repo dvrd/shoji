@@ -1,6 +1,8 @@
 package gate
 
-LAYOUT_LIMIT :: 32
+// One frame: the window batch (manager LAYOUT_BATCH_LIMIT) plus every focus-ring
+// bar and every tab indicator. The Mach receive buffer is sized from this.
+LAYOUT_LIMIT :: 72
 Layout_Item :: struct {wid: u32, x, y: i32}
 Layout_Plan :: struct {
 	items: [LAYOUT_LIMIT]Layout_Item,

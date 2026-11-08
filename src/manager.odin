@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
+import dock "dock"
 import layout "layout"
 
 // Manager state and reconciliation
@@ -135,8 +136,10 @@ Layout_Move :: struct {
 	window: u32,
 	x, y:   f64,
 }
-// Capacity of one batch; the gate adapter refuses more than its payload takes.
+// Window moves in one camera frame. Owned focus-ring and tab-indicator moves
+// are added on top, up to the gate's LAYOUT_LIMIT (32 + 8 + 32).
 LAYOUT_BATCH_LIMIT :: 32
+OWNED_BATCH_LIMIT :: 40
 Layout_Batch :: #type proc(user: rawptr, moves: []Layout_Move) -> bool
 Manager :: struct {
 	window_generation: u64,
@@ -209,6 +212,15 @@ Manager :: struct {
 	// Frame-atomic position batch through the WindowServer gate (C1). Called with backend_user;
 	// true only when every move was applied. Nil → per-window frames.
 	layout_batch: Layout_Batch,
+	// While set, scroll_camera_apply stores moves instead of sending them.
+	// layout_frame_submit sends those moves and any owned surfaces together.
+	camera_hold: bool,
+	camera_held: int,
+	camera_moves: [LAYOUT_BATCH_LIMIT]Layout_Move,
+	// Empty skips the Dock-restart check. The daemon sets the journal path.
+	conceal_journal: string,
+	conceal_boot: u64,
+	conceal_stamp: i64,
 	// Daemon-only WindowServer diagnostics (`debug ws`); nil elsewhere.
 	ws_debug: proc(user: rawptr, dump: bool) -> string,
 	// Daemon-only runtime health JSON (`query --health`); nil elsewhere.
@@ -258,6 +270,7 @@ window_destroy :: proc(w: ^Window) {
 }
 
 manager_destroy :: proc(m: ^Manager) {
+	delete(m.conceal_journal)
 	delete(m.motion_trace.events)
 	for _, w in m.windows {
 		window_destroy(w)
@@ -633,10 +646,110 @@ scroll_camera_batching :: proc(m: ^Manager, s: ^Space, live_resize: bool) -> boo
 		m.native_resize_window == 0
 }
 
+// A later flush in the same held frame replaces a window's position.
+// False when this flush's new windows do not fit; nothing from it is stored.
+camera_hold_store :: proc(m: ^Manager, moves: []Deferred_Frame) -> bool {
+	fresh := 0
+	for d in moves {
+		seen := false
+		for i in 0 ..< m.camera_held {
+			if m.camera_moves[i].window == d.window.id {seen = true; break}
+		}
+		if !seen {fresh += 1}
+	}
+	if m.camera_held + fresh > LAYOUT_BATCH_LIMIT {return false}
+	for d in moves {
+		move := Layout_Move{d.window.id, d.frame.x, d.frame.y}
+		replaced := false
+		for i in 0 ..< m.camera_held {
+			if m.camera_moves[i].window == move.window {
+				m.camera_moves[i] = move
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			m.camera_moves[m.camera_held] = move
+			m.camera_held += 1
+		}
+	}
+	return true
+}
+
+layout_frame_fallback :: proc(m: ^Manager, moves: []Layout_Move) {
+	for move in moves {
+		w := m.windows[move.window]
+		if w == nil {continue}
+		if err := perform(m, Action{kind = .Frame, window = move.window, frame = w.frame, direct = true}); err != "" {
+			continue
+		}
+		w.ax_stale = false
+		w.server_placed = false
+	}
+}
+
+// Sends the held camera moves and `owned` surfaces in one layout batch.
+// False means `owned` was not in a successful batch; the caller places those
+// surfaces itself. Held window moves are still applied, by the batch or by
+// the per-window fallback.
+layout_frame_submit :: proc(m: ^Manager, owned: []Layout_Move) -> bool {
+	held := m.camera_held
+	windows := m.camera_moves[:held]
+	m.camera_held = 0
+	if held == 0 && len(owned) == 0 {return true}
+	if m.layout_batch == nil {
+		layout_frame_fallback(m, windows)
+		return false
+	}
+	if len(owned) == 0 {
+		if m.layout_batch(m.backend_user, windows) {return true}
+		layout_frame_fallback(m, windows)
+		return false
+	}
+	combined := make([dynamic]Layout_Move, 0, held + len(owned), context.temp_allocator)
+	append(&combined, ..windows)
+	append(&combined, ..owned)
+	if m.layout_batch(m.backend_user, combined[:]) {return true}
+	if held > 0 && m.layout_batch(m.backend_user, windows) {return false}
+	layout_frame_fallback(m, windows)
+	return false
+}
+
 // Batches the frame's pure moves; any failure (too many windows, a window
 // still animating, the gate refusing) falls back to per-window writes.
 scroll_camera_apply :: proc(m: ^Manager, moves: []Deferred_Frame, live_resize: bool) -> string {
 	if len(moves) == 0 {return ""}
+	if m.camera_hold && m.layout_batch != nil {
+		if camera_hold_store(m, moves) {
+			for d in moves {
+				d.window.frame = d.frame
+				d.window.server_placed = true
+				d.window.ax_stale = true
+			}
+			return ""
+		}
+		// This flush does not fit. Keep earlier holds, refresh any window
+		// already in them, and place only the new windows one by one.
+		for d in moves {
+			replaced := false
+			for i in 0 ..< m.camera_held {
+				if m.camera_moves[i].window == d.window.id {
+					m.camera_moves[i] = {d.window.id, d.frame.x, d.frame.y}
+					d.window.frame = d.frame
+					d.window.server_placed = true
+					d.window.ax_stale = true
+					replaced = true
+					break
+				}
+			}
+			if replaced {continue}
+			action := Action{kind = .Frame, window = d.window.id, frame = d.frame, live_resize = live_resize, direct = true}
+			if err := perform(m, action); err != "" {return err}
+			d.window.frame = d.frame
+			d.window.ax_stale = false
+		}
+		return ""
+	}
 	if len(moves) <= LAYOUT_BATCH_LIMIT {
 		batch := make([]Layout_Move, len(moves), context.temp_allocator)
 		for d, i in moves {batch[i] = {d.window.id, d.frame.x, d.frame.y}}
@@ -864,7 +977,23 @@ tab_concealable :: proc(s: ^Space, id: u32) -> bool {
 // reveals it on its own if this daemon dies.
 // Reveals run before conceals: a tab switch shows the new tab (already raised
 // above) before hiding the old one, so no frame shows neither.
+// A Dock restart rewrites the conceal journal with a new boot. Windows that
+// the previous payload refused can be tried again; a rewrite that keeps the
+// boot (the same payload saving the table) does not retry.
+conceal_payload_changed :: proc(m: ^Manager) {
+	if m.conceal_journal == "" {return}
+	mtime, boot, ok := dock.conceal_journal_stamp(m.conceal_journal)
+	if !ok || mtime == m.conceal_stamp {return}
+	m.conceal_stamp = mtime
+	if boot == 0 || boot == m.conceal_boot {return}
+	m.conceal_boot = boot
+	for _, w in m.windows {
+		if w != nil {w.conceal_refused = false}
+	}
+}
+
 tab_conceal_sync :: proc(m: ^Manager, s: ^Space) {
+	conceal_payload_changed(m)
 	for pass in ([2]bool{false, true}) {tab_conceal_pass(m, s, pass)}
 }
 

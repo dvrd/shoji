@@ -7,6 +7,7 @@ import "core:strings"
 import "core:sync"
 import posix "core:sys/posix"
 import "core:time"
+import dock "dock"
 import ipc "ipc"
 
 foreign import libc "system:c"
@@ -266,6 +267,15 @@ run :: proc(
 	   err != "" {
 		fmt.eprintln("shoji:", err); return 1
 	}
+	conceal_path := dock.conceal_journal_path(getuid())
+	if validation_pid != 0 {
+		conceal_path = fmt.tprintf(
+			"/tmp/shoji-validation-concealed_%d_%d.json",
+			getuid(),
+			validation_pid,
+		)
+	}
+	state.manager.conceal_journal = strings.clone(conceal_path)
 	defer ws_adapter_close(&state.ws)
 	attach: Ws_Attach_Runtime
 	ws_attach_runtime_start(&attach, &state.ws, &state.manager)

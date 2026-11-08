@@ -380,6 +380,22 @@ motion_frame_tick :: proc(
 			}
 		}
 	}
+	// Registered after the update-end defer, so the submit runs first and
+	// still inside the disabled section. The hold stays off unless a batch
+	// exists, which keeps tests and unbatched flushes on the immediate path.
+	hold := active && state.manager.layout_batch != nil
+	state.manager.camera_hold = hold
+	state.frame_owned_count = 0
+	defer {
+		if hold {
+			owned := state.frame_owned[:state.frame_owned_count]
+			if !layout_frame_submit(&state.manager, owned) {
+				feedback_owned_fallback(state)
+			}
+		}
+		state.manager.camera_hold = false
+		state.frame_owned_count = 0
+	}
 	state.manager.scroll_time = time.duration_seconds(
 		time.diff(time.Time{}, sample_now),
 	)
