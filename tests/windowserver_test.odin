@@ -53,13 +53,19 @@ windowserver_target_requires_the_exact_system_executable :: proc(
 
 @(test)
 windowserver_ordering_target_requires_exact_identity_range_and_signature :: proc(t: ^testing.T) {
+	targets := gate.BUILD_TARGETS
+	for target in targets {
+		ordering_target_checks(t, target)
+	}
+}
+
+ordering_target_checks :: proc(t: ^testing.T, target: gate.Build_Target) {
 	location := gate.Ordering_Location {
-		uuid = gate.ORDERING_IMAGE_UUID,
+		uuid = target.ordering_image_uuid,
 		slide = 0x46d8000,
-		// Keep the entry inside text for whichever build is selected.
-		text_start = 0x46d8000 + gate.ORDERING_UNSLID_ENTRY - 0x463260,
+		text_start = 0x46d8000 + target.ordering_unslid_entry - 0x463260,
 		text_size = 0x1000000,
-		candidate = 0x46d8000 + gate.ORDERING_UNSLID_ENTRY,
+		candidate = 0x46d8000 + target.ordering_unslid_entry,
 	}
 	testing.expect(t, gate.valid_ordering_location(location))
 	signature := gate.ORDERING_ENTRY_SIGNATURE
@@ -80,6 +86,24 @@ windowserver_ordering_target_requires_exact_identity_range_and_signature :: proc
 	testing.expect(t, !gate.matches_ordering_entry(location, signature[:15]))
 	signature[15] ~= 1
 	testing.expect(t, !gate.matches_ordering_entry(location, signature[:]))
+}
+
+@(test)
+windowserver_build_targets_are_distinct_and_complete :: proc(t: ^testing.T) {
+	targets := gate.BUILD_TARGETS
+	for target, i in targets {
+		found, ok := gate.target_by_build(target.build)
+		testing.expect(t, ok && found.ordering_image_uuid == target.ordering_image_uuid)
+		by_uuid, uuid_ok := gate.target_by_uuid(target.ordering_image_uuid)
+		testing.expect(t, uuid_ok && by_uuid.build == target.build)
+		testing.expect(t, target.dispatch_op_limit >= 0x8c)
+		for other in targets[i + 1:] {
+			testing.expect(t, other.build != target.build)
+			testing.expect(t, other.ordering_image_uuid != target.ordering_image_uuid)
+		}
+	}
+	_, unknown := gate.target_by_build("26Z999")
+	testing.expect(t, !unknown)
 }
 
 @(test)
@@ -687,13 +711,13 @@ gate_layout_submit_round_trips_items_and_rejects_bad_sizes :: proc(t: ^testing.T
 gate_capabilities_trailer_round_trips_and_a_short_reply_stays_bare :: proc(t: ^testing.T) {
 	buffer: [gate.GATE_RECEIVE_BUFFER_SIZE]u8
 	ops := gate.GATED_OPS
-	n, ok := gate.gate_pack_capabilities(buffer[:], 7, u32(gate.Gate_Command.Capabilities), 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, u64(gate.LAYOUT_LIMIT), gate.ORDERING_IMAGE_UUID, ops[:])
+	n, ok := gate.gate_pack_capabilities(buffer[:], 7, u32(gate.Gate_Command.Capabilities), 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, u64(gate.LAYOUT_LIMIT), test_ordering_uuid(), ops[:])
 	testing.expect(t, ok)
 	testing.expect(t, n > gate.GATE_MSG_SIZE)
 	reply, reply_ok := gate.gate_unpack_reply(buffer[:])
 	testing.expect(t, reply_ok)
 	testing.expect(t, reply.identity && !reply.rejected)
-	testing.expect_value(t, reply.uuid, gate.ORDERING_IMAGE_UUID)
+	testing.expect_value(t, reply.uuid, test_ordering_uuid())
 	testing.expect_value(t, reply.op_count, u32(len(gate.GATED_OPS)))
 	testing.expect(t, gate.gated_ops_match(reply.ops[:reply.op_count]))
 	testing.expect_value(t, reply.data0, gate.GATE_FEATURE_LAYOUT_SUBMIT)
@@ -743,4 +767,10 @@ gate_present_mask_selects_only_issued_ops :: proc(t: ^testing.T) {
 	testing.expect(t, !gate.present_claims(0x0b, clipped))
 	testing.expect(t, !gate.present_claims(0x0e, 0))
 	testing.expect(t, !gate.present_claims(0x0e, gate.PRESENT_MASK + 1))
+}
+
+// Any supported build's UUID; protocol tests only need a known identity.
+test_ordering_uuid :: proc() -> [16]u8 {
+	targets := gate.BUILD_TARGETS
+	return targets[0].ordering_image_uuid
 }

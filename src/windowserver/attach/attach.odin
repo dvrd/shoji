@@ -111,10 +111,15 @@ ws_attach :: proc() -> (result: Ws_Attach_Result, err: Ws_Attach_Error) {
 	return
 }
 
+gate_supports :: proc(build: string) -> bool {
+	_, known := gate.target_by_build(build)
+	return known
+}
+
 ws_attach_preflight :: proc(result: ^Ws_Attach_Result) -> Ws_Attach_Error {
 	if posix.geteuid() != 0 {return .Not_Root}
 	if os.exists(WS_DISABLE_SENTINEL) {return .Disabled}
-	if build := os_build(); build != gate.BUILD {
+	if build := os_build(); !gate_supports(build) {
 		result.detail = build
 		return .Unsupported_Build
 	}

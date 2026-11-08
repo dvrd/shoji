@@ -464,7 +464,7 @@ ws_adapter_capabilities_reject_a_foreign_build :: proc(t: ^testing.T) {
 	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, 32)
 	g.identity = true
 	g.rejected = false
-	g.uuid = gate.ORDERING_IMAGE_UUID
+	g.uuid = test_ordering_uuid()
 	g.uuid[0] ~= 0xff
 	g.op_count = u32(len(gate.GATED_OPS))
 	for op, i in gate.GATED_OPS {g.ops[i] = u32(op)}
@@ -482,13 +482,13 @@ ws_adapter_capabilities_accept_this_build :: proc(t: ^testing.T) {
 	fake_push(&g, 0)
 	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, u64(gate.LAYOUT_LIMIT))
 	g.identity = true
-	g.uuid = gate.ORDERING_IMAGE_UUID
+	g.uuid = test_ordering_uuid()
 	g.op_count = u32(len(gate.GATED_OPS))
 	for op, i in gate.GATED_OPS {g.ops[i] = u32(op)}
 	a := fake_adapter(&g)
 	shoji.ws_adapter_capabilities(&a)
 	testing.expect(t, a.identity_ok)
-	testing.expect_value(t, a.build_uuid, gate.ORDERING_IMAGE_UUID)
+	testing.expect_value(t, a.build_uuid, test_ordering_uuid())
 	testing.expect_value(t, a.features, gate.GATE_FEATURE_LAYOUT_SUBMIT)
 	testing.expect_value(t, a.layout_limit, gate.LAYOUT_LIMIT)
 	testing.expect_value(t, a.gated_op_count, len(gate.GATED_OPS))
