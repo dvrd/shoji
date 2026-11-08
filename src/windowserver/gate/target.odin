@@ -7,7 +7,7 @@ EXPERIMENT_ENV :: "SHOJI_WINDOWSERVER_EXPERIMENT"
 
 // Exact SkyLight identity per supported build. Select with
 // -define:SHOJI_WS_BUILD=<build>; any other value fails to compile. Values come
-// from artifacts/macos_versions/<build>/model (rea/port-build.swift) and are
+// from artifacts/macos_versions/<build>/model (`spelunker-port build`) and are
 // exact-build gates: the payload refuses when UUID or entry bytes differ.
 BUILD :: #config(SHOJI_WS_BUILD, "26B123")
 
@@ -52,7 +52,7 @@ when BUILD == "26B123" {
 		{0x187333594, {0xd503237f, 0xd10203ff, 0x6d0323e9, 0xa9045ff8}},
 	}
 } else {
-	#panic("unsupported SHOJI_WS_BUILD; port it with tools/window-interception/rea")
+	#panic("unsupported SHOJI_WS_BUILD; port it with spelunker-port (spelunker project)")
 }
 
 // Build-tagged files shared by the payload, its controllers and Shoji.
