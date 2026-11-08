@@ -124,8 +124,8 @@ build_live_helper :: proc(c: tc.Context, prebuilt: bool = false) -> string {
 		&args,
 		tc.compiler(c),
 		"build",
-		"-warnings-as-errors",
 		tc.root_file(c, "tools/harness/fixtures/desktop"),
+		"-warnings-as-errors",
 		support.cat("-out:", tc.binary(c, "harness-fixture")),
 		"-extra-linker-flags:-F/System/Library/PrivateFrameworks",
 	)
