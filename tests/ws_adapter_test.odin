@@ -36,6 +36,7 @@ Fake_Gate :: struct {
 	commands:  [32]gate.Gate_Command,
 	fail_at:   int, // 1-based call index whose transport fails; 0 = never
 	bad_magic: bool,
+	items:     [32]int, // item count sent with each call
 }
 
 fake_push :: proc(g: ^Fake_Gate, status: i32, data0: u64 = 0, data1: u64 = 0) {
@@ -45,10 +46,16 @@ fake_push :: proc(g: ^Fake_Gate, status: i32, data0: u64 = 0, data1: u64 = 0) {
 	g.count += 1
 }
 
-fake_exchange :: proc(user: rawptr, command: gate.Gate_Command, arg0, arg1: u64) -> (gate.Gate_Reply, bool) {
+fake_exchange :: proc(
+	user: rawptr,
+	command: gate.Gate_Command,
+	arg0, arg1: u64,
+	items: []gate.Layout_Item,
+) -> (gate.Gate_Reply, bool) {
 	g := (^Fake_Gate)(user)
 	index := g.calls
 	g.commands[index] = command
+	g.items[index] = len(items)
 	g.calls += 1
 	if g.fail_at == g.calls || index >= g.count {return {}, false}
 	magic := u32(gate.GATE_REPLY_MAGIC)
@@ -465,4 +472,41 @@ ws_focus_receipt_times_out_and_cancel_supersedes :: proc(t: ^testing.T) {
 	shoji.ws_focus_pending(&a, 8, 43, start)
 	testing.expect_value(t, shoji.ws_focus_cancel(&a), 43)
 	testing.expect_value(t, g.commands[3], gate.Gate_Command.Watch)
+}
+
+@(test)
+ws_adapter_capabilities_select_single_message_layout :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0) // hello
+	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, 32) // capabilities
+	fake_push(&g, 0, 99, 7) // submit → generation 7
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	testing.expect_value(t, shoji.ws_layout_limit(&a), 32)
+	moves: [12]shoji.Ws_Layout_Move
+	for &move, index in moves {move = {u32(index + 10), i32(index) * 100, 0}}
+	generation, handled := shoji.ws_layout_stage(&a, moves[:], 99, 8000)
+	testing.expect(t, handled)
+	testing.expect_value(t, generation, 7)
+	// Twelve moves cost one round trip instead of fourteen.
+	testing.expect_value(t, g.calls, 3)
+	testing.expect_value(t, g.commands[2], gate.Gate_Command.LayoutSubmit)
+	testing.expect_value(t, g.items[2], 12)
+}
+
+@(test)
+ws_adapter_old_payload_keeps_legacy_layout :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0) // hello
+	fake_push(&g, 1) // capabilities: unknown command on an older payload
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	testing.expect_value(t, a.state, shoji.Ws_Adapter_State.Serving)
+	testing.expect_value(t, a.status, i32(0))
+	testing.expect_value(t, shoji.ws_layout_limit(&a), gate.GATE_LEGACY_LAYOUT_LIMIT)
+	nine: [9]shoji.Ws_Layout_Move
+	for &move, index in nine {move = {u32(index + 10), 0, 0}}
+	_, handled := shoji.ws_layout_stage(&a, nine[:], 99, 8000)
+	testing.expect(t, !handled)
+	testing.expect_value(t, g.calls, 2)
 }

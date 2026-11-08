@@ -220,7 +220,7 @@ gate_try_handshake :: proc() {
 
 // Reply to a received request. The kernel leaves the send-once right in
 // msgh_remote_port; msgh_local_port is the gate's own receive right.
-gate_reply :: proc(buffer: ^[128]u8, command: u32, status: i32, data0, data1: u64) {
+gate_reply :: proc(buffer: ^Gate_Buffer, command: u32, status: i32, data0, data1: u64) {
 	reply_right, right_ok := gate.gate_received_reply_right(buffer[:])
 	if !right_ok {return}
 	n, ok := gate.gate_pack_reply(buffer[:], reply_right, command, status, data0, data1)
@@ -228,7 +228,22 @@ gate_reply :: proc(buffer: ^[128]u8, command: u32, status: i32, data0, data1: u6
 	gate.gate_mach_msg(buffer, gate.MACH_MSG_SEND, u32(n), 0, 0, 0, 0)
 }
 
-gate_handle_message :: proc(buffer: ^[128]u8) {
+Gate_Buffer :: [gate.GATE_RECEIVE_BUFFER_SIZE]u8
+
+// Seal the staged plan and arm the inline hold on the marker window; the
+// ordering callback applies the plan when the marker is ordered in.
+gate_layout_arm :: proc(buffer: ^Gate_Buffer, command: u32, marker, budget_us: u64) {
+	if observer_timebase.numer == 0 || observer_timebase.denom == 0 {gate_reply(buffer, command, 8, 0, 0); return}
+	if !gate.layout_seal(&layout_plan, marker, budget_us) {gate_reply(buffer, command, 1, 0, 0); return}
+	layout_budget_us = budget_us
+	layout_generation = hold.generation + 1
+	if layout_generation == 0 {layout_generation = 1}
+	intrinsics.atomic_store_explicit(&layout_complete, 0, .Release)
+	generation, _ := gate.hold_arm(&hold, marker, gate.HOLD_SCOPE_INLINE)
+	gate_reply(buffer, command, 0, marker, u64(generation))
+}
+
+gate_handle_message :: proc(buffer: ^Gate_Buffer) {
 	request, request_ok := gate.gate_unpack_request(buffer[:])
 	if !request_ok {
 		gate_reply(buffer, 0, 1, 0, 0)
@@ -264,6 +279,24 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 	arg0 := request.arg0
 	arg1 := request.arg1
 	switch gate.Gate_Command(command) {
+	case .Capabilities:
+		gate_reply(buffer, command, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, gate.LAYOUT_LIMIT)
+	case .LayoutSubmit:
+		if target, generation, busy := gate.hold_busy(&hold); busy {
+			gate_reply(buffer, command, 6, target, u64(generation))
+			return
+		}
+		items, count, items_ok := gate.gate_unpack_items(buffer[:])
+		if !items_ok {gate_reply(buffer, command, 1, 0, 0); return}
+		gate.layout_begin(&layout_plan)
+		for item in items[:count] {
+			if !gate.layout_add(&layout_plan, u64(item.wid), item.x, item.y) {
+				layout_plan = {}
+				gate_reply(buffer, command, 1, 0, 0)
+				return
+			}
+		}
+		gate_layout_arm(buffer, command, arg0, arg1)
 	case .LayoutBegin, .LayoutAdd, .LayoutArm:
 		if target, generation, busy := gate.hold_busy(&hold); busy {
 			gate_reply(buffer, command, 6, target, u64(generation))
@@ -278,14 +311,7 @@ gate_handle_message :: proc(buffer: ^[128]u8) {
 			if !gate.layout_add(&layout_plan, arg0, x, y) {gate_reply(buffer, command, 1, 0, 0); return}
 			gate_reply(buffer, command, 0, u64(layout_plan.count), arg0)
 		case .LayoutArm:
-			if observer_timebase.numer == 0 || observer_timebase.denom == 0 {gate_reply(buffer, command, 8, 0, 0); return}
-			if !gate.layout_seal(&layout_plan, arg0, arg1) {gate_reply(buffer, command, 1, 0, 0); return}
-			layout_budget_us = arg1
-			layout_generation = hold.generation + 1
-			if layout_generation == 0 {layout_generation = 1}
-			intrinsics.atomic_store_explicit(&layout_complete, 0, .Release)
-			generation, _ := gate.hold_arm(&hold, arg0, gate.HOLD_SCOPE_INLINE)
-			gate_reply(buffer, command, 0, arg0, u64(generation))
+			gate_layout_arm(buffer, command, arg0, arg1)
 		}
 	case .LayoutStatus:
 		if layout_generation == 0 {gate_reply(buffer, command, 8, 0, 0)} else if intrinsics.atomic_load_explicit(&layout_complete, .Acquire) == 0 {
@@ -846,7 +872,7 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 	context = runtime.default_context()
 	// Control enters only through authenticated Mach messages. The retired
 	// file channel must not bypass the signed-client identity policy.
-	buffer: struct #align(16) {bytes: [128]u8}
+	buffer: struct #align(16) {bytes: Gate_Buffer}
 	for {
 		if gate_mach_port != 0 {
 			if gate_bootstrap_port == 0 && intrinsics.atomic_load_explicit(&gate_slide_known, .Acquire) != 0 {

@@ -1,6 +1,6 @@
 package gate
 
-LAYOUT_LIMIT :: 8
+LAYOUT_LIMIT :: 32
 Layout_Item :: struct {wid: u32, x, y: i32}
 Layout_Plan :: struct {
 	items: [LAYOUT_LIMIT]Layout_Item,
