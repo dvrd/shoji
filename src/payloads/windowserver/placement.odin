@@ -26,6 +26,12 @@ placement_space_only: u32
 SPACE_OP_MIN, SPACE_OP_MAX :: 0x18, 0x19
 // SpaceApply: apply on claim and forward immediately (held=3), no Release wait.
 placement_auto: u32
+// PresentApply: claim only PRESENT_OPS bits in present_mask, then forward
+// the original op. The Dock transaction already holds the arguments.
+present_only: u32
+present_mask: u32
+present_complete: u32
+present_generation: u32
 
 verify_placement_helpers :: proc(slide: u64) -> bool {
 	helpers := gate.PLACEMENT_HELPERS

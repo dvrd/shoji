@@ -134,6 +134,33 @@ addition_space_transaction :: proc(_: rawptr, target: u64, wid: u32, source: u64
 	return err
 }
 
+// One Dock transaction for the subset of presentation fields in `req`.
+addition_present :: proc(req: dock.Present_Request) -> string {
+	caps, err := addition_check()
+	if err != "" {return err}
+	if .Window_Present not_in caps {return "Dock payload lacks window presentation"}
+	if !dock.present_valid(req) {return "invalid presentation"}
+	packet := dock.begin(.Window_Present)
+	dock.pack(&packet, req.window)
+	dock.pack(&packet, req.mask)
+	dock.pack(&packet, req.event_kind)
+	dock.pack(&packet, req.alpha)
+	dock.pack(&packet, req.x)
+	dock.pack(&packet, req.y)
+	dock.pack(&packet, req.w)
+	dock.pack(&packet, req.h)
+	dock.pack(&packet, req.p0)
+	dock.pack(&packet, req.p1)
+	dock.pack(&packet, req.a)
+	dock.pack(&packet, req.b)
+	dock.pack(&packet, req.c)
+	dock.pack(&packet, req.d)
+	dock.pack(&packet, req.tx)
+	dock.pack(&packet, req.ty)
+	_, err = addition_exchange(&packet)
+	return err
+}
+
 addition_action :: proc(action: Action) -> string {
 	caps, err := addition_check(); if err != "" {
 		return err

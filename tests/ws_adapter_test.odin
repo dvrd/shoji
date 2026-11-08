@@ -508,6 +508,55 @@ ws_adapter_capabilities_malformed_trailer_leaves_features_off :: proc(t: ^testin
 	testing.expect_value(t, a.layout_limit, 0)
 }
 
+@(thread_local) present_send_err: string
+present_send :: proc() -> string {return present_send_err}
+
+@(test)
+ws_present_stages_when_the_payload_advertises_it :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0)
+	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT | gate.GATE_FEATURE_PRESENT, u64(gate.LAYOUT_LIMIT))
+	fake_push(&g, 0, 0, 9) // PresentApply → generation 9
+	fake_push(&g, 0) // Release after the send returns
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	present_send_err = ""
+	staged, err := shoji.ws_present(&a, 4, true, false, true, present_send)
+	testing.expect(t, staged && err == "")
+	testing.expect_value(t, g.commands[2], gate.Gate_Command.PresentApply)
+	testing.expect_value(t, g.commands[3], gate.Gate_Command.Release)
+	testing.expect_value(t, g.calls, 4)
+}
+
+@(test)
+ws_present_skips_the_gate_when_the_feature_is_absent :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0)
+	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, 32)
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	present_send_err = ""
+	staged, err := shoji.ws_present(&a, 4, true, false, false, present_send)
+	testing.expect(t, !staged && err == "")
+	testing.expect_value(t, g.calls, 2)
+}
+
+@(test)
+ws_present_releases_when_the_dock_send_fails :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0)
+	fake_push(&g, 0, gate.GATE_FEATURE_PRESENT, 32)
+	fake_push(&g, 0, 0, 3)
+	fake_push(&g, 0) // Release
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	present_send_err = "dock down"
+	staged, err := shoji.ws_present(&a, 4, true, false, false, present_send)
+	testing.expect(t, staged)
+	testing.expect_value(t, err, "dock down")
+	testing.expect_value(t, g.commands[3], gate.Gate_Command.Release)
+}
+
 @(test)
 ws_adapter_old_payload_keeps_legacy_layout :: proc(t: ^testing.T) {
 	g: Fake_Gate

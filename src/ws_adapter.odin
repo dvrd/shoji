@@ -168,6 +168,30 @@ ws_adapter_call :: proc(
 	return reply, true
 }
 
+// Arm PresentApply when this payload advertises it. A payload that does not
+// is left unstaged; the Dock transaction still runs, just ungated.
+ws_present_stage :: proc(a: ^Ws_Adapter, wid: u32, alpha, event, transform: bool) -> (generation: u32, handled: bool) {
+	if a.state != .Serving || wid == 0 || a.features & gate.GATE_FEATURE_PRESENT == 0 {return}
+	mask := gate.present_stage_mask(alpha, event, transform)
+	if mask == 0 {return}
+	reply, ok := ws_adapter_call(a, .PresentApply, u64(wid), u64(mask))
+	if !ok || reply.status != WS_STATUS_OK {return}
+	return u32(reply.data1), true
+}
+
+// Stage the presentation, run `send` (the synchronous Dock transaction), then
+// release the hold. The shim finishes a claimed op itself; this release frees
+// a hold that nothing claimed, which would otherwise block layout. `staged`
+// is false when the payload has no PresentApply; the send still runs.
+ws_present :: proc(a: ^Ws_Adapter, wid: u32, alpha, event, transform: bool, send: proc() -> string) -> (staged: bool, err: string) {
+	if send == nil || wid == 0 || (!alpha && !event && !transform) {return false, "invalid presentation"}
+	generation, armed := ws_present_stage(a, wid, alpha, event, transform)
+	staged = armed
+	err = send()
+	if staged {ws_release(a, generation)}
+	return staged, err
+}
+
 // Stage a placement that the payload applies when `wid` next passes the
 // transaction-table (space) channel. Busy/invalid → unhandled, still serving.
 ws_space_place :: proc(a: ^Ws_Adapter, wid: u32, x, y: i32) -> (generation: u32, handled: bool) {

@@ -1,5 +1,6 @@
 package dock
 
+import "core:math"
 import "core:strings"
 VERSION :: "shoji-sa-2"
 MAX_PACKET :: 4096
@@ -32,7 +33,15 @@ Opcode :: enum u8 {
 	// shape, so a concealed window is neither drawn nor hit-tested. Alpha
 	// alone leaves the window catching clicks (live, 26B123).
 	Window_Conceal,
+	// One Dock transaction: system alpha, event shape, transform, any subset.
+	// Fixed 82-byte body. See Present_Request.
+	Window_Present,
 }
+// Window_Present mask bits.
+PRESENT_ALPHA :: u8(1)
+PRESENT_EVENT :: u8(2)
+PRESENT_TRANSFORM :: u8(4)
+PRESENT_SIZE :: 82
 Capability :: enum u32 {
 	Dock_Spaces,
 	Desktop_Pictures,
@@ -46,6 +55,7 @@ Capability :: enum u32 {
 	Window_Layer_Keys,
 	Space_Transaction,
 	Window_Conceal,
+	Window_Present,
 }
 Capabilities :: bit_set[Capability;u32]
 Status :: enum u8 {
@@ -116,6 +126,8 @@ expected_size :: proc(op: Opcode) -> int {
 		return 8
 	case .Window_Sticky, .Window_Shadow, .Window_Conceal:
 		return 5
+	case .Window_Present:
+		return PRESENT_SIZE
 	case .Window_Focus:
 		return 4
 	case .Window_Scale, .Window_To_Space_Transaction:
@@ -126,7 +138,7 @@ expected_size :: proc(op: Opcode) -> int {
 	return -2
 }
 validate :: proc(op: Opcode, data: []u8) -> bool {
-	if u8(op) < 1 || u8(op) > u8(Opcode.Window_Conceal) {return false}
+	if u8(op) < 1 || u8(op) > u8(Opcode.Window_Present) {return false}
 	expected := expected_size(op)
 	if expected >= 0 {return len(data) == expected}
 	r := reader(data)
@@ -139,6 +151,61 @@ validate :: proc(op: Opcode, data: []u8) -> bool {
 	}
 	return complete(r)
 }
+Present_Request :: struct {
+	window:     u32,
+	mask:       u8,
+	event_kind: u8, // 0 empty, 1 rectangle
+	alpha:      f32,
+	x, y, w, h: i32,
+	p0, p1:     i32,
+	a, b, c, d, tx, ty: f64,
+}
+
+present_read :: proc(data: []u8) -> (req: Present_Request, ok: bool) {
+	if len(data) != PRESENT_SIZE {return}
+	r := reader(data)
+	req.window = unpack(&r, u32)
+	req.mask = unpack(&r, u8)
+	req.event_kind = unpack(&r, u8)
+	req.alpha = unpack(&r, f32)
+	req.x = unpack(&r, i32)
+	req.y = unpack(&r, i32)
+	req.w = unpack(&r, i32)
+	req.h = unpack(&r, i32)
+	req.p0 = unpack(&r, i32)
+	req.p1 = unpack(&r, i32)
+	req.a = unpack(&r, f64)
+	req.b = unpack(&r, f64)
+	req.c = unpack(&r, f64)
+	req.d = unpack(&r, f64)
+	req.tx = unpack(&r, f64)
+	req.ty = unpack(&r, f64)
+	ok = complete(r) && present_valid(req)
+	return
+}
+
+present_finite :: proc(value: f64) -> bool {
+	return !math.is_nan(value) && !math.is_inf(value)
+}
+
+present_valid :: proc(req: Present_Request) -> bool {
+	if req.window == 0 || req.mask == 0 || req.mask & 7 != req.mask {return false}
+	if req.mask & PRESENT_ALPHA != 0 {
+		if math.is_nan(req.alpha) || req.alpha < 0 || req.alpha > 1 {return false}
+	}
+	if req.mask & PRESENT_EVENT != 0 {
+		if req.event_kind > 1 {return false}
+		if req.event_kind == 1 && (req.w <= 0 || req.h <= 0) {return false}
+	}
+	if req.mask & PRESENT_TRANSFORM != 0 {
+		if !present_finite(req.a) || !present_finite(req.b) || !present_finite(req.c) ||
+		   !present_finite(req.d) || !present_finite(req.tx) || !present_finite(req.ty) {
+			return false
+		}
+	}
+	return true
+}
+
 handshake :: proc(data: []u8) -> (caps: Capabilities, ok: bool) {
 	at := strings.index_byte(string(data), 0)
 	if at < 0 || string(data[:at]) != VERSION || len(data) != at + 5 {return}
