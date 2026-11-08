@@ -73,9 +73,8 @@ identity polls and writes `artifacts/memory/native-polling.json`; growth above
 16 KiB or 128 live allocations fails. Socket-readiness tests bind disposable
 Unix listeners under `/tmp`; a denied bind is a failed prerequisite, not a skip.
 
-Two core tests fail on a machine whose WindowServer already serves a gate
-(`windowserver_gate_mach_round_trip_reports_this_process`,
-`ws_gate_probe_is_bounded_and_absent_without_a_payload`); they expect no
+One core test fails on a machine whose WindowServer already serves a gate
+(`windowserver_gate_mach_round_trip_reports_this_process`); it expects no
 payload to be resident.
 
 ## Releases

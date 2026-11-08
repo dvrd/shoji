@@ -266,12 +266,6 @@ run :: proc(
 	   err != "" {
 		fmt.eprintln("shoji:", err); return 1
 	}
-	if validation_pid == 0 && ws_adapter_env_enabled() {
-		ws_adapter_open(&state.ws, true)
-		fmt.eprintln("shoji:", ws_adapter_describe(&state.ws))
-		if state.ws.state == .Serving {state.manager.layout_batch = ws_layout_batch}
-		state.manager.ws_debug = ws_debug
-	}
 	defer ws_adapter_close(&state.ws)
 	attach: Ws_Attach_Runtime
 	ws_attach_runtime_start(&attach, &state.ws, &state.manager)

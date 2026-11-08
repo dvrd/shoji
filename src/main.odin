@@ -15,7 +15,7 @@ Usage: shoji [-c CONFIG] [--sa]
        shoji --load-sa
        shoji --check-sa
        shoji --ws-attach
-       shoji --check-ws
+       shoji --ws-report [DIR]
        shoji --inspect
        shoji --version
        shoji service install|start|stop|restart|status|uninstall
@@ -26,9 +26,7 @@ Run without arguments to start the window manager.
 -m, --message      Send a command to the running shoji daemon.
 --inspect          Print a read-only macOS window/display/space snapshot.
 --ws-attach        Load the WindowServer gate and hand it to the caller (root).
---check-ws         Check the experimental WindowServer probe handshake.
 --ws-report [DIR]        WindowServer payload install report; with DIR, export the event ring (bin + JSON).
---ws-space-move W S X Y  Experimental (SHOJI_WS_ADAPTER=1): gated move of window W to Space S landing at X,Y.
 --validation-pid N Limit a test daemon to process N; requires an explicit -c file.
 --validate-sizes N Validate two named disposable size-fixture windows in process N.
 --validate-swipe N Measure native swipe spacing with two named disposable fixture windows.
@@ -120,30 +118,12 @@ main :: proc() {
       return
 		case "--ws-attach":
 			os.exit(attach.ws_attach_cli(args[1:]))
-		case "--ws-space-move":
-			if len(args) != 5 {
-				fmt.eprintln("--ws-space-move takes WINDOW SPACE X Y")
-				os.exit(2)
-			}
-			os.exit(ws_space_move_cli(args[1:]))
 		case "--ws-report":
 			if len(args) > 2 {
 				fmt.eprintln("--ws-report takes [DIR]")
 				os.exit(2)
 			}
 			os.exit(ws_report_cli(args[1:]))
-		case "--check-ws":
-			if len(args) != 1 {
-				fmt.eprintln("--check-ws takes no arguments")
-				os.exit(2)
-			}
-			probe := ws_gate_probe()
-			fmt.printf("WindowServer gate: %v (%s)\n", probe.level, probe.detail)
-			if probe.level == .Serving {
-				fmt.printf("  owner pid %d, %d forwarded calls recorded\n", probe.owner_pid, probe.calls)
-			}
-			if probe.level == .Absent {os.exit(1)}
-			return
 		case "--version", "-v":
 			fmt.println("shoji 0.1.0-dev")
 			return

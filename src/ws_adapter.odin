@@ -1,50 +1,21 @@
 package shoji
 
-// WindowServer gate adapter (C4). Two layers:
-//
-//  * Ws_Gate_Probe: read-only reporting for --check-ws. Never claims the gate.
-//  * Ws_Adapter: Shoji's own direct-Mach client. Opt-in only; every operation
-//    returns `handled`, and an unhandled result means "do today's behavior".
-//    Any transport failure, identity mismatch or ownership loss latches the
-//    adapter to .Lost so later calls short-circuit to the fallback path. The
-//    daemon's default paths never require the adapter, so Shoji works
-//    unchanged when the payload is absent, disabled or refuses Shoji.
+// WindowServer gate adapter (C4): Shoji's own direct-Mach client. The daemon
+// connects it only through `--ws-attach` (ws_attach_runtime.odin, opted in by
+// `windowserver_gate on`). Every operation returns `handled`, and an
+// unhandled result means "do today's behavior".
+// Any transport failure, identity mismatch or ownership loss latches the
+// adapter to .Lost so later calls short-circuit to the fallback path. The
+// daemon's default paths never require the adapter, so Shoji works unchanged
+// when the payload is absent, disabled or refuses Shoji.
 import "core:fmt"
 import "core:math"
-import "core:os"
-import "core:strconv"
-import "core:strings"
 import "core:sys/posix"
 import "core:time"
 import gate "windowserver/gate"
-import attach "windowserver/attach"
-
-Ws_Gate_Level :: enum {
-	Absent, // no payload status artifact
-	Installed, // payload resident, no controller serving the gate
-	Serving, // a controller answered a status command
-}
-
-Ws_Gate_Probe :: struct {
-	level:     Ws_Gate_Level,
-	owner_pid: u32,
-	calls:     u64,
-	detail:    string,
-}
 
 WS_TGATE_STATUS_PATH :: gate.TGATE_STATUS_PATH
-WS_CONTROLLER_REQUEST_PATH :: "/private/tmp/shoji-gate-controller-request"
-WS_CONTROLLER_RESPONSE_PATH :: "/private/tmp/shoji-gate-controller-response"
-WS_ENABLE_ENV :: "SHOJI_WS_ADAPTER"
-WS_DISABLE_ENV :: "SHOJI_WINDOWSERVER_DISABLE"
 WS_HELLO_NONCE :: 0x53484f4a
-
-// Pure classification, unit-tested; the level only ever rises with evidence.
-ws_gate_classify :: proc(tgate_present, controller_answered: bool) -> Ws_Gate_Level {
-	if controller_answered {return .Serving}
-	if tgate_present {return .Installed}
-	return .Absent
-}
 
 ws_tgate_present :: proc() -> bool {
 	fd := posix.open(WS_TGATE_STATUS_PATH, {.NOFOLLOW})
@@ -55,68 +26,12 @@ ws_tgate_present :: proc() -> bool {
 	return n == len(buffer) && string(buffer[:]) == "WSOBTGAT"
 }
 
-// Ask the serving controller for one status line. The request id derives
-// from the clock so the controller's content dedupe never drops it.
-ws_controller_status :: proc(timeout: time.Duration) -> (owner: u32, calls: u64, answered: bool) {
-	id := time.time_to_unix_nano(time.now()) / 1_000_000
-	command := fmt.tprintf("%d status\n", id)
-	fd := posix.open(WS_CONTROLLER_REQUEST_PATH, {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
-	if fd < 0 {return}
-	written := posix.write(fd, raw_data(command), uint(len(command)))
-	posix.close(fd)
-	if written != len(command) {return}
-	deadline := time.time_to_unix_nano(time.now()) + i64(timeout)
-	prefix := fmt.tprintf("%d ", id)
-	for time.time_to_unix_nano(time.now()) < deadline {
-		time.sleep(20 * time.Millisecond)
-		rfd := posix.open(WS_CONTROLLER_RESPONSE_PATH, {.NOFOLLOW})
-		if rfd < 0 {continue}
-		buffer: [128]u8
-		n := posix.read(rfd, &buffer[0], len(buffer))
-		posix.close(rfd)
-		if n <= len(prefix) {continue}
-		response := string(buffer[:n])
-		if !strings.has_prefix(response, prefix) {continue}
-		answered = true
-		for field in strings.fields(response[len(prefix):]) {
-			if strings.has_prefix(field, "owner=") {
-				parsed, _ := strconv.parse_u64(field[len("owner="):])
-				owner = u32(parsed)
-			}
-			if strings.has_prefix(field, "calls=") {
-				parsed, _ := strconv.parse_u64(field[len("calls="):])
-				calls = parsed
-			}
-		}
-		return
-	}
-	return
-}
-
-ws_gate_probe :: proc(timeout: time.Duration = 1500 * time.Millisecond) -> Ws_Gate_Probe {
-	owner, calls, answered := ws_controller_status(timeout)
-	probe := Ws_Gate_Probe {
-		level     = ws_gate_classify(ws_tgate_present(), answered),
-		owner_pid = owner,
-		calls     = calls,
-	}
-	switch probe.level {
-	case .Absent:
-		probe.detail = "no experimental WindowServer payload artifact"
-	case .Installed:
-		probe.detail = "payload resident; no controller serving the gate"
-	case .Serving:
-		probe.detail = "gate controller answered status"
-	}
-	return probe
-}
-
 // ------------------------------------------------------------------------
 // Adapter
 // ------------------------------------------------------------------------
 
 Ws_Adapter_State :: enum {
-	Disabled, // not opted in, or kill switch present
+	Disabled, // not attached (gate off, or kill switch present)
 	Absent, // no payload, or no send right handed off
 	Refused, // payload answered but did not accept Shoji as owner
 	Serving, // Shoji owns the gate
@@ -191,18 +106,6 @@ ws_adapter_state_name :: proc(state: Ws_Adapter_State) -> string {
 		return "lost"
 	}
 	return "unknown"
-}
-
-// Pure enablement decision: the kill switch always wins over the opt-in.
-ws_adapter_enabled :: proc(opt_in, disable_env, sentinel: bool) -> bool {
-	return opt_in && !disable_env && !sentinel
-}
-
-ws_adapter_env_enabled :: proc() -> bool {
-	opt_in := os.get_env(WS_ENABLE_ENV, context.temp_allocator) == "1"
-	disable := os.get_env(WS_DISABLE_ENV, context.temp_allocator) == "1"
-	sentinel := os.exists(attach.WS_DISABLE_SENTINEL)
-	return ws_adapter_enabled(opt_in, disable, sentinel)
 }
 
 // Claim the gate with HELLO through `exchange`. The caller has already
@@ -448,96 +351,6 @@ ws_mach_exchange :: proc(
 	return gate.gate_unpack_reply(msg.bytes[:])
 }
 
-// Session-rendezvous fallback, as in the experiment gate client. The root
-// helper delivers the right this way when it cannot obtain this task's port
-// (task_for_pid returns 5 for the client on a 26B123 M1 Max). It polls the
-// rendezvous for 10 s after claiming request.<pid>, so registering after the
-// file handoff times out still meets it. Registration fails harmlessly when
-// another process holds the name.
-WS_RENDEZVOUS_TIMEOUT_MS :: 3000
-
-ws_mach_rendezvous :: proc(task: u32, timeout_ms: u32) -> (service: u32, ok: bool) {
-	bootstrap, bootstrap_ok := gate.gate_process_bootstrap_port()
-	if !bootstrap_ok {return}
-	rendezvous: u32
-	if gate.gate_mach_port_allocate(task, gate.MACH_PORT_RIGHT_RECEIVE, &rendezvous) != 0 {return}
-	defer gate.gate_mach_port_destroy(task, rendezvous)
-	if gate.gate_bootstrap_register(bootstrap, gate.GATE_RENDEZVOUS_NAME, rendezvous) != 0 {return}
-	message: Ws_Mach_Buffer
-	options := u32(gate.MACH_MSG_RECEIVE) | u32(gate.MACH_RCV_TIMEOUT)
-	size := u32(len(message.bytes))
-	if gate.gate_mach_msg(&message.bytes[0], options, 0, size, rendezvous, timeout_ms, 0) != 0 {return}
-	return gate.gate_handshake_send_right(message.bytes[:])
-}
-
-// Task-port handoff: publish request.<pid>; the root helper inserts a send
-// right and answers response.<pid> with "<pid> <name>". Bounded by `timeout`.
-ws_mach_handoff :: proc(task: u32, timeout: time.Duration) -> (service: u32, ok: bool) {
-	pid := posix.getpid()
-	request_path := fmt.tprintf("%s.%d", gate.GATE_HANDOFF_REQUEST_PATH, pid)
-	response_path := fmt.tprintf("%s.%d", gate.GATE_HANDOFF_RESPONSE_PATH, pid)
-	defer posix.unlink(strings.unsafe_string_to_cstring(request_path))
-	line := fmt.tprintf("%d\n", pid)
-	fd := posix.open(strings.unsafe_string_to_cstring(request_path), {.WRONLY, .CREAT, .TRUNC, .NOFOLLOW}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
-	if fd < 0 {return}
-	written := posix.write(fd, raw_data(line), uint(len(line)))
-	posix.close(fd)
-	if written != len(line) {return}
-	deadline := time.time_add(time.now(), timeout)
-	for time.diff(time.now(), deadline) > 0 {
-		time.sleep(50 * time.Millisecond)
-		buffer: [64]u8
-		rfd := posix.open(strings.unsafe_string_to_cstring(response_path), {.NOFOLLOW})
-		if rfd < 0 {continue}
-		info: posix.stat_t
-		valid := posix.fstat(rfd, &info) == nil && posix.S_ISREG(info.st_mode)
-		count := posix.read(rfd, &buffer[0], len(buffer))
-		posix.close(rfd)
-		if !valid || count <= 0 {continue}
-		name, parsed := ws_handoff_parse(string(buffer[:count]), u32(pid))
-		if !parsed {continue}
-		port_type: u32
-		if gate.gate_mach_port_type(task, name, &port_type) != 0 || port_type & gate.MACH_PORT_TYPE_SEND == 0 {continue}
-		return name, true
-	}
-	return
-}
-
-// "<pid> <port-name>[...]": the pid must be ours so a stale response for a
-// recycled per-pid channel cannot hand us someone else's right.
-ws_handoff_parse :: proc(line: string, pid: u32) -> (name: u32, ok: bool) {
-	fields := strings.fields(line, context.temp_allocator)
-	if len(fields) < 2 {return}
-	owner, owner_ok := strconv.parse_u64(fields[0], 10)
-	port, port_ok := strconv.parse_u64(fields[1], 10)
-	if !owner_ok || !port_ok || owner != u64(pid) || port == 0 || port > u64(max(u32)) {return}
-	return u32(port), true
-}
-
-// Daemon entry point. Bounded; on any failure the adapter stays below
-// .Serving and every typed operation returns unhandled.
-ws_adapter_open :: proc(a: ^Ws_Adapter, enabled: bool, timeout: time.Duration = 2 * time.Second) {
-	a^ = {}
-	if !enabled {
-		a.state = .Disabled
-		return
-	}
-	if !ws_tgate_present() {
-		a.state = .Absent
-		return
-	}
-	task := gate.gate_mach_task_self()
-	service, ok := ws_mach_handoff(task, timeout)
-	if !ok {
-		service, ok = ws_mach_rendezvous(task, WS_RENDEZVOUS_TIMEOUT_MS)
-	}
-	if !ok {
-		a.state = .Absent
-		return
-	}
-	ws_adapter_connect(a, task, service)
-}
-
 // Takes ownership of `service` (a send right to the gate) and claims it.
 ws_adapter_connect :: proc(a: ^Ws_Adapter, task, service: u32) {
 	a.mach.task = task
@@ -581,7 +394,7 @@ ws_adapter_describe :: proc(a: ^Ws_Adapter) -> string {
 	case .Disabled:
 		return "WindowServer adapter disabled; using native paths"
 	case .Absent:
-		return "WindowServer adapter: no gate connection (payload absent or no handoff); using native paths"
+		return "WindowServer adapter: no gate connection (payload absent or not attached); using native paths"
 	case .Refused:
 		return fmt.tprintf("WindowServer adapter refused (status %d, owner pid %d); using native paths", a.status, a.owner)
 	case .Serving:
@@ -591,38 +404,6 @@ ws_adapter_describe :: proc(a: ^Ws_Adapter) -> string {
 		return fmt.tprintf("WindowServer adapter lost (status %d); using native paths", a.status)
 	}
 	return ""
-}
-
-// Live probe of the daemon's gated Space move without a window manager
-// session (no Accessibility needed): same ws_space_move + Dock transaction
-// path perform_native uses. Exit 0 placed, 3 moved unplaced, 4 fell back
-// (adapter not serving or move not handled), 2 usage.
-ws_space_move_cli :: proc(args: []string) -> int {
-	wid, wid_ok := strconv.parse_u64(args[0])
-	space, space_ok := strconv.parse_u64(args[1])
-	x, x_ok := strconv.parse_i64(args[2])
-	y, y_ok := strconv.parse_i64(args[3])
-	if !wid_ok || !space_ok || !x_ok || !y_ok || space == 0 || !gate.placement_coordinates_valid(wid, x, y) {
-		fmt.eprintln("--ws-space-move: invalid arguments")
-		return 2
-	}
-	state: State
-	state.connection = SLSMainConnectionID()
-	a: Ws_Adapter
-	ws_adapter_open(&a, ws_adapter_env_enabled())
-	defer ws_adapter_close(&a)
-	fmt.println(ws_adapter_describe(&a))
-	source := window_space(&state, u32(wid))
-	start := time.now()
-	move := ws_space_move(&a, u32(wid), space, source, i32(x), i32(y), addition_space_transaction, nil)
-	fmt.printf(
-		"source=%d target=%d moved=%v placed=%v elapsed_ms=%.3f state=%s\n",
-		source, space, move.moved, move.placed,
-		time.duration_milliseconds(time.since(start)), ws_adapter_state_name(a.state),
-	)
-	if move.placed {return 0}
-	if move.moved {return 3}
-	return 4
 }
 
 // ------------------------------------------------------------------------

@@ -5,27 +5,6 @@ import "core:time"
 import shoji "../src"
 import gate "../src/windowserver/gate"
 
-@(test)
-ws_gate_classification_only_rises_with_evidence :: proc(t: ^testing.T) {
-	testing.expect_value(t, shoji.ws_gate_classify(false, false), shoji.Ws_Gate_Level.Absent)
-	testing.expect_value(t, shoji.ws_gate_classify(true, false), shoji.Ws_Gate_Level.Installed)
-	testing.expect_value(t, shoji.ws_gate_classify(true, true), shoji.Ws_Gate_Level.Serving)
-	// A controller answer without a payload artifact is contradictory input;
-	// the answer alone is still stronger evidence than the missing artifact.
-	testing.expect_value(t, shoji.ws_gate_classify(false, true), shoji.Ws_Gate_Level.Serving)
-}
-
-@(test)
-ws_gate_probe_is_bounded_and_absent_without_a_payload :: proc(t: ^testing.T) {
-	// On the build host nothing is installed and no controller serves; the
-	// probe must return Absent quickly rather than blocking the caller.
-	start := time.now()
-	probe := shoji.ws_gate_probe(200 * time.Millisecond)
-	elapsed := time.since(start)
-	testing.expect(t, elapsed < 2 * time.Second)
-	testing.expect_value(t, probe.level, shoji.Ws_Gate_Level.Absent)
-}
-
 // Scripted gate: answers each command with the queued status, records calls.
 Fake_Gate :: struct {
 	statuses:  [32]i32,
@@ -70,18 +49,8 @@ fake_adapter :: proc(g: ^Fake_Gate) -> shoji.Ws_Adapter {
 }
 
 @(test)
-ws_adapter_kill_switch_wins_over_opt_in :: proc(t: ^testing.T) {
-	testing.expect(t, shoji.ws_adapter_enabled(true, false, false))
-	testing.expect(t, !shoji.ws_adapter_enabled(false, false, false))
-	testing.expect(t, !shoji.ws_adapter_enabled(true, true, false))
-	testing.expect(t, !shoji.ws_adapter_enabled(true, false, true))
-}
-
-@(test)
 ws_adapter_disabled_does_no_io_and_handles_nothing :: proc(t: ^testing.T) {
-	a: shoji.Ws_Adapter
-	shoji.ws_adapter_open(&a, false)
-	testing.expect_value(t, a.state, shoji.Ws_Adapter_State.Disabled)
+	a := shoji.Ws_Adapter{state = .Disabled}
 	_, handled := shoji.ws_space_place(&a, 42, 10, 20)
 	testing.expect(t, !handled)
 	_, handled = shoji.ws_layout_stage(&a, {{1, 0, 0}}, 9, 4000)
@@ -89,17 +58,6 @@ ws_adapter_disabled_does_no_io_and_handles_nothing :: proc(t: ^testing.T) {
 	_, handled = shoji.ws_watch(&a, 42)
 	testing.expect(t, !handled)
 	_, handled = shoji.ws_receipt(&a, 1)
-	testing.expect(t, !handled)
-}
-
-@(test)
-ws_adapter_open_without_payload_is_absent_and_bounded :: proc(t: ^testing.T) {
-	a: shoji.Ws_Adapter
-	start := time.now()
-	shoji.ws_adapter_open(&a, true, 100 * time.Millisecond)
-	testing.expect(t, time.since(start) < 2 * time.Second)
-	testing.expect_value(t, a.state, shoji.Ws_Adapter_State.Absent)
-	_, handled := shoji.ws_space_place(&a, 42, 10, 20)
 	testing.expect(t, !handled)
 }
 
@@ -262,21 +220,6 @@ ws_adapter_receipt_kinds :: proc(t: ^testing.T) {
 	testing.expect_value(t, shoji.ws_receipt_kind(7), shoji.Ws_Receipt.Stale)
 	testing.expect_value(t, shoji.ws_receipt_kind(8), shoji.Ws_Receipt.Idle)
 	testing.expect_value(t, shoji.ws_receipt_kind(99), shoji.Ws_Receipt.Unknown)
-}
-
-@(test)
-ws_handoff_parse_rejects_foreign_and_malformed :: proc(t: ^testing.T) {
-	name, ok := shoji.ws_handoff_parse("123 4567\n", 123)
-	testing.expect(t, ok)
-	testing.expect_value(t, name, 4567)
-	_, ok = shoji.ws_handoff_parse("124 4567\n", 123)
-	testing.expect(t, !ok)
-	_, ok = shoji.ws_handoff_parse("123 0\n", 123)
-	testing.expect(t, !ok)
-	_, ok = shoji.ws_handoff_parse("123\n", 123)
-	testing.expect(t, !ok)
-	_, ok = shoji.ws_handoff_parse("123 99999999999\n", 123)
-	testing.expect(t, !ok)
 }
 
 Fake_Dock :: struct {
