@@ -220,7 +220,8 @@ feedback_queue_owned :: proc(state: ^State, id: u32, frame: Rect) -> bool {
 // Puts a position-only owned surface on the open layout batch. A size change
 // stays on the transform path: a layout item has no width or height.
 feedback_hold_origin :: proc(state: ^State, bar: ^Feedback_Window, plan: Feedback_Plan) -> bool {
-	if !state.manager.camera_hold || state.manager.layout_batch == nil || state.connection == 0 {
+	if !state.feedback_batch_origin || !state.manager.camera_hold ||
+	   state.manager.layout_batch == nil || state.connection == 0 {
 		return false
 	}
 	if bar.surface.id == 0 {return false}
@@ -302,8 +303,15 @@ focus_ring_tick :: proc(state: ^State) {
 			state.focus_scroll_pending = w.id
 			state.focus_scroll_deadline = CACurrentMediaTime() + 1
 		}
+		// Focus travel moves the next window across the screen. The ring stays
+		// off until that motion ends, then draws on the window that arrived.
+		if s.view.scroll.motion.active {
+			focus_ring_stop(state)
+			tab_indicator_stop(state)
+			return
+		}
 		if moving || state.focus_scroll_pending == w.id {
-			if state.manager.camera_hold {
+			if state.manager.camera_hold && state.feedback_batch_origin {
 				frame = w.frame
 			} else {
 				probe := state.focus_frame_probe

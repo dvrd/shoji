@@ -565,10 +565,22 @@ present_apply :: proc(req: dock.Present_Request, client: i32, diagnostic: ^dock.
 	return .OK
 }
 
+// Covers any window in either coordinate space. GlobalClipShape's space is not
+// live-confirmed: a window-local rect cut windows by their own origin offset.
+CLIP_UNBOUNDED :: m.Rect{-32768, -32768, 65536, 65536}
+
 present_restore :: proc(id: u32, entry: Presented) -> dock.Status {
 	region: m.Ref
 	defer if region != nil {_ = CGSReleaseRegion(region)}
-	if entry.event || entry.clip {
+	clip_region: m.Ref
+	defer if clip_region != nil {_ = CGSReleaseRegion(clip_region)}
+	if entry.clip {
+		unbounded := CLIP_UNBOUNDED
+		if code := CGSNewRegionWithRect(&unbounded, &clip_region); code != 0 || clip_region == nil {
+			return .Operation_Failed
+		}
+	}
+	if entry.event {
 		frame: m.Rect
 		if m.SLSGetWindowBounds(g.cid, id, &frame) != 0 {return .Operation_Failed}
 		local := m.Rect{0, 0, frame.w, frame.h}
@@ -579,7 +591,7 @@ present_restore :: proc(id: u32, entry: Presented) -> dock.Status {
 	defer m.CFRelease(transaction)
 	if entry.alpha {SLSTransactionSetWindowSystemAlpha(transaction, id, 1)}
 	if entry.event && region != nil {SLSTransactionSetWindowEventShape(transaction, id, region)}
-	if entry.clip && region != nil {SLSTransactionSetWindowGlobalClipShape(transaction, id, region)}
+	if entry.clip {SLSTransactionSetWindowGlobalClipShape(transaction, id, clip_region)}
 	if entry.transform {SLSTransactionSetWindowTransform(transaction, id, 0, 0, entry.saved)}
 	SLSTransactionCommit(transaction, 1)
 	return .OK

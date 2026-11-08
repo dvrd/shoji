@@ -60,6 +60,7 @@ Window :: struct {
 	// Parked frame clipped to the viewport. Coords are window-local. Cleared
 	// once the frame sits fully inside again.
 	viewport_clipped: bool,
+	clip_repaired: bool,
 	clip_x, clip_y, clip_w, clip_h: i32,
 	// The payload refused to conceal; retried once the window is active again.
 	conceal_refused: bool,
@@ -224,6 +225,10 @@ Manager :: struct {
 	// Dock presentation for viewport clip. Nil skips it (tests, no payload).
 	present: proc(user: rawptr, req: dock.Present_Request) -> string,
 	clip_noted: bool,
+	// Viewport clip is off until GlobalClipShape's coordinate space is
+	// live-checked: window-local rects cut windows at the bottom on 26B123.
+	// Off, each window gets one unbounded clip to undo an earlier cut.
+	viewport_clip: bool,
 	// While set, scroll_camera_apply stores moves instead of sending them.
 	// layout_frame_submit sends those moves and any owned surfaces together.
 	camera_hold: bool,
@@ -1059,7 +1064,12 @@ dialog_follow :: proc(m: ^Manager, s: ^Space, before: map[u32]Rect) {
 // one, and drops hit-testing there too. A frame that fits again restores the
 // full window-local rect. An unchanged rect is not sent.
 viewport_clip_sync :: proc(m: ^Manager, s: ^Space) {
-	if m.present == nil || s.view.layout != .Scroll {return}
+	if m.present == nil {return}
+	if !m.viewport_clip {
+		viewport_clip_repair(m, s)
+		return
+	}
+	if s.view.layout != .Scroll {return}
 	viewport := s.view.scroll.viewport
 	for _, win in m.windows {
 		if win == nil || win.space != s.id || !managed(win) || win.concealed {continue}
@@ -1094,6 +1104,48 @@ viewport_clip_sync :: proc(m: ^Manager, s: ^Space) {
 		}
 		win.viewport_clipped = partial
 		win.clip_x, win.clip_y, win.clip_w, win.clip_h = x, y, w, h
+	}
+}
+
+// Sends one unbounded clip per window to undo a cut left by an earlier daemon.
+// A failure stops this flush; the next flush retries.
+viewport_clip_repair :: proc(m: ^Manager, s: ^Space) {
+	for _, win in m.windows {
+		if win == nil || win.space != s.id || !managed(win) || win.clip_repaired {continue}
+		// GlobalClipShape is not window-local. A rect of the window's own size
+		// at the origin cuts the bottom (and the right) by the window origin.
+		clip := dock.Present_Request {
+			window = win.id,
+			mask = dock.PRESENT_CLIP,
+			event_kind = 1,
+			x = -32768, y = -32768, w = 65536, h = 65536,
+		}
+		if err := m.present(m.backend_user, clip); err != "" {
+			if !m.clip_noted {
+				m.clip_noted = true
+				fmt.eprintln("shoji: viewport clip repair:", err)
+			}
+			return
+		}
+		ew := i32(math.round(win.frame.w))
+		eh := i32(math.round(win.frame.h))
+		if ew > 0 && eh > 0 {
+			event := dock.Present_Request {
+				window = win.id,
+				mask = dock.PRESENT_EVENT,
+				event_kind = 1,
+				x = 0, y = 0, w = ew, h = eh,
+			}
+			if err := m.present(m.backend_user, event); err != "" {
+				if !m.clip_noted {
+					m.clip_noted = true
+					fmt.eprintln("shoji: viewport clip repair:", err)
+				}
+				return
+			}
+		}
+		win.clip_repaired = true
+		win.viewport_clipped = false
 	}
 }
 
