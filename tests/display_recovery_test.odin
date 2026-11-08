@@ -29,7 +29,6 @@ desktop_validation_rejects_global_commands_and_unowned_windows :: proc(t: ^testi
 			.Space_Destroy,
 			.Space_Move,
 			.Display_Focus,
-			.Space,
 		}) {
 		testing.expect_value(
 			t,
@@ -37,7 +36,7 @@ desktop_validation_rejects_global_commands_and_unowned_windows :: proc(t: ^testi
 			"global desktop operations are disabled during owned-window validation",
 		)
 	}
-	for kind in ([]mac.Action_Kind{.Frame, .Close, .Focus, .Opacity, .Layer}) {
+	for kind in ([]mac.Action_Kind{.Frame, .Close, .Focus, .Opacity, .Layer, .Space}) {
 		testing.expect_value(
 			t,
 			mac.perform_native(&state, {kind = kind, window = 2}),
