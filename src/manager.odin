@@ -71,6 +71,9 @@ Window :: struct {
 	space: u64,
 	focused, floating, minimized, hidden, fullscreen, sticky: bool,
 	shadow: bool,
+	// Shadow tag cleared while this tab is concealed. The desired shadow stays
+	// in `shadow`; this only means the tag has to come back on reveal.
+	shadow_held: bool,
 	opacity: f64,
 	opacity_override, scratchpad_hidden: bool,
 	layer_override: bool,
@@ -1054,7 +1057,13 @@ tab_conceal_pass :: proc(m: ^Manager, s: ^Space, conceal: bool) {
 		want := m.tab_conceal && managed(w) && w.windowed_frame == nil && tab_concealable(s, w.id)
 		if !want {w.conceal_refused = false}
 		if want != conceal {continue}
-		if want == w.concealed || (want && w.conceal_refused) {continue}
+		// Before the early-out: a reveal that already matched still has to
+		// retry a shadow the payload did not put back.
+		if !want && w.shadow_held {tab_shadow_restore(m, w)}
+		if want == w.concealed || (want && w.conceal_refused) {
+			if want && w.shadow && !w.shadow_held {tab_shadow_hold(m, w)}
+			continue
+		}
 		if err := perform(m, {kind = .Conceal, window = w.id, flag = want}); err != "" {
 			// A refused conceal keeps today's ordered-behind tab. A failed
 			// reveal stays recorded and is retried by the next flush.
@@ -1063,8 +1072,28 @@ tab_conceal_pass :: proc(m: ^Manager, s: ^Space, conceal: bool) {
 			continue
 		}
 		w.concealed = want
+		if want && w.shadow {tab_shadow_hold(m, w)}
 		motion_trace_record(&m.motion_trace, {kind = want ? "tab-conceal" : "tab-reveal", window = w.id, space = s.id})
 	}
+}
+
+tab_shadow_hold :: proc(m: ^Manager, w: ^Window) {
+	if !w.shadow || w.shadow_held {return}
+	if err := perform(m, {kind = .Shadow, window = w.id, flag = false}); err != "" {
+		fmt.eprintln("shoji: tab shadow:", err)
+		return
+	}
+	w.shadow_held = true
+}
+
+tab_shadow_restore :: proc(m: ^Manager, w: ^Window) {
+	if !w.shadow_held {return}
+	if err := perform(m, {kind = .Shadow, window = w.id, flag = true}); err != "" {
+		fmt.eprintln("shoji: tab shadow:", err)
+		return
+	}
+	w.shadow = true
+	w.shadow_held = false
 }
 
 // Reveals every concealed window, at shutdown or when concealment is disabled.
@@ -1076,6 +1105,7 @@ tab_conceal_release :: proc(m: ^Manager) {
 			continue
 		}
 		w.concealed = false
+		tab_shadow_restore(m, w)
 	}
 }
 

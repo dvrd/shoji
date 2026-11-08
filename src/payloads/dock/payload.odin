@@ -421,8 +421,13 @@ tick_concealed :: proc() {
 		owner, exists := payload_recovery_owner(nil, id)
 		if !exists || owner != entry.owner {append(&done, id);continue}
 		// ESRCH: the client is gone. EPERM still means it is alive.
+		// A living client gets alpha 0 and an empty event shape again. Apps
+		// can put the shape back on redraw; this tick is the reapply. A
+		// failed reapply stays in the map.
 		if posix.kill(posix.pid_t(entry.client), posix.Signal(0)) != .OK && posix.errno() == .ESRCH {
 			if conceal_window(id, false, nil) == .OK {append(&done, id)}
+		} else {
+			_ = conceal_window(id, true, nil)
 		}
 	}
 	if len(done) == 0 {return}

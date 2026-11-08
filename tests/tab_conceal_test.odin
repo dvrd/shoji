@@ -76,6 +76,28 @@ tab_conceal_hides_tabs_beyond_the_active_and_standby :: proc(t: ^testing.T) {
 }
 
 @(test)
+tab_conceal_drops_a_shadow_and_puts_it_back_on_reveal :: proc(t: ^testing.T) {
+	m: mac.Manager; r: Recorder; tab_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
+	m.windows[3].shadow = true
+	testing.expect(t, !mac.config(&m, {"tab_conceal", "on"}).failed)
+	testing.expect(t, m.windows[3].concealed && m.windows[3].shadow && m.windows[3].shadow_held)
+	off := false
+	for a in r.actions {
+		if a.kind == .Shadow && a.window == 3 && !a.flag {off = true}
+	}
+	testing.expect(t, off)
+	resize(&r.actions, 0)
+	mac.execute(&m, {"window", "3", "--focus"})
+	testing.expect(t, !m.windows[3].concealed && m.windows[3].shadow && !m.windows[3].shadow_held)
+	on := false
+	for a in r.actions {
+		if a.kind == .Shadow && a.window == 3 && a.flag {on = true}
+	}
+	testing.expect(t, on)
+}
+
+@(test)
 tab_conceal_keeps_a_drawn_tab_under_closing_and_opening_tabs :: proc(t: ^testing.T) {
 	m: mac.Manager; r: Recorder; tab_fixture(&m, &r)
 	defer mac.manager_destroy(&m); defer delete(r.actions)
