@@ -110,12 +110,6 @@ Gate_Expected_Op :: struct {
 
 Tgate_Status :: gate.Tgate_Status
 
-// Unslid address of _WSCurrentSessionBootstrapPort for the selected build.
-// No arguments. Loads the session object and returns the mach_port_t at
-// +0x64. A missing session, or an unset port word, returns 0. The
-// bootstrap_port global is not the session port inside WindowServer.
-WS_SESSION_BP_UNSLID :: gate.SESSION_BOOTSTRAP_PORT_UNSLID
-
 gate_originals: [TABLE_OP_MAX + 1]u64
 gate_stubs: u64
 
@@ -128,9 +122,10 @@ hold: gate.Hold_Slot
 // order-in, recorded by the forwarding callback without sleeping.
 watch: gate.Receipt_Slot
 
-// Mach gate service (B1). The service port is registered with the bootstrap
-// server; commands are accepted only from the registered owner process,
-// identified by audit-token pid + pidversion (first HELLO wins).
+// Mach gate service (B1). WindowServer cannot use the bootstrap server, so
+// the root `shoji --ws-attach` helper copies a send right out of this task
+// and hands it to the daemon. Commands are accepted only from the owner
+// process, identified by audit-token pid + pidversion (first HELLO wins).
 gate_mach_port: u32
 gate_mach_register_code: i32
 gate_owner_pid, gate_owner_pidversion: u32
@@ -160,22 +155,7 @@ gate_clients_reload :: proc() {
 }
 gate_last_status: Tgate_Status
 
-gate_bootstrap_port: u32
-gate_service_send: u32
-gate_handshake_sent: u32
-gate_slide: u64
-gate_slide_known: u32
-
-session_bootstrap_port :: proc(slide: u64) -> u32 {
-	session_bp := transmute(proc "c" () -> u32)uintptr(WS_SESSION_BP_UNSLID + slide)
-	return session_bp()
-}
-
-gate_register_service :: proc(task: u32, slide: u64) {
-	// Reversed rendezvous: launchd on macOS 27 denies bootstrap_register to
-	// WindowServer (1100 BOOTSTRAP_NOT_PRIVILEGED), so the client registers
-	// GATE_RENDEZVOUS_NAME and the payload hands over a send right through a
-	// port-descriptor handshake. See mach.odin.
+gate_register_service :: proc(task: u32) {
 	if code := gate.gate_mach_port_allocate(task, gate.MACH_PORT_RIGHT_RECEIVE, &gate_mach_port); code != 0 {
 		gate_mach_register_code = code
 		return
@@ -184,38 +164,7 @@ gate_register_service :: proc(task: u32, slide: u64) {
 		gate_mach_register_code = code
 		return
 	}
-	gate_service_send = gate_mach_port
-	// WindowServer's bootstrap_port global is not the user-session bootstrap.
-	// SkyLight resolves it via _WSCurrentSessionBootstrapPort. The port can
-	// still be 0 if this runs before the GUI session is attached; the control
-	// thread retries until it appears.
-	gate_slide = slide
-	intrinsics.atomic_store_explicit(&gate_slide_known, 1, .Release)
-	port := session_bootstrap_port(slide)
-	if port == 0 {
-		gate_mach_register_code = -2
-		return
-	}
-	gate_bootstrap_port = port
 	gate_mach_register_code = 0
-}
-
-// Poll for a client-registered rendezvous and hand over a send right.
-// handshake_sent stays set once any handover works, but does not block the
-// next client: each CLI invocation registers the name, takes one right, and
-// destroys the rendezvous port. Authorization is the audit token, not
-// possession of this send right.
-gate_try_handshake :: proc() {
-	if gate_bootstrap_port == 0 {return}
-	client: u32
-	if gate.gate_bootstrap_look_up(gate_bootstrap_port, gate.GATE_RENDEZVOUS_NAME, &client) != 0 {return}
-	defer gate.gate_mach_port_deallocate(inject.mach_task_self(), client)
-	message: struct #align(16) {bytes: [128]u8}
-	n, ok := gate.gate_pack_handshake(message.bytes[:], client, gate_service_send)
-	if !ok {return}
-	if gate.gate_mach_msg(&message.bytes[0], gate.MACH_MSG_SEND, u32(n), 0, 0, 0, 0) == 0 {
-		intrinsics.atomic_store_explicit(&gate_handshake_sent, 1, .Release)
-	}
 }
 
 // Reply to a received request. The kernel leaves the send-once right in
@@ -383,7 +332,7 @@ gate_handle_message :: proc(buffer: ^Gate_Buffer) {
 		gate_reply(buffer, command, release_status, target, u64(hold.generation))
 	case .Status:
 		calls := intrinsics.atomic_load_explicit(&observer_calls, .Acquire)
-		state := u64(gate_handshake_sent) << 32 | u64(gate_owner_pid)
+		state := u64(gate_owner_pid)
 		gate_reply(buffer, command, 0, calls, state)
 	case .Dump:
 		write_dump()
@@ -875,16 +824,6 @@ control_thread :: proc "c" (_: rawptr) -> rawptr {
 	buffer: struct #align(16) {bytes: Gate_Buffer}
 	for {
 		if gate_mach_port != 0 {
-			if gate_bootstrap_port == 0 && intrinsics.atomic_load_explicit(&gate_slide_known, .Acquire) != 0 {
-				if port := session_bootstrap_port(gate_slide); port != 0 {
-					gate_bootstrap_port = port
-					gate_mach_register_code = 0
-					gate_last_status.bootstrap_port = u64(port)
-					gate_last_status.mach_code = 0
-					write_file(TGATE_STATUS_PATH, &gate_last_status, size_of(gate_last_status))
-				}
-			}
-			gate_try_handshake()
 			code := gate.gate_mach_msg(&buffer.bytes[0], gate.gate_receive_audit_options(), 0, len(buffer.bytes), gate_mach_port, 10, 0)
 			if code == 0 {
 				gate_handle_message(&buffer.bytes)
@@ -1084,10 +1023,9 @@ install_observer :: proc() {
 		return
 	}
 	install_transaction_gate(task, location.slide, allocate, deallocate, protect, page_size)
-	gate_register_service(task, location.slide)
+	gate_register_service(task)
 	gate_last_status.mach_port = u64(gate_mach_port)
 	gate_last_status.mach_code = i64(gate_mach_register_code)
-	gate_last_status.bootstrap_port = u64(gate_bootstrap_port)
 	write_file(TGATE_STATUS_PATH, &gate_last_status, size_of(gate_last_status))
 	thread: posix.pthread_t
 	worker := transmute(proc "c" (rawptr) -> rawptr)uintptr(inject.sign_function(u64(uintptr(rawptr(control_thread)))))

@@ -115,10 +115,7 @@ GATE_TRAILER_AUDIT_OFF :: 20
 GATE_AUDIT_TRAILER_SIZE :: 52
 GATE_RECV_SIZE :: GATE_MSG_SIZE + GATE_AUDIT_TRAILER_SIZE
 
-// Reversed rendezvous (dead on macOS 27): launchd denies bootstrap_register
-// to WindowServer, and bootstrap_look_up from WindowServer's task is denied
-// with the same 1100. The payload keeps polling this name as a fallback for
-// other environments; the live rendezvous is the task-port handoff above.
+// The daemon's session rendezvous; only `--ws-attach` looks it up.
 GATE_RENDEZVOUS_NAME :: "com.shoji.gate.rendezvous"
 
 @(default_calling_convention = "c")
