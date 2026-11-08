@@ -127,7 +127,7 @@ them.
 
 ## Project status
 
-See the [production-readiness checklist](TODO.md) for remaining work and
+See the [production-readiness checklist](docs/PRODUCTION_READINESS.md) for remaining work and
 validation.
 
 ## Documentation
@@ -136,5 +136,4 @@ validation.
 - [Scroll layout](docs/SCROLL_LAYOUT.md) and [Niri parity](docs/NIRI_PARITY.md).
 - [WindowServer roadmap](docs/WINDOWSERVER_ROADMAP.md) and the
   [gate payload](src/payloads/windowserver/README.md).
-- [Porting status](PORTING.md), [Dock compatibility](tools/DOCK_COMPATIBILITY.md)
-  and [arm64e notes](tools/ARM64E.md).
+- [Dock compatibility](tools/DOCK_COMPATIBILITY.md) and [arm64e notes](tools/ARM64E.md).

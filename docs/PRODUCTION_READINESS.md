@@ -9,8 +9,8 @@ revalidating the release candidate.
 
 The daily-use target is macOS 27.2 (26B123) on Apple Silicon.
 Some owned-window and Space checks have passed there; they do not establish
-complete production readiness. See [port status](PORTING.md) for
-context. Some historical notes contain stale paths or point to local, untracked
+complete production readiness. See [Niri parity](NIRI_PARITY.md) for feature
+status. Some historical notes contain stale paths or point to local, untracked
 evidence; verify claims against the current source and preserve shareable release
 evidence before closing an item.
 
@@ -116,8 +116,8 @@ published product and document any intentionally unsupported behavior.
   transitions. Define acceptance criteria rather than claiming exact compositor
   parity on the basis of headless geometry tests.
 - [ ] Review the remaining command, selector, rule, signal, application and
-  fullscreen differences in [PORTING.md](PORTING.md); implement the ones required
-  by the chosen compatibility scope and update stale notes.
+  fullscreen gaps; implement the ones required by the chosen compatibility scope
+  and update stale notes.
 - [ ] Investigate SIP-enabled alternatives for native Space operations and dialog
   layering, then validate each capability separately on supported builds. Do not
   promise full native Space parity without demonstrated behavior.
