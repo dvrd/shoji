@@ -426,7 +426,9 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 		return "window operations are disabled in read-only inspection"
 	}
 	if state.validation_pid != 0 {
-		if action.kind >= .Display_Focus || action.kind == .Space {
+		// Moving one fixture window to another Space is window-scoped (C4);
+		// focusing, creating, destroying or moving Spaces is not.
+		if action.kind >= .Display_Focus {
 			return(
 				"global desktop operations are disabled during owned-window validation" \
 			)
