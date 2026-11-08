@@ -61,6 +61,16 @@ frame_pacer_take :: proc(
 	}
 	return false, now, false
 }
+
+// Milliseconds from `commit` to `present`. Negative means the sample is after
+// the display-link target. A non-finite input is 0.
+frame_present_latency_ms :: proc(commit, present: f64) -> f64 {
+	if math.is_nan(commit) || math.is_nan(present) || math.is_inf(commit) || math.is_inf(present) {
+		return 0
+	}
+	return (present - commit) * 1000
+}
+
 Display_Clock :: struct {
 	listener, link: ^objc.Object,
 	display: u32,

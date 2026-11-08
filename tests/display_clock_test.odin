@@ -7,6 +7,14 @@ import "core:time"
 import ipc "../src/ipc"
 
 @(test)
+frame_present_latency_is_the_target_delta :: proc(t: ^testing.T) {
+	testing.expect(t, math.abs(mac.frame_present_latency_ms(2, 2.5) - 500) < 0.001)
+	testing.expect_value(t, mac.frame_present_latency_ms(1, 1), f64(0))
+	testing.expect_value(t, mac.frame_present_latency_ms(math.nan_f64(), 1), f64(0))
+	testing.expect_value(t, mac.frame_present_latency_ms(1, math.inf_f64(1)), f64(0))
+}
+
+@(test)
 display_pacer_coalesces_pulses_and_consumes_once :: proc(t: ^testing.T) {
 	p: mac.Frame_Pacer
 	mac.frame_pacer_pulse(&p, 10.016, 10, 1.0 / 60)
