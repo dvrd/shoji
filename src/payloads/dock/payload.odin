@@ -58,6 +58,10 @@ foreign sls {
 	SLSTransactionAddWindowToSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
 	SLSTransactionRemoveWindowFromSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
 	SLSTransactionSetWindowEventShape :: proc(transaction: m.Ref, wid: u32, region: m.Ref) ---
+	// Prologue matches EventShape on 26B123 (mov x20, x2; mov x21, x1 at
+	// 0x199bcd6a0). Inferred 2026-11-08, not live-checked. A wrong ABI
+	// crashes Dock; tests never send this.
+	SLSTransactionSetWindowGlobalClipShape :: proc(transaction: m.Ref, wid: u32, region: m.Ref) ---
 	// The two i32s are the caller's extra words. Shoji passes 0, 0.
 	SLSTransactionSetWindowTransform :: proc(transaction: m.Ref, wid: u32, p0, p1: i32, transform: Transform) ---
 	CGSNewEmptyRegion :: proc(region: ^m.Ref) -> i32 ---
@@ -457,6 +461,7 @@ Presented :: struct {
 	alpha: bool,
 	event: bool,
 	transform: bool,
+	clip: bool,
 	saved: Transform,
 }
 presented: map[u32]Presented
@@ -472,7 +477,7 @@ present_apply :: proc(req: dock.Present_Request, client: i32, diagnostic: ^dock.
 	}
 	region: m.Ref
 	defer if region != nil {_ = CGSReleaseRegion(region)}
-	if req.mask & dock.PRESENT_EVENT != 0 {
+	if req.mask & (dock.PRESENT_EVENT | dock.PRESENT_CLIP) != 0 {
 		if req.event_kind == 0 {
 			if code := CGSNewEmptyRegion(&region); code != 0 || region == nil {return .Operation_Failed}
 		} else {
@@ -486,7 +491,12 @@ present_apply :: proc(req: dock.Present_Request, client: i32, diagnostic: ^dock.
 	if req.mask & dock.PRESENT_ALPHA != 0 {
 		SLSTransactionSetWindowSystemAlpha(transaction, req.window, req.alpha)
 	}
-	if region != nil {SLSTransactionSetWindowEventShape(transaction, req.window, region)}
+	if req.mask & dock.PRESENT_EVENT != 0 && region != nil {
+		SLSTransactionSetWindowEventShape(transaction, req.window, region)
+	}
+	if req.mask & dock.PRESENT_CLIP != 0 && region != nil {
+		SLSTransactionSetWindowGlobalClipShape(transaction, req.window, region)
+	}
 	if req.mask & dock.PRESENT_TRANSFORM != 0 {
 		SLSTransactionSetWindowTransform(transaction, req.window, req.p0, req.p1, Transform{req.a, req.b, req.c, req.d, req.tx, req.ty})
 	}
@@ -494,6 +504,7 @@ present_apply :: proc(req: dock.Present_Request, client: i32, diagnostic: ^dock.
 	entry.client, entry.owner = client, owner
 	if req.mask & dock.PRESENT_ALPHA != 0 {entry.alpha = true}
 	if req.mask & dock.PRESENT_EVENT != 0 {entry.event = true}
+	if req.mask & dock.PRESENT_CLIP != 0 {entry.clip = true}
 	if req.mask & dock.PRESENT_TRANSFORM != 0 {entry.transform = true}
 	presented[req.window] = entry
 	return .OK
@@ -502,7 +513,7 @@ present_apply :: proc(req: dock.Present_Request, client: i32, diagnostic: ^dock.
 present_restore :: proc(id: u32, entry: Presented) -> dock.Status {
 	region: m.Ref
 	defer if region != nil {_ = CGSReleaseRegion(region)}
-	if entry.event {
+	if entry.event || entry.clip {
 		frame: m.Rect
 		if m.SLSGetWindowBounds(g.cid, id, &frame) != 0 {return .Operation_Failed}
 		local := m.Rect{0, 0, frame.w, frame.h}
@@ -512,7 +523,8 @@ present_restore :: proc(id: u32, entry: Presented) -> dock.Status {
 	if transaction == nil {return .Operation_Failed}
 	defer m.CFRelease(transaction)
 	if entry.alpha {SLSTransactionSetWindowSystemAlpha(transaction, id, 1)}
-	if region != nil {SLSTransactionSetWindowEventShape(transaction, id, region)}
+	if entry.event && region != nil {SLSTransactionSetWindowEventShape(transaction, id, region)}
+	if entry.clip && region != nil {SLSTransactionSetWindowGlobalClipShape(transaction, id, region)}
 	if entry.transform {SLSTransactionSetWindowTransform(transaction, id, 0, 0, entry.saved)}
 	SLSTransactionCommit(transaction, 1)
 	return .OK

@@ -521,7 +521,7 @@ ws_present_stages_when_the_payload_advertises_it :: proc(t: ^testing.T) {
 	a := fake_adapter(&g)
 	shoji.ws_adapter_capabilities(&a)
 	present_send_err = ""
-	staged, err := shoji.ws_present(&a, 4, true, false, true, present_send)
+	staged, err := shoji.ws_present(&a, 4, true, false, true, false, present_send)
 	testing.expect(t, staged && err == "")
 	testing.expect_value(t, g.commands[2], gate.Gate_Command.PresentApply)
 	testing.expect_value(t, g.commands[3], gate.Gate_Command.Release)
@@ -536,7 +536,7 @@ ws_present_skips_the_gate_when_the_feature_is_absent :: proc(t: ^testing.T) {
 	a := fake_adapter(&g)
 	shoji.ws_adapter_capabilities(&a)
 	present_send_err = ""
-	staged, err := shoji.ws_present(&a, 4, true, false, false, present_send)
+	staged, err := shoji.ws_present(&a, 4, true, false, false, false, present_send)
 	testing.expect(t, !staged && err == "")
 	testing.expect_value(t, g.calls, 2)
 }
@@ -551,7 +551,7 @@ ws_present_releases_when_the_dock_send_fails :: proc(t: ^testing.T) {
 	a := fake_adapter(&g)
 	shoji.ws_adapter_capabilities(&a)
 	present_send_err = "dock down"
-	staged, err := shoji.ws_present(&a, 4, true, false, false, present_send)
+	staged, err := shoji.ws_present(&a, 4, true, false, false, false, present_send)
 	testing.expect(t, staged)
 	testing.expect_value(t, err, "dock down")
 	testing.expect_value(t, g.commands[3], gate.Gate_Command.Release)

@@ -33,14 +33,15 @@ Opcode :: enum u8 {
 	// shape, so a concealed window is neither drawn nor hit-tested. Alpha
 	// alone leaves the window catching clicks (live, 26B123).
 	Window_Conceal,
-	// One Dock transaction: system alpha, event shape, transform, any subset.
-	// Fixed 82-byte body. See Present_Request.
+	// One Dock transaction: system alpha, event shape, transform, global clip,
+	// any subset. Clip reuses the event rect. Fixed 82-byte body.
 	Window_Present,
 }
-// Window_Present mask bits.
+// Window_Present mask bits. Clip and event share x,y,w,h.
 PRESENT_ALPHA :: u8(1)
 PRESENT_EVENT :: u8(2)
 PRESENT_TRANSFORM :: u8(4)
+PRESENT_CLIP :: u8(8)
 PRESENT_SIZE :: 82
 Capability :: enum u32 {
 	Dock_Spaces,
@@ -189,11 +190,14 @@ present_finite :: proc(value: f64) -> bool {
 }
 
 present_valid :: proc(req: Present_Request) -> bool {
-	if req.window == 0 || req.mask == 0 || req.mask & 7 != req.mask {return false}
+	known := PRESENT_ALPHA | PRESENT_EVENT | PRESENT_TRANSFORM | PRESENT_CLIP
+	if req.window == 0 || req.mask == 0 || req.mask & known != req.mask {return false}
 	if req.mask & PRESENT_ALPHA != 0 {
 		if math.is_nan(req.alpha) || req.alpha < 0 || req.alpha > 1 {return false}
 	}
-	if req.mask & PRESENT_EVENT != 0 {
+	// Event and clip share one rect. Kind 0 is an empty region. Kind 1 needs
+	// a positive size; a zero rect is not sent.
+	if req.mask & (PRESENT_EVENT | PRESENT_CLIP) != 0 {
 		if req.event_kind > 1 {return false}
 		if req.event_kind == 1 && (req.w <= 0 || req.h <= 0) {return false}
 	}

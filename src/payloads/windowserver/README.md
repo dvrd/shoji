@@ -38,9 +38,12 @@ legacy `LayoutBegin`/`LayoutAdd`/`LayoutArm` sequence of at most 8 moves.
 `shoji -m debug ws status` shows which protocol is in use.
 
 `PresentApply` is a second feature bit. It holds one Dock transaction that
-sets system alpha, the event shape, and the window transform, then forwards
-that commit. Clip and shape are in the gated set and are not issued. A payload
-without the bit still lets the Dock send run. A failed send releases the hold.
+sets system alpha, the event shape, the window transform, and the global clip,
+then forwards that commit. Shape 0x0b is in the gated set and is not issued.
+Global clip uses `SLSTransactionSetWindowGlobalClipShape`; its prologue matches
+event shape on 26B123 and the call is not live-checked. A payload without the
+bit still lets the Dock send run. The hold is released when that send returns,
+so a missed claim cannot block layout.
 
 While a trackpad swipe drags the scroll strip, and while the camera spring
 runs, the daemon holds that frame's window moves and submits them once,

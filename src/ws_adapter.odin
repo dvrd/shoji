@@ -12,6 +12,7 @@ import "core:fmt"
 import "core:math"
 import "core:sys/posix"
 import "core:time"
+import dock "dock"
 import gate "windowserver/gate"
 
 WS_TGATE_STATUS_PATH :: gate.TGATE_STATUS_PATH
@@ -170,9 +171,9 @@ ws_adapter_call :: proc(
 
 // Arm PresentApply when this payload advertises it. A payload that does not
 // is left unstaged; the Dock transaction still runs, just ungated.
-ws_present_stage :: proc(a: ^Ws_Adapter, wid: u32, alpha, event, transform: bool) -> (generation: u32, handled: bool) {
+ws_present_stage :: proc(a: ^Ws_Adapter, wid: u32, alpha, event, transform, clip: bool) -> (generation: u32, handled: bool) {
 	if a.state != .Serving || wid == 0 || a.features & gate.GATE_FEATURE_PRESENT == 0 {return}
-	mask := gate.present_stage_mask(alpha, event, transform)
+	mask := gate.present_stage_mask(alpha, event, transform, clip)
 	if mask == 0 {return}
 	reply, ok := ws_adapter_call(a, .PresentApply, u64(wid), u64(mask))
 	if !ok || reply.status != WS_STATUS_OK {return}
@@ -183,9 +184,9 @@ ws_present_stage :: proc(a: ^Ws_Adapter, wid: u32, alpha, event, transform: bool
 // release the hold. The shim finishes a claimed op itself; this release frees
 // a hold that nothing claimed, which would otherwise block layout. `staged`
 // is false when the payload has no PresentApply; the send still runs.
-ws_present :: proc(a: ^Ws_Adapter, wid: u32, alpha, event, transform: bool, send: proc() -> string) -> (staged: bool, err: string) {
-	if send == nil || wid == 0 || (!alpha && !event && !transform) {return false, "invalid presentation"}
-	generation, armed := ws_present_stage(a, wid, alpha, event, transform)
+ws_present :: proc(a: ^Ws_Adapter, wid: u32, alpha, event, transform, clip: bool, send: proc() -> string) -> (staged: bool, err: string) {
+	if send == nil || wid == 0 || (!alpha && !event && !transform && !clip) {return false, "invalid presentation"}
+	generation, armed := ws_present_stage(a, wid, alpha, event, transform, clip)
 	staged = armed
 	err = send()
 	if staged {ws_release(a, generation)}
@@ -504,6 +505,29 @@ ws_layout_batch :: proc(user: rawptr, moves: []Layout_Move) -> bool {
 		},
 	)
 	return applied
+}
+
+// The Dock send does not close over the request: Odin nested procs do not
+// capture locals. Clip sync calls this only when the rect changes.
+@(thread_local) present_req: dock.Present_Request
+
+viewport_present_send :: proc() -> string {
+	return addition_present(present_req)
+}
+
+viewport_present :: proc(user: rawptr, req: dock.Present_Request) -> string {
+	state := (^State)(user)
+	present_req = req
+	_, err := ws_present(
+		&state.ws,
+		req.window,
+		false,
+		req.mask & dock.PRESENT_EVENT != 0,
+		false,
+		req.mask & dock.PRESENT_CLIP != 0,
+		viewport_present_send,
+	)
+	return err
 }
 
 Ws_Order :: #type proc "c" (cid: i32, window: u32, order: i32, relative: u32) -> i32

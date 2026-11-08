@@ -368,11 +368,14 @@ present_claims :: proc "contextless" (op: u16, mask: u32) -> bool {
 }
 
 // Mask for the Dock transaction Shoji can issue: system alpha 0x0e,
-// transform 0x0f, event shape 0x45. Clip and shape stay gated, unissued.
-present_stage_mask :: proc(alpha, event, transform: bool) -> u32 {
+// transform 0x0f, event shape 0x45, global clip 0x05 and 0x2f. Shape 0x0b
+// stays gated and unissued. Extra clip bits do not wait: the shim claims
+// the first matching op and the daemon releases the rest.
+present_stage_mask :: proc(alpha, event, transform, clip: bool) -> u32 {
 	mask: u32
 	for op, index in PRESENT_OPS {
-		if (alpha && op == 0x0e) || (event && op == 0x45) || (transform && op == 0x0f) {
+		if (alpha && op == 0x0e) || (event && op == 0x45) || (transform && op == 0x0f) ||
+		   (clip && (op == 0x05 || op == 0x2f)) {
 			mask |= u32(1) << u32(index)
 		}
 	}

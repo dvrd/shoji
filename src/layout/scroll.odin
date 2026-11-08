@@ -293,6 +293,31 @@ scroll_park_frame :: proc(v: ^View, frame: Rect) -> Rect {
 	return r
 }
 
+// Window-local intersection of a parked frame with the viewport. partial is
+// false when the frame sits inside (half a pixel of slack). No overlap is an
+// empty clip. A zero-size input is not a clip.
+viewport_clip :: proc(frame, viewport: Rect) -> (x, y, w, h: i32, partial: bool) {
+	if frame.w <= 0 || frame.h <= 0 || viewport.w <= 0 || viewport.h <= 0 {return}
+	if frame.x >= viewport.x - 0.5 &&
+	   frame.y >= viewport.y - 0.5 &&
+	   frame.x + frame.w <= viewport.x + viewport.w + 0.5 &&
+	   frame.y + frame.h <= viewport.y + viewport.h + 0.5 {
+		return 0, 0, i32(math.round(frame.w)), i32(math.round(frame.h)), false
+	}
+	x0 := max(frame.x, viewport.x)
+	y0 := max(frame.y, viewport.y)
+	x1 := min(frame.x + frame.w, viewport.x + viewport.w)
+	y1 := min(frame.y + frame.h, viewport.y + viewport.h)
+	if x1 <= x0 || y1 <= y0 {return 0, 0, 0, 0, true}
+	x = i32(math.round(x0 - frame.x))
+	y = i32(math.round(y0 - frame.y))
+	w = i32(math.round(x1 - x0))
+	h = i32(math.round(y1 - y0))
+	if w <= 0 || h <= 0 {return 0, 0, 0, 0, true}
+	partial = true
+	return
+}
+
 scroll_set_width :: proc(v: ^View, window: u32, operand: string) -> string {
 	n := find(v.root, window)
 	if n == nil {
