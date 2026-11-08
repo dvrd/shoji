@@ -99,7 +99,6 @@ observer_events: [OBSERVER_EVENTS]Observer_Event
 TGATE_STATUS_PATH :: gate.TGATE_STATUS_PATH
 TABLE_UNSLID :: gate.TABLE_UNSLID
 TABLE_OP_MAX :: 0x8c
-GATED_OPS :: [14]u64{0x01, 0x03, 0x06, 0x0b, 0x18, 0x19, 0x21, 0x22, 0x2a, 0x33, 0x34, 0x35, 0x36, 0x41}
 GATE_EVENT_FLAG :: 0x54474154 // 'TGAT'
 
 Gate_Expected_Op :: struct {
@@ -169,6 +168,19 @@ gate_register_service :: proc(task: u32) {
 
 // Reply to a received request. The kernel leaves the send-once right in
 // msgh_remote_port; msgh_local_port is the gate's own receive right.
+gate_reply_capabilities :: proc(buffer: ^Gate_Buffer, command: u32) {
+	reply_right, right_ok := gate.gate_received_reply_right(buffer[:])
+	if !right_ok {return}
+	ops := gate.GATED_OPS
+	n, ok := gate.gate_pack_capabilities(
+		buffer[:], reply_right, command, 0,
+		gate.GATE_FEATURE_LAYOUT_SUBMIT, gate.LAYOUT_LIMIT,
+		gate.ORDERING_IMAGE_UUID, ops[:],
+	)
+	if !ok {return}
+	gate.gate_mach_msg(buffer, gate.MACH_MSG_SEND, u32(n), 0, 0, 0, 0)
+}
+
 gate_reply :: proc(buffer: ^Gate_Buffer, command: u32, status: i32, data0, data1: u64) {
 	reply_right, right_ok := gate.gate_received_reply_right(buffer[:])
 	if !right_ok {return}
@@ -229,7 +241,7 @@ gate_handle_message :: proc(buffer: ^Gate_Buffer) {
 	arg1 := request.arg1
 	switch gate.Gate_Command(command) {
 	case .Capabilities:
-		gate_reply(buffer, command, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, gate.LAYOUT_LIMIT)
+		gate_reply_capabilities(buffer, command)
 	case .LayoutSubmit:
 		if target, generation, busy := gate.hold_busy(&hold); busy {
 			gate_reply(buffer, command, 6, target, u64(generation))
@@ -574,8 +586,8 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 		result.status = 4
 		return
 	}
-	for op, index in GATED_OPS {
-		gate_write_stub(stub_page + u64(index) * 32, op, impl)
+	for op, index in gate.GATED_OPS {
+		gate_write_stub(stub_page + u64(index) * 32, u64(op), impl)
 	}
 	gate.hook_sys_icache_invalidate(rawptr(uintptr(stub_page)), uint(page_size))
 	if code := protect(task, stub_page, page_size, 0, 1 | 4); code != 0 {
@@ -603,7 +615,7 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 	if !redirect_dispatch_site(task, words, deallocate, protect, page_size, &result) {
 		return
 	}
-	result.entries_written = len(GATED_OPS)
+	result.entries_written = len(gate.GATED_OPS)
 	result.status = 0
 }
 
@@ -634,7 +646,7 @@ prepare_table_copy :: proc(
 	source := ([^]u64)(uintptr(table_live))
 	target := ([^]u64)(uintptr(copy_page))
 	for index in 0 ..< table_bytes / 8 {target[index] = source[index]}
-	for op, index in GATED_OPS {
+	for op, index in gate.GATED_OPS {
 		gate_originals[op] = source[op * 2]
 		target[op * 2] = inject.sign_function(stub_page + u64(index) * 32)
 	}

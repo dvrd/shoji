@@ -43,6 +43,11 @@ Gate_Command :: enum u32 {
 GATE_FEATURE_LAYOUT_SUBMIT :: u64(1)
 // Item limit of payloads that predate Capabilities.
 GATE_LEGACY_LAYOUT_LIMIT :: 8
+// Ops the transaction-table gate swaps. The Capabilities trailer reports this
+// set; a daemon built against a different set must not use the payload.
+GATED_OPS :: [14]u16{0x01, 0x03, 0x06, 0x0b, 0x18, 0x19, 0x21, 0x22, 0x2a, 0x33, 0x34, 0x35, 0x36, 0x41}
+GATE_OP_REPORT_MAX :: 32
+#assert(len(GATED_OPS) <= GATE_OP_REPORT_MAX)
 
 GATE_HEADER_SIZE :: 24
 GATE_BODY_SIZE :: 32
@@ -54,9 +59,15 @@ GATE_ITEMS_HEADER_OFF :: GATE_MSG_SIZE
 GATE_ITEMS_OFF :: GATE_MSG_SIZE + 8
 GATE_ITEM_SIZE :: 12
 GATE_SUBMIT_MAX_SIZE :: GATE_ITEMS_OFF + LAYOUT_LIMIT * GATE_ITEM_SIZE
+// Capabilities appends a 16-byte SkyLight UUID, a u32 op count, then that many
+// u32 ops. A reply of exactly GATE_MSG_SIZE is a payload from before the trailer.
+GATE_CAP_UUID_OFF :: GATE_MSG_SIZE
+GATE_CAP_COUNT_OFF :: GATE_MSG_SIZE + 16
+GATE_CAP_OPS_OFF :: GATE_MSG_SIZE + 20
 // Receive buffers hold the largest request plus the audit trailer.
-GATE_RECEIVE_BUFFER_SIZE :: 512
+GATE_RECEIVE_BUFFER_SIZE :: 1024
 #assert(GATE_SUBMIT_MAX_SIZE + GATE_AUDIT_TRAILER_SIZE <= GATE_RECEIVE_BUFFER_SIZE)
+#assert(GATE_CAP_OPS_OFF + GATE_OP_REPORT_MAX * 4 + GATE_AUDIT_TRAILER_SIZE <= GATE_RECEIVE_BUFFER_SIZE)
 
 // Body field offsets (from message start)
 GATE_OFF_MAGIC :: 24
@@ -310,10 +321,55 @@ gate_pack_reply :: proc "contextless" (buf: []u8, reply_right, command: u32, sta
 	return GATE_MSG_SIZE, true
 }
 
+// Capabilities reply: the fixed body plus the build identity. `ops` is the
+// gated transaction-table set. A short reply (GATE_MSG_SIZE) stays valid for
+// payloads that only report the feature bit and the item limit.
+gate_pack_capabilities :: proc "contextless" (
+	buf: []u8,
+	reply_right, command: u32,
+	status: i32,
+	features, limit: u64,
+	uuid: [16]u8,
+	ops: []u16,
+) -> (n: int, ok: bool) {
+	if len(ops) > GATE_OP_REPORT_MAX {return}
+	n, ok = gate_pack_reply(buf, reply_right, command, status, features, limit)
+	if !ok {return}
+	size := GATE_CAP_OPS_OFF + len(ops) * 4
+	if len(buf) < size {return 0, false}
+	for i in GATE_MSG_SIZE ..< size {buf[i] = 0}
+	if !gate_store_u32(buf, 4, u32(size)) {return 0, false}
+	for b, i in uuid {buf[GATE_CAP_UUID_OFF + i] = b}
+	if !gate_store_u32(buf, GATE_CAP_COUNT_OFF, u32(len(ops))) {return 0, false}
+	for op, i in ops {
+		if !gate_store_u32(buf, GATE_CAP_OPS_OFF + i * 4, u32(op)) {return 0, false}
+	}
+	return size, true
+}
+
+gated_ops_match :: proc(ops: []u32) -> bool {
+	if len(ops) != len(GATED_OPS) {return false}
+	for expected in GATED_OPS {
+		found := false
+		for op in ops {
+			if op == u32(expected) {found = true; break}
+		}
+		if !found {return false}
+	}
+	return true
+}
+
 Gate_Reply :: struct {
 	magic, version, command: u32,
 	status:                  i32,
 	data0, data1:            u64,
+	// Set when the Capabilities trailer parsed. `rejected` means a longer
+	// Capabilities reply was not that trailer; the feature words are then ignored.
+	uuid:      [16]u8,
+	ops:       [GATE_OP_REPORT_MAX]u32,
+	op_count:  u32,
+	identity:  bool,
+	rejected:  bool,
 }
 
 gate_unpack_reply :: proc "contextless" (buf: []u8) -> (reply: Gate_Reply, ok: bool) {
@@ -328,7 +384,28 @@ gate_unpack_reply :: proc "contextless" (buf: []u8) -> (reply: Gate_Reply, ok: b
 	reply.data0, ok = gate_load_u64(buf, GATE_OFF_ARG0)
 	if !ok {return}
 	reply.data1, ok = gate_load_u64(buf, GATE_OFF_ARG1)
-	return
+	if !ok {return}
+	size, size_ok := gate_load_u32(buf, 4)
+	if !size_ok || size < u32(GATE_MSG_SIZE) {return {}, false}
+	if reply.command != u32(Gate_Command.Capabilities) || size == u32(GATE_MSG_SIZE) {
+		return reply, true
+	}
+	count, count_ok := gate_load_u32(buf, GATE_CAP_COUNT_OFF)
+	expect := u32(GATE_CAP_OPS_OFF) + count * 4
+	if !count_ok || count > GATE_OP_REPORT_MAX || size != expect || int(size) > len(buf) {
+		reply.rejected = true
+		return reply, true
+	}
+	if GATE_CAP_UUID_OFF + 16 > len(buf) {reply.rejected = true; return reply, true}
+	for i in 0 ..< 16 {reply.uuid[i] = buf[GATE_CAP_UUID_OFF + i]}
+	for i in 0 ..< count {
+		op, op_ok := gate_load_u32(buf, GATE_CAP_OPS_OFF + int(i) * 4)
+		if !op_ok {reply.rejected = true; return reply, true}
+		reply.ops[i] = op
+	}
+	reply.op_count = count
+	reply.identity = true
+	return reply, true
 }
 
 // The kernel rounds msgh_size to a Mach word before appending the trailer.

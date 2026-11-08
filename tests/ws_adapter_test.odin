@@ -16,6 +16,11 @@ Fake_Gate :: struct {
 	fail_at:   int, // 1-based call index whose transport fails; 0 = never
 	bad_magic: bool,
 	items:     [32]int, // item count sent with each call
+	identity:  bool,
+	rejected:  bool,
+	uuid:      [16]u8,
+	ops:       [gate.GATE_OP_REPORT_MAX]u32,
+	op_count:  u32,
 }
 
 fake_push :: proc(g: ^Fake_Gate, status: i32, data0: u64 = 0, data1: u64 = 0) {
@@ -39,7 +44,22 @@ fake_exchange :: proc(
 	if g.fail_at == g.calls || index >= g.count {return {}, false}
 	magic := u32(gate.GATE_REPLY_MAGIC)
 	if g.bad_magic {magic = 0}
-	return {magic, gate.GATE_VERSION, u32(command), g.statuses[index], g.data0[index], g.data1[index]}, true
+	reply := gate.Gate_Reply{
+		magic = magic,
+		version = gate.GATE_VERSION,
+		command = u32(command),
+		status = g.statuses[index],
+		data0 = g.data0[index],
+		data1 = g.data1[index],
+	}
+	if command == .Capabilities {
+		reply.identity = g.identity
+		reply.rejected = g.rejected
+		reply.uuid = g.uuid
+		reply.ops = g.ops
+		reply.op_count = g.op_count
+	}
+	return reply, true
 }
 
 fake_adapter :: proc(g: ^Fake_Gate) -> shoji.Ws_Adapter {
@@ -435,6 +455,57 @@ ws_adapter_capabilities_select_single_message_layout :: proc(t: ^testing.T) {
 	testing.expect_value(t, g.calls, 3)
 	testing.expect_value(t, g.commands[2], gate.Gate_Command.LayoutSubmit)
 	testing.expect_value(t, g.items[2], 12)
+}
+
+@(test)
+ws_adapter_capabilities_reject_a_foreign_build :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0)
+	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, 32)
+	g.identity = true
+	g.rejected = false
+	g.uuid = gate.ORDERING_IMAGE_UUID
+	g.uuid[0] ~= 0xff
+	g.op_count = u32(len(gate.GATED_OPS))
+	for op, i in gate.GATED_OPS {g.ops[i] = u32(op)}
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	testing.expect_value(t, a.state, shoji.Ws_Adapter_State.Serving)
+	testing.expect(t, !a.identity_ok)
+	testing.expect_value(t, a.features, u64(0))
+	testing.expect_value(t, a.layout_limit, 0)
+}
+
+@(test)
+ws_adapter_capabilities_accept_this_build :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0)
+	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, u64(gate.LAYOUT_LIMIT))
+	g.identity = true
+	g.uuid = gate.ORDERING_IMAGE_UUID
+	g.op_count = u32(len(gate.GATED_OPS))
+	for op, i in gate.GATED_OPS {g.ops[i] = u32(op)}
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	testing.expect(t, a.identity_ok)
+	testing.expect_value(t, a.build_uuid, gate.ORDERING_IMAGE_UUID)
+	testing.expect_value(t, a.features, gate.GATE_FEATURE_LAYOUT_SUBMIT)
+	testing.expect_value(t, a.layout_limit, gate.LAYOUT_LIMIT)
+	testing.expect_value(t, a.gated_op_count, len(gate.GATED_OPS))
+}
+
+@(test)
+ws_adapter_capabilities_malformed_trailer_leaves_features_off :: proc(t: ^testing.T) {
+	g: Fake_Gate
+	fake_push(&g, 0)
+	fake_push(&g, 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, 32)
+	g.rejected = true
+	a := fake_adapter(&g)
+	shoji.ws_adapter_capabilities(&a)
+	testing.expect_value(t, a.state, shoji.Ws_Adapter_State.Serving)
+	testing.expect(t, !a.identity_ok)
+	testing.expect_value(t, a.features, u64(0))
+	testing.expect_value(t, a.layout_limit, 0)
 }
 
 @(test)

@@ -406,9 +406,10 @@ windowserver_layout_plan_is_bounded_sealed_and_validated :: proc(t: ^testing.T) 
 	testing.expect(t, !gate.layout_seal(&plan, 99, 8001))
 	for index in 1 ..< gate.LAYOUT_LIMIT {testing.expect(t, gate.layout_add(&plan, u64(42 + index), 400, 450))}
 	testing.expect(t, !gate.layout_add(&plan, 88, 400, 450))
-	testing.expect(t, gate.layout_seal(&plan, 99, 8000))
+	// 99 is inside the filled id range once LAYOUT_LIMIT exceeds 57.
+	testing.expect(t, gate.layout_seal(&plan, 1, 8000))
 	testing.expect(t, !gate.layout_add(&plan, 88, 400, 450))
-	testing.expect(t, !gate.layout_seal(&plan, 99, 8000))
+	testing.expect(t, !gate.layout_seal(&plan, 1, 8000))
 	testing.expect_value(t, plan.count, u32(gate.LAYOUT_LIMIT))
 	pid, version := u32(10), u32(3)
 	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 11, 3, gate.GATE_VERSION, u32(gate.Gate_Command.LayoutArm)), i32(4))
@@ -679,6 +680,36 @@ gate_layout_submit_round_trips_items_and_rejects_bad_sizes :: proc(t: ^testing.T
 	too_many: [gate.LAYOUT_LIMIT + 1]gate.Layout_Item
 	_, over_ok := gate.gate_pack_request(buffer[:], 1, 2, .LayoutSubmit, 99, 8000, too_many[:])
 	testing.expect(t, !over_ok)
+}
+
+@(test)
+gate_capabilities_trailer_round_trips_and_a_short_reply_stays_bare :: proc(t: ^testing.T) {
+	buffer: [gate.GATE_RECEIVE_BUFFER_SIZE]u8
+	ops := gate.GATED_OPS
+	n, ok := gate.gate_pack_capabilities(buffer[:], 7, u32(gate.Gate_Command.Capabilities), 0, gate.GATE_FEATURE_LAYOUT_SUBMIT, u64(gate.LAYOUT_LIMIT), gate.ORDERING_IMAGE_UUID, ops[:])
+	testing.expect(t, ok)
+	testing.expect(t, n > gate.GATE_MSG_SIZE)
+	reply, reply_ok := gate.gate_unpack_reply(buffer[:])
+	testing.expect(t, reply_ok)
+	testing.expect(t, reply.identity && !reply.rejected)
+	testing.expect_value(t, reply.uuid, gate.ORDERING_IMAGE_UUID)
+	testing.expect_value(t, reply.op_count, u32(len(gate.GATED_OPS)))
+	testing.expect(t, gate.gated_ops_match(reply.ops[:reply.op_count]))
+	testing.expect_value(t, reply.data0, gate.GATE_FEATURE_LAYOUT_SUBMIT)
+	testing.expect_value(t, reply.data1, u64(gate.LAYOUT_LIMIT))
+
+	short, short_ok := gate.gate_pack_reply(buffer[:], 7, u32(gate.Gate_Command.Capabilities), 0, 1, 8)
+	testing.expect(t, short_ok)
+	bare, bare_ok := gate.gate_unpack_reply(buffer[:short])
+	testing.expect(t, bare_ok)
+	testing.expect(t, !bare.identity && !bare.rejected)
+	testing.expect_value(t, bare.data0, u64(1))
+	testing.expect_value(t, bare.data1, u64(8))
+
+	gate.gate_store_u32(buffer[:], 4, u32(gate.GATE_MSG_SIZE + 4))
+	bad, bad_ok := gate.gate_unpack_reply(buffer[:])
+	testing.expect(t, bad_ok)
+	testing.expect(t, bad.rejected && !bad.identity)
 }
 
 @(test)
