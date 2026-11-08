@@ -132,7 +132,9 @@ tasks:
         if [ ! -x bin/odin-arm64e ]; then
           ./bin/dev build-arm64e '{{.ODIN_LIBRARY_ROOT}}'
         fi
-      - task: build
+      # The service and the --ws-attach sudoers rule run bin/Shoji.app, so
+      # install refreshes the bundle too (build:app builds the runtime first).
+      - task: build:app
       - |
         set -eu
         dest="$SHOJI_INSTALL_DIR"
