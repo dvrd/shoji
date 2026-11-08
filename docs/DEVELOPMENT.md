@@ -90,7 +90,7 @@ Build products and machine-local research stay out of Git.
 | Path | Purpose |
 | --- | --- |
 | `bin/` | Rebuildable executables, tests and libraries |
-| `.toolchain/` | Pinned Odin compiler and libraries |
+| `.toolchain/` | Pinned Odin compiler plus `core` and `base`. `src` is downloaded only while rebuilding that compiler. `vendor` is an empty directory because the compiler looks the collection up |
 | `artifacts/` | Local evidence and measurement output (`memory/`, `macos_versions/`) |
 | `docs/local/` | Personal notes and scratch documents |
 

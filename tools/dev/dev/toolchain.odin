@@ -7,6 +7,7 @@ import "core:time"
 import support "../../../src/support"
 
 ODIN_REVISION :: "37d8ab08f"
+ODIN_REMOTE :: "https://github.com/odin-lang/Odin.git"
 patch_assembly :: proc(c: tc.Context, source: string) -> string {
 	stage, err := support.temp("shoji-odin-patch"); if err != "" {
 		return err
@@ -42,52 +43,87 @@ patch_assembly :: proc(c: tc.Context, source: string) -> string {
 	}
 	return ""
 }
-prepare_toolchain :: proc(
-	c: tc.Context,
-	source, destination: string,
-) -> string {
-	if support.exists(destination) {
-		return "refusing to overwrite an existing toolchain"
+// A directory that contains ODIN_REVISION. An ordinary library root does not.
+has_revision :: proc(c: tc.Context, source: string) -> bool {
+	if source == "" {return false}
+	_, err := tc.run(
+		c,
+		[]string{"git", "-C", source, "cat-file", "-e", ODIN_REVISION + "^{commit}"},
+	)
+	return err == ""
+}
+// Puts the pinned commit into an empty directory. A local git checkout that
+// already has it is archived from there. Otherwise the commit is fetched.
+// src and vendor exist only inside this directory; the caller deletes it.
+fetch_revision :: proc(c: tc.Context, into, source: string) -> string {
+	if err := support.mkdir(into); err != "" {return err}
+	if has_revision(c, source) {
+		archive := support.join(into, "source.tar")
+		if _, e := tc.run(
+			c,
+			[]string{"git", "-C", source, "archive", "--output", archive, ODIN_REVISION},
+		); e != "" {
+			return e
+		}
+		if _, e := tc.run(c, []string{"/usr/bin/tar", "-xf", archive, "-C", into}); e != "" {
+			return e
+		}
+		os.remove(archive)
+		return ""
 	}
-	if err := support.mkdir(support.join(destination, "..")); err != "" {
-		return err
-	}
-	stage, err := os.make_directory_temp(
-		support.join(destination, ".."),
-		"odin-*",
-		context.allocator,
-	); if err != nil {
-		return fmt.tprintf("toolchain stage: %v", err)
-	}
-	defer os.remove_all(stage)
-	archive := support.join(stage, "source.tar"); unpack := support.join(stage, "unpacked")
-	if e := support.mkdir(unpack); e != "" {
-		return e
-	}
+	fmt.println("Fetching Odin", ODIN_REVISION)
+	if _, e := tc.run(c, []string{"git", "init", "-q"}, into); e != "" {return e}
 	if _, e := tc.run(
 		c,
-		[]string {
-			"git",
-			"-C",
-			source,
-			"archive",
-			"--output",
-			archive,
-			ODIN_REVISION,
-		},
+		[]string{"git", "-C", into, "remote", "add", "origin", ODIN_REMOTE},
 	); e != "" {
 		return e
 	}
 	if _, e := tc.run(
 		c,
-		[]string{"/usr/bin/tar", "-xf", archive, "-C", unpack},
+		[]string{"git", "-C", into, "fetch", "--depth", "1", "origin", ODIN_REVISION},
+		"",
+		"",
+		1800 * time.Second,
 	); e != "" {
 		return e
 	}
-	if e := os.rename(unpack, destination); e != nil {
-		return fmt.tprintf("cannot install toolchain: %v", e)
+	_, e := tc.run(c, []string{"git", "-C", into, "checkout", "--detach", "--quiet", "FETCH_HEAD"})
+	return e
+}
+// The running compiler reads core and base. src and vendor are build inputs.
+install_libraries :: proc(c: tc.Context, from, destination: string) -> string {
+	if err := support.mkdir(destination); err != "" {return err}
+	for name in ([]string{"core", "base"}) {
+		dst := support.join(destination, name)
+		if support.exists(dst) {continue}
+		if err := tc.copy_tree(c, dst, support.join(from, name)); err != "" {return err}
 	}
 	return ""
+}
+install_compiler :: proc(c: tc.Context, from, destination: string) -> string {
+	if err := support.mkdir(destination); err != "" {return err}
+	if err := support.copy_file(
+		support.join(destination, "odin"),
+		support.join(from, "odin"),
+	); err != "" {
+		return err
+	}
+	lib := support.join(destination, "lib")
+	if support.exists(lib) {return ""}
+	return tc.copy_tree(c, lib, support.join(from, "lib"))
+}
+// src is the compiler's own code. vendor's packages are unused. The compiler
+// still requires a vendor directory to exist, so an empty one is put back.
+discard_sources :: proc(destination: string) -> string {
+	for name in ([]string{"src", "vendor"}) {
+		path := support.join(destination, name)
+		if !support.exists(path) {continue}
+		if err := os.remove_all(path); err != nil {
+			return fmt.tprintf("cannot remove %s: %v", path, err)
+		}
+	}
+	return support.mkdir(support.join(destination, "vendor"))
 }
 toolchain_cli :: proc(c: tc.Context, args: []string) -> string {
 	o, err := support.parse(
@@ -100,82 +136,60 @@ toolchain_cli :: proc(c: tc.Context, args: []string) -> string {
 		return "unexpected toolchain argument"
 	}
 	destination := tc.library_root(c)
-	if !(o.flags["patch-only"] ||
-		   o.flags["build-compiler"] && support.kind(destination) == .Directory) {
-		source := support.get(o, "source")
-		if source == "" {
-			text, e := tc.run(c, []string{"odin", "root"}); if e != "" {
-				return e
-			}; source = support.trim(text)
+	if o.flags["patch-only"] {
+		if !support.exists(support.join(destination, "src")) {
+			return "compiler sources are fetched at build time; pass --build-compiler"
 		}
-		if err = prepare_toolchain(c, support.abs(source), destination); err != "" {
-			return err
+		if err = patch_assembly(c, destination); err != "" {return err}
+		fmt.println("Pinned toolchain patched:", destination, ODIN_REVISION)
+		return ""
+	}
+	need_libraries := !support.exists(support.join(destination, "core")) ||
+		!support.exists(support.join(destination, "base"))
+	if o.flags["build-compiler"] || need_libraries {
+		stage, e := support.temp("shoji-odin"); if e != "" {return e}
+		defer os.remove_all(stage)
+		raw := support.get(o, "source")
+		source := raw == "" ? "" : support.abs(raw)
+		if err = fetch_revision(c, stage, source); err != "" {return err}
+		if err = patch_assembly(c, stage); err != "" {return err}
+		if o.flags["build-compiler"] {
+			env := support.environment(
+				"CPPFLAGS",
+				support.cat(
+					os.get_env("CPPFLAGS", context.allocator),
+					` -DGIT_SHA="` + ODIN_REVISION + `"`,
+				),
+			)
+			fmt.println("Building pinned Odin compiler…")
+			if _, err = tc.run(
+				c,
+				[]string{"/bin/sh", "build_odin.sh", "release"},
+				stage,
+				"",
+				1800 * time.Second,
+				env,
+			); err != "" {
+				return err
+			}
+			if err = install_compiler(c, stage, destination); err != "" {return err}
 		}
+		if err = install_libraries(c, stage, destination); err != "" {return err}
 	}
-	if err = patch_assembly(c, destination); err != "" {
-		return err
-	}
-	if o.flags["build-compiler"] {
-		env := support.environment(
-			"CPPFLAGS",
-			support.cat(
-				os.get_env("CPPFLAGS", context.allocator),
-				` -DGIT_SHA="` + ODIN_REVISION + `"`,
-			),
-		)
-		fmt.println("Building pinned Odin compiler…")
-		if _, err = tc.run(
-			c,
-			[]string{"/bin/sh", "build_odin.sh", "release"},
-			destination,
-			"",
-			1800 * time.Second,
-			env,
-		); err != "" {
-			return err
-		}
-	}
+	if err = discard_sources(destination); err != "" {return err}
 	fmt.println("Pinned toolchain ready:", destination, ODIN_REVISION)
 	return ""
 }
 build_arm64e :: proc(c: tc.Context, args: []string) -> string {
-	if len(args) != 1 {
-		return "build-arm64e expects an Odin source checkout"
-	}
-	source := support.real(args[0]); if source == "" {
-		return "source checkout is missing"
-	}
-	for name in ([]string{"src", "base", "core", "vendor", "build_odin.sh"}) {
-		if !support.exists(support.join(source, name)) {
-			return support.cat("missing source input: ", name)
-		}
+	if len(args) > 1 {return "build-arm64e accepts one optional source checkout"}
+	source := ""
+	if len(args) == 1 {
+		source = support.real(args[0]); if source == "" {return "source checkout is missing"}
 	}
 	stage, err := support.temp("shoji-odin-arm64e"); if err != "" {
 		return err
 	}; defer os.remove_all(stage)
-	if err = tc.copy_tree(c, support.join(stage, "src"), support.join(source, "src"));
-	   err != "" {
-		return err
-	}
-	if err = support.copy_file(
-		support.join(stage, "build_odin.sh"),
-		support.join(source, "build_odin.sh"),
-	); err != "" {
-		return err
-	}
-	for name in ([]string{"base", "core", "vendor"}) {
-		if _, err = tc.run(
-			c,
-			[]string {
-				"/bin/ln",
-				"-s",
-				support.join(source, name),
-				support.join(stage, name),
-			},
-		); err != "" {
-			return err
-		}
-	}
+	if err = fetch_revision(c, stage, source); err != "" {return err}
 	patch := tc.root_file(c, "tools/odin-arm64e.patch")
 	for name in ([]string {
 			"build_settings.cpp",

@@ -7,8 +7,8 @@ import support "../../src/support"
 
 HELP :: `Usage: dev COMMAND [OPTIONS]
   signing setup|check|sign   Persistent identity and verified installation
-  toolchain                 Prepare or patch the pinned Odin toolchain
-  build-arm64e SOURCE       Build the isolated arm64e compiler
+  toolchain                 Keep the pinned compiler, core, and base
+  build-arm64e [SOURCE]     Fetch, patch, and build the arm64e compiler
   package --version VERSION [--binaries DIR] [--output DIR]
   clean [--dry-run]         Remove known rebuildable outputs`
 dispatch :: proc(c: tc.Context, args: []string) -> string {
