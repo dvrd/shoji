@@ -566,7 +566,8 @@ gate_space_apply_is_owner_only_and_bounds_the_command_set :: proc(t: ^testing.T)
 	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.Hello)), i32(0))
 	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.SpaceApply)), i32(0))
 	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 11, 3, gate.GATE_VERSION, u32(gate.Gate_Command.SpaceApply)), i32(4))
-	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.LayoutSubmit) + 1), i32(1))
+	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.PresentApply)), i32(0))
+	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.PresentApply) + 1), i32(1))
 }
 
 @(test)
@@ -719,5 +720,22 @@ gate_accepts_capabilities_and_submit_from_the_owner :: proc(t: ^testing.T) {
 		testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(command)), i32(0))
 		testing.expect_value(t, gate.gate_decide(&pid, &version, true, 11, 3, gate.GATE_VERSION, u32(command)), i32(4))
 	}
-	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.LayoutSubmit) + 1), i32(1))
+	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.PresentApply) + 1), i32(1))
+}
+
+@(test)
+gate_present_mask_selects_only_issued_ops :: proc(t: ^testing.T) {
+	for op in gate.PRESENT_OPS {
+		found := false
+		for gated in gate.GATED_OPS {if gated == op {found = true}}
+		testing.expect(t, found)
+	}
+	mask := gate.present_stage_mask(true, true, false)
+	testing.expect(t, gate.present_claims(0x0e, mask))
+	testing.expect(t, gate.present_claims(0x45, mask))
+	testing.expect(t, !gate.present_claims(0x0f, mask))
+	testing.expect(t, !gate.present_claims(0x2f, mask))
+	testing.expect(t, !gate.present_claims(0x41, mask))
+	testing.expect(t, !gate.present_claims(0x0e, 0))
+	testing.expect(t, !gate.present_claims(0x0e, gate.PRESENT_MASK + 1))
 }

@@ -47,7 +47,33 @@ addition_protocol_rejects_truncation_and_trailing_bytes :: proc(t: ^testing.T) {
 		testing.expect(t, !dock.validate(op, data[:n + 1]))
 	}
 	testing.expect(t, !dock.validate(dock.Opcode(255), nil))
-	packet := dock.begin(.Window_List_To_Space)
+	body: [dock.PRESENT_SIZE]u8
+	testing.expect(t, !dock.validate(.Window_Present, body[:dock.PRESENT_SIZE - 1]))
+	packet := dock.begin(.Window_Present)
+	dock.pack(&packet, u32(7))
+	dock.pack(&packet, dock.PRESENT_ALPHA)
+	dock.pack(&packet, u8(0))
+	dock.pack(&packet, f32(0.5))
+	dock.pack(&packet, i32(0))
+	dock.pack(&packet, i32(0))
+	dock.pack(&packet, i32(0))
+	dock.pack(&packet, i32(0))
+	dock.pack(&packet, i32(0))
+	dock.pack(&packet, i32(0))
+	for _ in 0 ..< 6 {dock.pack(&packet, f64(0))}
+	raw := dock.finish(&packet)
+	testing.expect(t, raw != nil)
+	req, ok := dock.present_read(raw[3:])
+	testing.expect(t, ok)
+	testing.expect_value(t, req.window, u32(7))
+	testing.expect_value(t, req.alpha, f32(0.5))
+	req.mask = 0
+	testing.expect(t, !dock.present_valid(req))
+	req.mask = dock.PRESENT_EVENT
+	req.event_kind = 1
+	req.w = 0
+	testing.expect(t, !dock.present_valid(req))
+	packet = dock.begin(.Window_List_To_Space)
 	dock.pack(&packet, u64(123));dock.pack(&packet, i32(2));dock.pack(&packet, u32(7))
 	testing.expect(t, !dock.validate(.Window_List_To_Space, dock.finish(&packet)[3:]))
 	dock.pack(&packet, u32(9))

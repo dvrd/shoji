@@ -174,7 +174,7 @@ gate_reply_capabilities :: proc(buffer: ^Gate_Buffer, command: u32) {
 	ops := gate.GATED_OPS
 	n, ok := gate.gate_pack_capabilities(
 		buffer[:], reply_right, command, 0,
-		gate.GATE_FEATURE_LAYOUT_SUBMIT, gate.LAYOUT_LIMIT,
+		gate.GATE_FEATURE_LAYOUT_SUBMIT | gate.GATE_FEATURE_PRESENT, gate.LAYOUT_LIMIT,
 		gate.ORDERING_IMAGE_UUID, ops[:],
 	)
 	if !ok {return}
@@ -295,6 +295,7 @@ gate_handle_message :: proc(buffer: ^Gate_Buffer) {
 		if placement_generation == 0 {placement_generation = 1}
 		intrinsics.atomic_store_explicit(&placement_space_only, 0, .Release)
 		intrinsics.atomic_store_explicit(&placement_auto, 0, .Release)
+		intrinsics.atomic_store_explicit(&present_only, 0, .Release)
 		intrinsics.atomic_store_explicit(&placement_complete, 0, .Release)
 		generation, _ := gate.hold_arm(&hold, arg0, gate.HOLD_SCOPE_INLINE)
 		gate_reply(buffer, command, 0, arg0, u64(generation))
@@ -317,6 +318,27 @@ gate_handle_message :: proc(buffer: ^Gate_Buffer) {
 		intrinsics.atomic_store_explicit(&placement_space_only, 1, .Release)
 		intrinsics.atomic_store_explicit(&placement_auto, command == u32(gate.Gate_Command.SpaceApply) ? 1 : 0, .Release)
 		intrinsics.atomic_store_explicit(&placement_complete, 0, .Release)
+		intrinsics.atomic_store_explicit(&present_only, 0, .Release)
+		generation, _ := gate.hold_arm(&hold, arg0, gate.HOLD_SCOPE_TABLE)
+		gate_reply(buffer, command, 0, arg0, u64(generation))
+	case .PresentApply:
+		// The Dock transaction is the commit. Claim only the selected
+		// presentation ops and forward them; do not rewrite the context.
+		mask := u32(arg1)
+		if arg0 == 0 || mask == 0 || mask & ~gate.PRESENT_MASK != 0 {
+			gate_reply(buffer, command, 1, 0, 0)
+			return
+		}
+		if target, generation, busy := gate.hold_busy(&hold); busy {
+			gate_reply(buffer, command, 6, target, u64(generation))
+			return
+		}
+		present_generation = hold.generation + 1
+		if present_generation == 0 {present_generation = 1}
+		intrinsics.atomic_store_explicit(&present_mask, mask, .Release)
+		intrinsics.atomic_store_explicit(&present_complete, 0, .Release)
+		intrinsics.atomic_store_explicit(&present_only, 1, .Release)
+		intrinsics.atomic_store_explicit(&placement_space_only, 0, .Release)
 		generation, _ := gate.hold_arm(&hold, arg0, gate.HOLD_SCOPE_TABLE)
 		gate_reply(buffer, command, 0, arg0, u64(generation))
 	case .PlacementStatus:
@@ -376,6 +398,10 @@ gate_release :: proc(generation: u32) -> (target: u64, status: i32) {
 	target, status = gate.hold_release(&hold, generation)
 	if _, _, busy := gate.hold_busy(&hold); !busy && status == 0 && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 {
 		finish_placement(8, 0)
+	}
+	if _, _, busy := gate.hold_busy(&hold); !busy && status == 0 && present_generation == hold.generation && intrinsics.atomic_load_explicit(&present_complete, .Acquire) == 0 {
+		intrinsics.atomic_store_explicit(&present_complete, 1, .Release)
+		intrinsics.atomic_store_explicit(&present_only, 0, .Release)
 	}
 	if _, _, busy := gate.hold_busy(&hold); !busy && status == 0 && layout_generation == hold.generation && intrinsics.atomic_load_explicit(&layout_complete, .Acquire) == 0 {
 		layout_result = 8
@@ -482,9 +508,21 @@ gate_shim_impl :: proc "c" (ctx: rawptr, op: u64) -> u64 {
 	wid, wid_ok := tlv_peek(ctx)
 	space_armed := intrinsics.atomic_load_explicit(&placement_complete, .Acquire) == 0 &&
 		intrinsics.atomic_load_explicit(&placement_space_only, .Acquire) != 0
-	claimable := !space_armed || (op >= SPACE_OP_MIN && op <= SPACE_OP_MAX)
+	present_armed := intrinsics.atomic_load_explicit(&present_complete, .Acquire) == 0 &&
+		intrinsics.atomic_load_explicit(&present_only, .Acquire) != 0
+	claimable := true
+	if space_armed {
+		claimable = op >= SPACE_OP_MIN && op <= SPACE_OP_MAX
+	} else if present_armed {
+		claimable = gate.present_claims(u16(op), intrinsics.atomic_load_explicit(&present_mask, .Acquire))
+	}
 	claimed := wid_ok && op <= TABLE_OP_MAX && claimable && gate.hold_try_claim(&hold, u64(wid), false)
-	if claimed && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_auto, .Acquire) != 0 {
+	if claimed && present_generation == hold.generation && present_armed {
+		// The transaction's own arguments are the presentation. Forward now.
+		held = 3
+		intrinsics.atomic_store_explicit(&present_complete, 1, .Release)
+		intrinsics.atomic_store_explicit(&present_only, 0, .Release)
+	} else if claimed && placement_generation == hold.generation && intrinsics.atomic_load_explicit(&placement_auto, .Acquire) != 0 {
 		// SpaceApply: frame-scale; the owner's own commit is blocked on us.
 		// held=3 matches the C1 automatic layout callback.
 		held = 3

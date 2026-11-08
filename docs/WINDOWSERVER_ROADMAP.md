@@ -26,9 +26,12 @@ document maps it.
 
 ### WindowServer gate
 
-- **Gated ops [live]:** the table seam holds 14 ops:
+- **Gated ops:** the table seam holds 19 ops. The original 14 were
+  live-checked; 0x05, 0x0e, 0x0f, 0x2f and 0x45 were added 2026-11-08
+  and are not live-checked.
   - Ordering: 0x01, 0x03, 0x06
-  - Shape: 0x0b
+  - Shape and clip: 0x05, 0x0b, 0x2f
+  - Presentation: 0x0e system alpha, 0x0f transform, 0x45 event shape
   - Spaces: 0x18, 0x19, 0x21, 0x22, 0x2a
   - Surfaces: 0x33–0x36
   - Geometry: 0x41
@@ -212,8 +215,10 @@ sync, offscreen render, capture, protocol. "Protocol" means Wayland client state
    never uses it during animation.
 2. **Foreign clip, alpha and event shape (#9, #10, #42).** These decide whether
    a viewport strip is clean, whether tabs are truly hidden, and whether
-   off-screen windows can receive clicks. The ops are in the table, but none can
-   be issued.
+   off-screen windows can receive clicks. `PresentApply` can hold the ops.
+   Dock `Window_Present` issues system alpha, event shape and transform in one
+   transaction (unit tests; not live-checked). Clip and shape are held and
+   still have no issuer. Viewport clipping is E4.
 3. **Transform op (#17, #18, #26).** Unlocks the overview, vertical workspace
    slides and the open animation. Whether input maps through a transform is
    unknown.
@@ -242,9 +247,9 @@ builds.
 | --- | --- | --- |
 | E1 | **Done 2026-11-08 (unit tests; no live WindowServer run).** `Capabilities` appends this build's SkyLight UUID and `GATED_OPS`. A trailer that does not match turns gate features off. A reply of exactly `GATE_MSG_SIZE` still honors the feature bit and the item limit. Dock capabilities stay a separate handshake. | A foreign UUID or op set leaves layout features off. An older payload without the trailer keeps working. |
 | E2 | **Done 2026-11-08 (unit tests; no live frame capture).** One held camera frame sends window moves, focus-ring bars and tab indicators in one `LayoutSubmit`, placed from the layout frame. `LAYOUT_LIMIT` is 72. Size changes stay per window. The hold budget stays 8000 µs. Frame-clock alignment is F1. | A held camera tick does not submit until that frame's ring and indicators are queued. A payload that rejects the combined submit still batches the windows. |
-| E3 | **Foreign-op commands.** Add alpha (0x03/0x0e), clip (0x2f/0x05), shape (0x0b), event shape (0x45) and transform (0x0f). They are issued as Dock-connection transactions, staged inside the gated commit, with a rest
+| E3 | **Partial 2026-11-08 (unit tests; no live WindowServer or Dock run).** `PresentApply` holds 0x03, 0x05, 0x0b, 0x0e, 0x0f, 0x2f and 0x45. Dock `Window_Present` issues system alpha (0x0e), event shape (0x45) and transform (0x0f) in one transaction, and restores them when the client exits. Clip (0x2f/0x05) and shape (0x0b) are held but not issued: no confirmed Dock symbol. A Dock restart drops the restore map. | A payload without `GATE_FEATURE_PRESENT` still sends the Dock transaction. The daemon releases the hold when that send returns. |
 | E4 | **Viewport clipping (B01)** using E3 | Checklist B01 passes on one display and on two physical displays. |
-| E5 | **Journal done 2026-11-08 (unit tests; no live Dock restart).** The payload writes `{window, owner, client}` and a boot id to `/tmp/shoji-concealed_<uid>.json`, reloads it on start, and bumps the boot id once per process. A new boot clears `conceal_refused`. Corners, shadows, dialogs and application-driven ordering (B02) stay open, as do the E3 foreign alpha and clip commands. | After a Dock restart the payload still watches concealed windows. A same-boot rewrite does not retry a refused conceal. B02's visual checks remain open. |
+| E5 | **Journal done 2026-11-08 (unit tests; no live Dock restart).** The payload writes `{window, owner, client}` and a boot id to `/tmp/shoji-concealed_<uid>.json`, reloads it on start, and bumps the boot id once per process. A new boot clears `conceal_refused`. Corners, shadows, dialogs and application-driven ordering (B02) stay open. Clip and shape stay unissued. | After a Dock restart the payload still watches concealed windows. A same-boot rewrite does not retry a refused conceal. B02's visual checks remain open. |
 | E6 | **Dialog and floating relationships (P05)**: level, sublevel, ordering groups (0x59–0x5b) and movement groups (0x55–0x57) | Sheets, modals and popovers follow their owner during E2 motion and are never hidden behi
 
 ### Phase F: synchronization

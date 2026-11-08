@@ -58,6 +58,8 @@ foreign sls {
 	SLSTransactionAddWindowToSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
 	SLSTransactionRemoveWindowFromSpace :: proc(transaction: m.Ref, wid: u32, sid: u64) ---
 	SLSTransactionSetWindowEventShape :: proc(transaction: m.Ref, wid: u32, region: m.Ref) ---
+	// The two i32s are the caller's extra words. Shoji passes 0, 0.
+	SLSTransactionSetWindowTransform :: proc(transaction: m.Ref, wid: u32, p0, p1: i32, transform: Transform) ---
 	CGSNewEmptyRegion :: proc(region: ^m.Ref) -> i32 ---
 	CGSNewRegionWithRect :: proc(rect: ^m.Rect, region: ^m.Ref) -> i32 ---
 	CGSReleaseRegion :: proc(region: m.Ref) -> i32 ---
@@ -397,10 +399,10 @@ conceal_request :: proc(id: u32, conceal: bool, client: i32, diagnostic: ^dock.N
 
 conceal_persist :: proc() {
 	if conceal_boot == 0 {return}
-	entries := make([]dock.Conceal_Record, 0, len(concealed), context.temp_allocator)
-	for id, entry in concealed {entries = append(entries, dock.Conceal_Record{id, entry.owner, entry.client})}
+	entries := make([dynamic]dock.Conceal_Record, 0, len(concealed), context.temp_allocator)
+	for id, entry in concealed {append(&entries, dock.Conceal_Record{id, entry.owner, entry.client})}
 	path := dock.conceal_journal_path(u32(m.getuid()))
-	if err := dock.conceal_journal_write(path, conceal_boot, entries); err != "" {
+	if err := dock.conceal_journal_write(path, conceal_boot, entries[:]); err != "" {
 		fmt.eprintln("shoji-sa: conceal journal:", err)
 	}
 }
@@ -445,6 +447,90 @@ conceal_window :: proc(id: u32, conceal: bool, diagnostic: ^dock.Native_Failure)
 	SLSTransactionCommit(transaction, 1)
 	return .OK
 }
+
+// What this process changed, so a dead client can be put back.
+// A Dock restart drops the map; WindowServer keeps the last presentation.
+PRESENTED_LIMIT :: 256
+Presented :: struct {
+	client: i32,
+	owner: i32,
+	alpha: bool,
+	event: bool,
+	transform: bool,
+	saved: Transform,
+}
+presented: map[u32]Presented
+
+present_apply :: proc(req: dock.Present_Request, client: i32, diagnostic: ^dock.Native_Failure) -> dock.Status {
+	if client <= 0 {return .Operation_Failed}
+	owner, exists := payload_recovery_owner(nil, req.window)
+	if !exists {return .Operation_Failed}
+	if len(presented) >= PRESENTED_LIMIT && req.window not_in presented {return .Operation_Failed}
+	entry := presented[req.window]
+	if req.mask & dock.PRESENT_TRANSFORM != 0 && !entry.transform {
+		if SLSGetWindowTransform(g.cid, req.window, &entry.saved) != 0 {return .Operation_Failed}
+	}
+	region: m.Ref
+	defer if region != nil {_ = CGSReleaseRegion(region)}
+	if req.mask & dock.PRESENT_EVENT != 0 {
+		if req.event_kind == 0 {
+			if code := CGSNewEmptyRegion(&region); code != 0 || region == nil {return .Operation_Failed}
+		} else {
+			rect := m.Rect{f64(req.x), f64(req.y), f64(req.w), f64(req.h)}
+			if code := CGSNewRegionWithRect(&rect, &region); code != 0 || region == nil {return .Operation_Failed}
+		}
+	}
+	transaction := SLSTransactionCreate(g.cid)
+	if transaction == nil {dock.note_native_failure(diagnostic, .Transaction_Create, -1);return .Operation_Failed}
+	defer m.CFRelease(transaction)
+	if req.mask & dock.PRESENT_ALPHA != 0 {
+		SLSTransactionSetWindowSystemAlpha(transaction, req.window, req.alpha)
+	}
+	if region != nil {SLSTransactionSetWindowEventShape(transaction, req.window, region)}
+	if req.mask & dock.PRESENT_TRANSFORM != 0 {
+		SLSTransactionSetWindowTransform(transaction, req.window, req.p0, req.p1, Transform{req.a, req.b, req.c, req.d, req.tx, req.ty})
+	}
+	SLSTransactionCommit(transaction, 1)
+	entry.client, entry.owner = client, owner
+	if req.mask & dock.PRESENT_ALPHA != 0 {entry.alpha = true}
+	if req.mask & dock.PRESENT_EVENT != 0 {entry.event = true}
+	if req.mask & dock.PRESENT_TRANSFORM != 0 {entry.transform = true}
+	presented[req.window] = entry
+	return .OK
+}
+
+present_restore :: proc(id: u32, entry: Presented) -> dock.Status {
+	region: m.Ref
+	defer if region != nil {_ = CGSReleaseRegion(region)}
+	if entry.event {
+		frame: m.Rect
+		if m.SLSGetWindowBounds(g.cid, id, &frame) != 0 {return .Operation_Failed}
+		local := m.Rect{0, 0, frame.w, frame.h}
+		if code := CGSNewRegionWithRect(&local, &region); code != 0 || region == nil {return .Operation_Failed}
+	}
+	transaction := SLSTransactionCreate(g.cid)
+	if transaction == nil {return .Operation_Failed}
+	defer m.CFRelease(transaction)
+	if entry.alpha {SLSTransactionSetWindowSystemAlpha(transaction, id, 1)}
+	if region != nil {SLSTransactionSetWindowEventShape(transaction, id, region)}
+	if entry.transform {SLSTransactionSetWindowTransform(transaction, id, 0, 0, entry.saved)}
+	SLSTransactionCommit(transaction, 1)
+	return .OK
+}
+
+tick_presented :: proc() {
+	if len(presented) == 0 {return}
+	done := make([dynamic]u32, 0, 8, context.temp_allocator)
+	for id, entry in presented {
+		owner, exists := payload_recovery_owner(nil, id)
+		if !exists || owner != entry.owner {append(&done, id);continue}
+		if posix.kill(posix.pid_t(entry.client), posix.Signal(0)) != .OK && posix.errno() == .ESRCH {
+			if present_restore(id, entry) == .OK {append(&done, id)}
+		}
+	}
+	for id in done {delete_key(&presented, id)}
+}
+
 fades: map[u32]Fade
 status :: proc(code: i32) -> dock.Status {return code == 0 ? .OK : .Operation_Failed}
 tick_fades :: proc() {
@@ -567,6 +653,25 @@ window_action :: proc(op: dock.Opcode, r: ^dock.Reader, diagnostic: ^dock.Native
 		conceal := dock.unpack(r, u8)
 		if conceal > 1 {return .Invalid_Message}
 		return conceal_request(id, conceal == 1, client, diagnostic)
+	case .Window_Present:
+		req := dock.Present_Request{window = id}
+		req.mask = dock.unpack(r, u8)
+		req.event_kind = dock.unpack(r, u8)
+		req.alpha = dock.unpack(r, f32)
+		req.x = dock.unpack(r, i32)
+		req.y = dock.unpack(r, i32)
+		req.w = dock.unpack(r, i32)
+		req.h = dock.unpack(r, i32)
+		req.p0 = dock.unpack(r, i32)
+		req.p1 = dock.unpack(r, i32)
+		req.a = dock.unpack(r, f64)
+		req.b = dock.unpack(r, f64)
+		req.c = dock.unpack(r, f64)
+		req.d = dock.unpack(r, f64)
+		req.tx = dock.unpack(r, f64)
+		req.ty = dock.unpack(r, f64)
+		if !dock.complete(r^) || !dock.present_valid(req) {return .Invalid_Message}
+		return present_apply(req, client, diagnostic)
 	case .Window_Focus:
 		if g.focus == nil || dock.focus_target_blocked(g.version) {return .Unsupported}
 		owner: i32;psn: PSN
@@ -645,7 +750,7 @@ Request :: struct {
 main_request :: proc "c" (user: rawptr) {
 	req := (^Request)(user);context = req.ctx
 	pool := m.pool_push();defer m.pool_pop(pool)
-	if req.tick {tick_fades();tick_proxy_recovery();tick_concealed();return}
+	if req.tick {tick_fades();tick_proxy_recovery();tick_concealed();tick_presented();return}
 	if !dock.validate(req.op, req.bytes) {req.result = .Invalid_Message;return}
 	if req.op == .Handshake {req.result = .OK;return}
 	r := dock.reader(req.bytes)
@@ -656,9 +761,10 @@ main_request :: proc "c" (user: rawptr) {
 initialize_payload :: proc "c" (unused: rawptr) {
 	context = runtime.default_context()
 	pool := m.pool_push();defer m.pool_pop(pool)
-	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys, .Space_Transaction, .Window_Conceal};if g.add != nil {g.caps += {.Tracked_Space_Create}}
+	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys, .Space_Transaction, .Window_Conceal, .Window_Present};if g.add != nil {g.caps += {.Tracked_Space_Create}}
 	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]dock.Entry)
 	concealed = make(map[u32]Concealed)
+	presented = make(map[u32]Presented)
 	path := dock.conceal_journal_path(u32(m.getuid()))
 	file, _, found, read_err := dock.conceal_journal_read(path)
 	if read_err != "" {fmt.eprintln("shoji-sa: conceal journal:", read_err)}

@@ -38,14 +38,25 @@ Gate_Command :: enum u32 {
 	// LayoutBegin + LayoutAdd* + LayoutArm in one message: arg0 marker window,
 	// arg1 timing budget in us; the items follow the body (GATE_ITEMS_OFF).
 	LayoutSubmit = 17,
+	// Arm the table hold so the next Dock transaction for this window can
+	// commit its presentation ops inside the gate. arg0 window, arg1 a mask
+	// of PRESENT_OPS bits. Claim forwards the original op; the transaction
+	// already carries the arguments.
+	PresentApply = 18,
 }
 
 GATE_FEATURE_LAYOUT_SUBMIT :: u64(1)
+GATE_FEATURE_PRESENT :: u64(2)
 // Item limit of payloads that predate Capabilities.
 GATE_LEGACY_LAYOUT_LIMIT :: 8
 // Ops the transaction-table gate swaps. The Capabilities trailer reports this
 // set; a daemon built against a different set must not use the payload.
-GATED_OPS :: [14]u16{0x01, 0x03, 0x06, 0x0b, 0x18, 0x19, 0x21, 0x22, 0x2a, 0x33, 0x34, 0x35, 0x36, 0x41}
+GATED_OPS :: [19]u16{0x01, 0x03, 0x05, 0x06, 0x0b, 0x0e, 0x0f, 0x18, 0x19, 0x21, 0x22, 0x2a, 0x2f, 0x33, 0x34, 0x35, 0x36, 0x41, 0x45}
+// Ops a Dock presentation transaction can land in the gated commit.
+// 0x03/0x0b were already gated. 0x05, 0x0e, 0x0f, 0x2f, 0x45 are the E3 adds.
+PRESENT_OPS :: [7]u16{0x03, 0x05, 0x0b, 0x0e, 0x0f, 0x2f, 0x45}
+#assert(len(PRESENT_OPS) == 7)
+PRESENT_MASK :: u32(0x7f)
 GATE_OP_REPORT_MAX :: 32
 #assert(len(GATED_OPS) <= GATE_OP_REPORT_MAX)
 
@@ -347,6 +358,27 @@ gate_pack_capabilities :: proc "contextless" (
 	return size, true
 }
 
+// True when `op` is one of the presentation ops selected by `mask`.
+present_claims :: proc "contextless" (op: u16, mask: u32) -> bool {
+	if mask == 0 || mask & ~PRESENT_MASK != 0 {return false}
+	for known, index in PRESENT_OPS {
+		if known == op {return mask & (u32(1) << u32(index)) != 0}
+	}
+	return false
+}
+
+// Mask for the Dock transaction Shoji can issue: system alpha 0x0e,
+// transform 0x0f, event shape 0x45. Clip and shape stay gated, unissued.
+present_stage_mask :: proc(alpha, event, transform: bool) -> u32 {
+	mask: u32
+	for op, index in PRESENT_OPS {
+		if (alpha && op == 0x0e) || (event && op == 0x45) || (transform && op == 0x0f) {
+			mask |= u32(1) << u32(index)
+		}
+	}
+	return mask
+}
+
 gated_ops_match :: proc(ops: []u32) -> bool {
 	if len(ops) != len(GATED_OPS) {return false}
 	for expected in GATED_OPS {
@@ -444,7 +476,7 @@ gate_should_reclaim :: proc "contextless" (owner_pid, owner_pidversion, hello_pi
 // pidversion does not inherit it.
 gate_decide :: proc "contextless" (owner_pid, owner_pidversion: ^u32, audit_ok: bool, pid, pidversion, version, command: u32) -> i32 {
 	if !audit_ok || pid == 0 {return 4}
-	if version != GATE_VERSION || command < 1 || command > u32(Gate_Command.LayoutSubmit) {return 1}
+	if version != GATE_VERSION || command < 1 || command > u32(Gate_Command.PresentApply) {return 1}
 	if command == u32(Gate_Command.Hello) {
 		if owner_pid^ == 0 {
 			owner_pid^ = pid

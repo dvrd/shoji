@@ -37,6 +37,11 @@ payload answers status 1, or a body with no trailer, and the daemon keeps the
 legacy `LayoutBegin`/`LayoutAdd`/`LayoutArm` sequence of at most 8 moves.
 `shoji -m debug ws status` shows which protocol is in use.
 
+`PresentApply` is a second feature bit. It holds one Dock transaction that
+sets system alpha, the event shape, and the window transform, then forwards
+that commit. Clip and shape are in the gated set and are not issued. A payload
+without the bit still lets the Dock send run. A failed send releases the hold.
+
 While a trackpad swipe drags the scroll strip, and while the camera spring
 runs, the daemon holds that frame's window moves and submits them once,
 together with the focus ring and tab indicators, then resyncs Accessibility
