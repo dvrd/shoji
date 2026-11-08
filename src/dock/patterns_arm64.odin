@@ -3,7 +3,11 @@ package dock
 // Ported from yabai dd845723; upstream MIT license is in LICENSE.
 // 27.0.1 static profile: AhsanFazal/yabai 49c2d035, checked against build 26A434.
 // Runtime acceptance remains separate in supported(); this table alone does not enable injection.
+// 27.2 (26B123) profile: only targets with a unique static match on the shipped Dock.
+// desktop_pictures, move_space and focus_window have no match, so their capabilities
+// stay absent instead of being carried forward from 27.0.1.
 get_dock_spaces_offset :: proc(os_version: Version) -> u64 {
+	if os_version == MACOS27_2 {return 0x20000}
 	if os_version == (Version{27, 0, 1}) {return 0x30000}
 	if (os_version.major == 26) {
 		return 0x30000
@@ -38,6 +42,7 @@ get_dppm_offset :: proc(os_version: Version) -> u64 {
 }
 
 get_fix_animation_offset :: proc(os_version: Version) -> u64 {
+	if os_version == MACOS27_2 {return 0x180000}
 	if os_version == (Version{27, 0, 1}) {return 0x210000}
 	if (os_version.major == 26) {
 		return 0x250000
@@ -55,6 +60,7 @@ get_fix_animation_offset :: proc(os_version: Version) -> u64 {
 }
 
 get_add_space_offset :: proc(os_version: Version) -> u64 {
+	if os_version == MACOS27_2 {return 0x180000}
 	if os_version == (Version{27, 0, 1}) {return 0x210000}
 	if (os_version.major == 26) {
 		return 0x250000
@@ -72,6 +78,7 @@ get_add_space_offset :: proc(os_version: Version) -> u64 {
 }
 
 get_remove_space_offset :: proc(os_version: Version) -> u64 {
+	if os_version == MACOS27_2 {return 0x120000}
 	if os_version == (Version{27, 0, 1}) {return 0x170000}
 	if (os_version.major == 26) {
 		return 0x1e0000
@@ -123,6 +130,7 @@ get_set_front_window_offset :: proc(os_version: Version) -> u64 {
 }
 
 get_dock_spaces_pattern :: proc(os_version: Version) -> string {
+	if os_version == MACOS27_2 {return get_dock_spaces_pattern({27, 0, 1})}
 	if os_version == (Version{27, 0, 1}) {
 		// Include the following conditional test: the upstream prefix also matches
 		// a different global at 0x10006df78 in build 26A434.
@@ -181,6 +189,7 @@ get_dppm_pattern :: proc(os_version: Version) -> string {
 }
 
 get_fix_animation_pattern :: proc(os_version: Version) -> string {
+	if os_version == MACOS27_2 {return get_fix_animation_pattern({26, 6, 0})}
 	if os_version == (Version{27, 0, 1}) {return get_fix_animation_pattern({26, 6, 0})}
 	if (os_version.major == 26) {
 		return "00 10 6A 1E A8 ?? ?? D1 ?? 01 ?? F8"
@@ -198,6 +207,7 @@ get_fix_animation_pattern :: proc(os_version: Version) -> string {
 }
 
 get_add_space_pattern :: proc(os_version: Version) -> string {
+	if os_version == MACOS27_2 {return get_add_space_pattern({27, 0, 1})}
 	if os_version == (Version{27, 0, 1}) {return "7F 23 03 D5 E1 03 1E AA ?? ?? ?? 97 FE 03 01 AA ?? ?? ?? A9 FD 43 01 91 F3 03 14 AA F5 03 00 AA 96 8E 43 F8"}
 	if (os_version.major == 26) {
 		if (os_version.minor >= 4) {
@@ -230,6 +240,7 @@ get_add_space_pattern :: proc(os_version: Version) -> string {
 }
 
 get_remove_space_pattern :: proc(os_version: Version) -> string {
+	if os_version == MACOS27_2 {return get_remove_space_pattern({26, 6, 0})}
 	if os_version == (Version{27, 0, 1}) {return get_remove_space_pattern({26, 6, 0})}
 	if (os_version.major == 26) {
 		return(
