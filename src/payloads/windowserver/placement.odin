@@ -1,6 +1,6 @@
 package windowserver_payload
 
-// Exact per-build server helpers (gate.PLACEMENT_HELPERS). Called only from
+// Exact per-build server helpers (gate_target.placement_helpers). Called only from
 // the ordering callback, on its serialized server thread and with that
 // callback's connection context.
 // Never call these from the independent IPC/control thread.
@@ -34,7 +34,7 @@ present_complete: u32
 present_generation: u32
 
 verify_placement_helpers :: proc(slide: u64) -> bool {
-	helpers := gate.PLACEMENT_HELPERS
+	helpers := gate_target.placement_helpers
 	for helper in helpers {
 		words := ([^]u32)(uintptr(helper.unslid + slide))
 		for word in 0 ..< 4 {if words[word] != helper.signature[word] {return false}}

@@ -17,7 +17,6 @@ import ipc "ipc"
 import attach "windowserver/attach"
 
 WS_RING_PATH :: gate.OBSERVER_RESPONSE_PATH
-WS_SUPPORTED_BUILD :: gate.BUILD
 
 // ------------------------------------------------------------------------
 // Event ring (observer V3 snapshot; mirrors lifecycle/report.py)
@@ -161,7 +160,10 @@ ws_report_cli :: proc(args: []string) -> int {
 	out_dir := len(args) > 0 ? args[0] : ""
 	started := time.now()
 	build := attach.os_build()
-	fmt.printf("macOS build: %s (payload supports %s: %s)\n", build, WS_SUPPORTED_BUILD, build == WS_SUPPORTED_BUILD ? "yes" : "no")
+	fmt.printf(
+		"macOS build: %s (payload supports %s: %s)\n",
+		build, gate.supported_builds(), attach.gate_supports(build) ? "yes" : "no",
+	)
 
 	sentinel := os.exists(attach.WS_DISABLE_SENTINEL)
 	fmt.printf("kill switch: %s (%s)\n", sentinel ? "ON" : "off", attach.WS_DISABLE_SENTINEL)

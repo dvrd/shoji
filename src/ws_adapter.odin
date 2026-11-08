@@ -405,7 +405,11 @@ ws_adapter_capabilities :: proc(a: ^Ws_Adapter) {
 	if a.state != .Serving {return}
 	reply, ok := ws_adapter_raw(a, .Capabilities, 0, 0)
 	if !ok || reply.status != WS_STATUS_OK {return}
-	if reply.rejected || (reply.identity && (reply.uuid != gate.ORDERING_IMAGE_UUID || !gate.gated_ops_match(reply.ops[:reply.op_count]))) {
+	// The payload reports the SkyLight UUID it validated in the loaded image;
+	// it must name a build this release supports.
+	_, known := gate.target_by_uuid(reply.uuid)
+	if reply.rejected ||
+	   (reply.identity && (!known || !gate.gated_ops_match(reply.ops[:reply.op_count]))) {
 		return
 	}
 	if reply.identity {

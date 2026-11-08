@@ -52,8 +52,9 @@ inspect_ordering_image :: proc(base: rawptr) -> (location: Ordering_Location, ok
 	}
 	if text == nil || !has_uuid || base_address < text.address {return}
 	location.slide = base_address - text.address
-	if location.slide > max(u64) - ORDERING_UNSLID_ENTRY {return}
-	location.candidate = location.slide + ORDERING_UNSLID_ENTRY
+	target, known := target_by_uuid(location.uuid)
+	if !known || location.slide > max(u64) - target.ordering_unslid_entry {return}
+	location.candidate = location.slide + target.ordering_unslid_entry
 	if location.slide > max(u64) - text.address {return}
 	location.text_start = location.slide + text.address
 	location.text_size = text.vm_size

@@ -93,11 +93,10 @@ observer_events: [OBSERVER_EVENTS]Observer_Event
 
 // ===== Transaction table gate (A2) =====
 // Static model: PKGTransactionCommit dispatches ops through a
-// per-build global table (gate.TABLE_UNSLID), 140 entries of 16 bytes, op
+// per-build global table (gate_target.table_unslid), 140 entries of 16 bytes, op
 // types 1..0x8c. Handlers are PAC-signed pointers called via blraaz (key A,
 // discriminator 0) with a shared PKGTransactionContext* argument.
 TGATE_STATUS_PATH :: gate.TGATE_STATUS_PATH
-TABLE_UNSLID :: gate.TABLE_UNSLID
 TABLE_OP_MAX :: 0x8c
 GATE_EVENT_FLAG :: 0x54474154 // 'TGAT'
 
@@ -105,7 +104,11 @@ Gate_Expected_Op :: struct {
 	op:     u64,
 	unslid: u64,
 }
-// gate_expected_ops (all 139 named ops) lives in gate_expected.odin.
+// gate_expected_ops_for (all 139 named ops per build) lives in gate_expected.odin.
+
+// The build this WindowServer runs, chosen from the loaded SkyLight UUID before
+// any table or code is read. Every per-build address comes from it.
+gate_target: gate.Build_Target
 
 Tgate_Status :: gate.Tgate_Status
 
@@ -175,7 +178,7 @@ gate_reply_capabilities :: proc(buffer: ^Gate_Buffer, command: u32) {
 	n, ok := gate.gate_pack_capabilities(
 		buffer[:], reply_right, command, 0,
 		gate.GATE_FEATURE_LAYOUT_SUBMIT | gate.GATE_FEATURE_PRESENT, gate.LAYOUT_LIMIT,
-		gate.ORDERING_IMAGE_UUID, ops[:],
+		gate_target.ordering_image_uuid, ops[:],
 	)
 	if !ok {return}
 	gate.gate_mach_msg(buffer, gate.MACH_MSG_SEND, u32(n), 0, 0, 0, 0)
@@ -593,13 +596,18 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 	result.windowserver_pid = u64(posix.getpid())
 	defer gate_last_status = result
 	defer write_file(TGATE_STATUS_PATH, &result, size_of(result))
-	result.table_unslid = TABLE_UNSLID
+	result.table_unslid = gate_target.table_unslid
 	result.slide = slide
-	table_live := TABLE_UNSLID + slide
+	table_live := gate_target.table_unslid + slide
 	result.table_live = table_live
 	// Runtime gate: authenticate sampled handler pointers and compare with the
 	// static op map. Refuse on any mismatch before touching the table.
-	for expected in gate_expected_ops {
+	expected_ops := gate_expected_ops_for(gate_target.build)
+	if len(expected_ops) == 0 || gate_target.dispatch_op_limit < TABLE_OP_MAX {
+		result.status = 10
+		return
+	}
+	for expected in expected_ops {
 		entry := ([^]u64)(uintptr(table_live + expected.op * 16))
 		raw := auth_ptr(entry[0])
 		if raw != expected.unslid + slide {
@@ -611,9 +619,9 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 		}
 	}
 	// Exact-build gate for the dispatcher instructions that will be redirected.
-	result.dispatch_site = gate.DISPATCH_SITE_UNSLID + slide
+	result.dispatch_site = gate_target.dispatch_site_unslid + slide
 	site_words := ([^]u32)(uintptr(result.dispatch_site))
-	expected_site := gate.DISPATCH_SITE_WORDS
+	expected_site := gate_target.dispatch_site_words
 	if site_words[0] != expected_site[0] || site_words[1] != expected_site[1] {
 		result.status = 10
 		return
@@ -657,7 +665,7 @@ install_transaction_gate :: proc(task: u32, slide: u64, allocate: proc "c" (_: u
 	result.status = 0
 }
 
-// Copies the dispatch table (op 0 through DISPATCH_OP_LIMIT, as the
+// Copies the dispatch table (op 0 through dispatch_op_limit, as the
 // dispatcher indexes it) into a read-only private page, with gated entries
 // replaced by signed stub pointers, and encodes the adrp/add pair that loads
 // it. Status 4: allocation or protection failed; 9: copy out of adrp range.
@@ -670,8 +678,8 @@ prepare_table_copy :: proc(
 	page_size: u64,
 	result: ^Tgate_Status,
 ) -> (copy_page: u64, words: [2]u32, ok: bool) {
-	table_bytes := (gate.DISPATCH_OP_LIMIT + 1) * 16
-	#assert(gate.DISPATCH_OP_LIMIT >= TABLE_OP_MAX)
+	// install_transaction_gate refused a limit below TABLE_OP_MAX.
+	table_bytes := (gate_target.dispatch_op_limit + 1) * 16
 	if table_bytes > page_size {
 		result.status = 4
 		return
@@ -713,7 +721,7 @@ redirect_dispatch_site :: proc(
 	result: ^Tgate_Status,
 ) -> bool {
 	site := result.dispatch_site
-	expected := gate.DISPATCH_SITE_WORDS
+	expected := gate_target.dispatch_site_words
 	page := site & ~(page_size - 1)
 	initial, region_ok := region_info(page, page_size)
 	if !region_ok || initial.protection != 5 {
@@ -901,6 +909,9 @@ install_observer :: proc() {
 	result.image_base = u64(uintptr(info.base))
 	location, image_ok := gate.inspect_ordering_image(info.base)
 	if !image_ok {result.status = 23; return}
+	target, known := gate.target_by_uuid(location.uuid)
+	if !known {result.status = 23; return}
+	gate_target = target
 	entry := location.candidate
 	bytes := ([^]u8)(uintptr(entry))
 	result.uuid = location.uuid
