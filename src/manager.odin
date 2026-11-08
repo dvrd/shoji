@@ -49,6 +49,13 @@ Window :: struct {
 	// position, but the owning app was not told; the next frame write must
 	// send AXPosition even though WindowServer's bounds match the target.
 	server_placed: bool,
+	// Moved by a gated camera batch during scroll motion: WindowServer shows
+	// the frame, the app has not been told. The first unbatched flush resyncs.
+	ax_stale: bool,
+	// Inactive tab hidden through the Dock payload (not drawn, not hit-tested).
+	concealed: bool,
+	// The payload refused to conceal; retried once the window is active again.
+	conceal_refused: bool,
 	manage_override: Maybe(bool),
 	id: u32,
 	pid: i32,
@@ -127,7 +134,8 @@ Layout_Move :: struct {
 	window: u32,
 	x, y:   f64,
 }
-LAYOUT_BATCH_LIMIT :: 8
+// Capacity of one batch; the gate adapter refuses more than its payload takes.
+LAYOUT_BATCH_LIMIT :: 32
 Layout_Batch :: #type proc(user: rawptr, moves: []Layout_Move) -> bool
 Manager :: struct {
 	window_generation: u64,
@@ -601,6 +609,46 @@ layout_batch_eligible :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resi
 	return true
 }
 
+// E2: a scroll camera frame moves whole columns without resizing them. While
+// a finger drags the strip or the camera spring runs, those moves go through
+// one gated batch per frame so every window lands in the same WindowServer
+// frame. Accessibility learns the final position from the first flush after
+// the camera is still (Window.ax_stale): the release flush when the spring is
+// off, otherwise the flush that settles the spring.
+scroll_camera_batching :: proc(m: ^Manager, s: ^Space, live_resize: bool) -> bool {
+	moving := s.view.scroll.dragging || (m.scroll_animate && s.view.scroll.motion.active)
+	return m.layout_batch != nil &&
+		s.view.layout == .Scroll &&
+		moving &&
+		!live_resize &&
+		m.native_resize_window == 0
+}
+
+// Batches the frame's pure moves; any failure (too many windows, a window
+// still animating, the gate refusing) falls back to per-window writes.
+scroll_camera_apply :: proc(m: ^Manager, moves: []Deferred_Frame, live_resize: bool) -> string {
+	if len(moves) == 0 {return ""}
+	if len(moves) <= LAYOUT_BATCH_LIMIT {
+		batch := make([]Layout_Move, len(moves), context.temp_allocator)
+		for d, i in moves {batch[i] = {d.window.id, d.frame.x, d.frame.y}}
+		if m.layout_batch(m.backend_user, batch) {
+			for d in moves {
+				d.window.frame = d.frame
+				d.window.server_placed = true
+				d.window.ax_stale = true
+			}
+			return ""
+		}
+	}
+	for d in moves {
+		action := Action{kind = .Frame, window = d.window.id, frame = d.frame, live_resize = live_resize, direct = true}
+		if err := perform(m, action); err != "" {return err}
+		d.window.frame = d.frame
+		d.window.ax_stale = false
+	}
+	return ""
+}
+
 layout_batch_apply :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resize: bool) -> bool {
 	if !layout_batch_eligible(m, deferred, live_resize) {return false}
 	moves := make([]Layout_Move, len(deferred), context.temp_allocator)
@@ -668,6 +716,8 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		}
 	}
 	deferred := make([dynamic]Deferred_Frame, 0, 16, context.temp_allocator)
+	camera := scroll_camera_batching(m, s, live_resize)
+	camera_moves := make([dynamic]Deferred_Frame, 0, LAYOUT_BATCH_LIMIT, context.temp_allocator)
 	for n := layout.first(s.view.root); n != nil; n = layout.next(n) {
 		for i in 0 ..< n.count {
 			w := m.windows[n.windows[i]]
@@ -713,7 +763,8 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			if math.abs(w.frame.x - r.x) < 1.5 &&
 			   math.abs(w.frame.y - r.y) < 1.5 &&
 			   math.abs(w.frame.w - r.w) < 1.5 &&
-			   math.abs(w.frame.h - r.h) < 1.5 {
+			   math.abs(w.frame.h - r.h) < 1.5 &&
+			   (camera || !w.ax_stale) {
 				continue
 			}
 			if w.id == m.native_resize_window {
@@ -721,6 +772,12 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			}
 			if s.view.layout != .Scroll {
 				append(&deferred, Deferred_Frame{w, r})
+				continue
+			}
+			if camera &&
+			   math.abs(w.frame.w - r.w) < 1.5 &&
+			   math.abs(w.frame.h - r.h) < 1.5 {
+				append(&camera_moves, Deferred_Frame{w, r})
 				continue
 			}
 			if err := perform(
@@ -736,6 +793,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 				return err
 			}
 			w.frame = r
+			w.ax_stale = false
 		}
 		if s.view.layout == .Scroll &&
 		   n.column_tabbed &&
@@ -749,6 +807,9 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			}
 			n.column_raised = n.order[0]
 		}
+	}
+	if err := scroll_camera_apply(m, camera_moves[:], live_resize); err != "" {
+		return err
 	}
 	// The batch is a visual pre-apply: WindowServer moves every window in one
 	// frame, but owning apps are not told (c1c2-foreign-20261105). The normal
@@ -765,6 +826,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			return err
 		}
 		d.window.frame = d.frame
+		d.window.ax_stale = false
 	}
 	for _, w in m.windows {
 		if w.space == s.id {

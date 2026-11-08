@@ -30,6 +30,17 @@ every refused or failed state, falls back to Shoji's native Accessibility paths.
 4. Transient failures retry 5 times (2 s doubling to 30 s); refusals (exit 3)
    stop at once. `shoji service status` shows the `gate` row and its cause.
 
+After HELLO the daemon sends `Capabilities`. A payload that supports it
+reports `LayoutSubmit` (a whole layout of up to 32 moves in one Mach message)
+and its item limit; an older payload answers status 1 and the daemon keeps the
+legacy `LayoutBegin`/`LayoutAdd`/`LayoutArm` sequence of at most 8 moves.
+`shoji -m debug ws status` shows which protocol is in use.
+
+While a trackpad swipe drags the scroll strip, and while the camera spring
+runs, the daemon sends each frame's window moves as one batch and resyncs
+Accessibility once the camera is still
+(`scroll_camera_apply` in `src/manager.odin`).
+
 The payload stays resident until WindowServer exits; there is no live unload.
 Logging out does not restart WindowServer, so a new payload needs
 `sudo killall -9 WindowServer` (this logs you out).
