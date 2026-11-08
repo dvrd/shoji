@@ -282,6 +282,10 @@ run :: proc(
 	ring_hold_start := time.now()
 	refresh(&state)
 	state.opening_tracking = true
+	if validation_pid == 0 {
+		snapshot_path := fmt.tprintf("/tmp/shoji-layout_%d.json", getuid())
+		layout_snapshot_open(&state.layout_snapshot, strings.clone(snapshot_path), time.now())
+	}
 	if config != "" && !os.exists(config) {
 		fmt.eprintf("shoji: config does not exist: %s\n", config)
 		return 1
@@ -340,6 +344,7 @@ run :: proc(
 			ws_attach_tick(&attach, time.now())
 			focus_ring_hold_tick(&state, &runtime_health.config, ring_hold_start, time.now())
 			animation_recovery_tick(&state, time.now())
+			layout_snapshot_tick(&state, runtime_health.config.report.finished, time.now())
 			desktop_commands_tick(&commands, &state, &last_refresh, time.now())
 			moving := motion_active(&state)
 			display := CGMainDisplayID()
