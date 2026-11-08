@@ -32,6 +32,9 @@ PSN :: struct {
 foreign sls {
 	SLSSpaceGetType :: proc(cid: i32, sid: u64) -> i32 ---
 	SLSCopyManagedDisplayForSpace :: proc(cid: i32, sid: u64) -> m.Ref ---
+	SLSCopyManagedDisplaySpaces :: proc(cid: i32) -> m.Ref ---
+	// Dock 27.2's own reorder/insert call; Dock ignores its result.
+	CGSMoveManagedSpaceToDisplayIndex :: proc(cid: i32, sid: u64, display: m.Ref, index: u32) ---
 	SLSManagedDisplaySetCurrentSpace :: proc(cid: i32, display: m.Ref, sid: u64) ---
 	SLSShowSpaces :: proc(cid: i32, spaces: m.Ref) ---
 	SLSHideSpaces :: proc(cid: i32, spaces: m.Ref) ---
@@ -186,7 +189,8 @@ discover :: proc() {
 	if g.dock_object != nil {send(Object, g.dock_object, "retain");g.caps += {.Dock_Spaces}}
 	if g.pictures != nil {send(Object, g.pictures, "retain");g.caps += {.Desktop_Pictures}}
 	if g.add != nil {g.caps += {.Add_Space}};if g.remove != nil {g.caps += {.Remove_Space}}
-	if g.move != nil {g.caps += {.Move_Space}};if g.focus != nil && !dock.focus_target_blocked(g.version) {g.caps += {.Focus_Window}}
+	if g.move != nil || dock.move_space_by_index(g.version) {g.caps += {.Move_Space}}
+	if g.focus != nil && !dock.focus_target_blocked(g.version) {g.caps += {.Focus_Window}}
 	patch := locate(
 		bytes,
 		dock.get_fix_animation_offset(g.version),
@@ -287,14 +291,14 @@ space_action :: proc(op: dock.Opcode, r: ^dock.Reader, created_space: ^u64) -> d
 		follow_byte := dock.unpack(r, u8)
 		if follow_byte > 1 {return .Invalid_Message}
 		follow := follow_byte == 1
-		if g.move == nil || g.pictures == nil {return .Unsupported}
+		by_index := dock.move_space_by_index(g.version)
+		if !by_index && (g.move == nil || g.pictures == nil) {return .Unsupported}
 		target_uuid := SLSCopyManagedDisplayForSpace(g.cid, destination)
 		if target_uuid == nil {return .Operation_Failed}
 		defer m.CFRelease(target_uuid)
 		target := space_object(target_uuid, destination)
 		target_display := display_object(target_uuid)
 		if target == nil || target_display == nil || id == destination {return .Operation_Failed}
-		display_id := send(u32, g.dock_object, "displayIDForSpace:", target)
 		if SLSSpaceGetType(g.cid, id) != 0 ||
 		   SLSSpaceGetType(g.cid, destination) != 0 {return .Operation_Failed}
 		if m.text(uuid) != m.text(target_uuid) {
@@ -308,13 +312,59 @@ space_action :: proc(op: dock.Opcode, r: ^dock.Reader, created_space: ^u64) -> d
 			   space_object(uuid, previous) == nil ||
 			   focus_space(previous) != .OK {return .Operation_Failed}
 		}
-		inject.call_move(rawptr(object), rawptr(target), target_uuid, rawptr(g.dock_object), g.move)
-		send(nil, g.pictures, "moveSpace:toDisplay:displayUUID:", object, display_id, target_uuid)
+		if by_index {
+			if !move_space_by_index(id, destination, target_uuid) {return .Operation_Failed}
+		} else {
+			display_id := send(u32, g.dock_object, "displayIDForSpace:", target)
+			inject.call_move(rawptr(object), rawptr(target), target_uuid, rawptr(g.dock_object), g.move)
+			send(nil, g.pictures, "moveSpace:toDisplay:displayUUID:", object, display_id, target_uuid)
+		}
 		if follow {return focus_space(id)}
 	case:
 		return .Invalid_Message
 	}
 	return .OK
+}
+
+// Index Space `id` must take on `display_uuid` to sit right after `anchor`,
+// counted over WindowServer's current order for that display (Dock's own list
+// lags behind until it applies the SpaceChangeDelta). Moving forward on the
+// same display frees the slot it leaves, so the anchor's own index is final.
+space_index_after :: proc(id, anchor: u64, display_uuid: m.Ref) -> (index: u32, ok: bool) {
+	all := SLSCopyManagedDisplaySpaces(g.cid)
+	if all == nil {return 0, false}
+	defer m.CFRelease(all)
+	displays := Object(all)
+	want := m.text(display_uuid)
+	for i in 0 ..< send(uint, displays, "count") {
+		entry := send(Object, displays, "objectAtIndex:", i)
+		name := send(Object, entry, "objectForKey:", objc.AT("Display Identifier"))
+		if name == nil || m.text(m.Ref(name)) != want {continue}
+		spaces := send(Object, entry, "objectForKey:", objc.AT("Spaces"))
+		if spaces == nil {return 0, false}
+		at, own := -1, -1
+		for j in 0 ..< send(uint, spaces, "count") {
+			space := send(Object, spaces, "objectAtIndex:", j)
+			number := send(Object, space, "objectForKey:", objc.AT("id64"))
+			spid := send(u64, number, "unsignedLongLongValue")
+			if spid == anchor {at = int(j)}
+			if spid == id {own = int(j)}
+		}
+		if at < 0 {return 0, false}
+		return u32(own >= 0 && own < at ? at : at + 1), true
+	}
+	return 0, false
+}
+
+// 27.2: WindowServer owns Space order; Dock follows its SpaceChangeDelta.
+move_space_by_index :: proc(id, anchor: u64, display_uuid: m.Ref) -> bool {
+	index, ok := space_index_after(id, anchor, display_uuid)
+	if !ok {return false}
+	CGSMoveManagedSpaceToDisplayIndex(g.cid, id, display_uuid, index)
+	landed := SLSCopyManagedDisplayForSpace(g.cid, id)
+	if landed == nil {return false}
+	defer m.CFRelease(landed)
+	return m.text(landed) == m.text(display_uuid)
 }
 
 alternate_user_space :: proc(uuid: m.Ref, excluded: u64) -> u64 {

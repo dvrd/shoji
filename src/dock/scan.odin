@@ -16,6 +16,13 @@ focus_target_blocked :: proc(v: Version) -> bool {
 MACOS27_CANDIDATE :: #config(SHOJI_MACOS27_CANDIDATE, false)
 // The validated daily-use target (build 26B123); see patterns_arm64.odin.
 MACOS27_2 :: Version{27, 2, 0}
+// From 27.2 Dock reorders and moves Spaces with SkyLight's
+// CGSMoveManagedSpaceToDisplayIndex and mirrors WindowServer's resulting
+// SpaceChangeDelta; there is no Dock-private move entry to call.
+move_space_by_index :: proc(v: Version) -> bool {
+	when ODIN_ARCH == .arm64 {return v == MACOS27_2}
+	return false
+}
 Pattern :: struct {
 	bytes:    []u8,
 	wildcard: []bool,

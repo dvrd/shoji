@@ -4,8 +4,9 @@ package dock
 // 27.0.1 static profile: AhsanFazal/yabai 49c2d035, checked against build 26A434.
 // Runtime acceptance remains separate in supported(); this table alone does not enable injection.
 // 27.2 (26B123) profile: only targets with a unique static match on the shipped Dock.
-// desktop_pictures, move_space and focus_window have no match, so their capabilities
-// stay absent instead of being carried forward from 27.0.1.
+// 27.2 moves Spaces through SkyLight instead (see move_space_by_index), removed the
+// desktop picture manager's moveSpace:toDisplay:displayUUID: and the CoreDockWindows
+// focus message, so move_space, desktop_pictures and focus_window have no target.
 get_dock_spaces_offset :: proc(os_version: Version) -> u64 {
 	if os_version == MACOS27_2 {return 0x20000}
 	if os_version == (Version{27, 0, 1}) {return 0x30000}
