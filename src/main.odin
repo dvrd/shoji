@@ -110,12 +110,12 @@ main :: proc() {
 			return
 		case "--check-sa":
 			caps, err := addition_check()
-      if err != "" {
-        fmt.eprintln(err)
-        os.exit(1)
-      }
-			fmt.printf("Dock scripting addition: %v\n", caps)
-      return
+			if err != "" {
+				fmt.eprintln(err)
+				os.exit(1)
+			}
+			addition_print_capabilities(caps)
+			return
 		case "--ws-attach":
 			os.exit(attach.ws_attach_cli(args[1:]))
 		case "--ws-report":

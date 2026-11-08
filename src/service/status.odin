@@ -66,6 +66,12 @@ launchd_status_parse :: proc(text: string) -> Launchd_Status {
 	return s
 }
 
+// Color only an interactive stdout, and honor NO_COLOR.
+stdout_color :: proc() -> bool {
+	no_color := os.get_env("NO_COLOR", context.temp_allocator) != ""
+	return isatty(i32(posix.STDOUT_FILENO)) != 0 && !no_color
+}
+
 paint :: proc(style: Status_Style, code, text: string) -> string {
 	if !style.color {return text}
 	return fmt.tprintf("\x1b[%sm%s\x1b[0m", code, text)
@@ -205,9 +211,7 @@ status_render :: proc(
 
 service_status :: proc(m: Service_Manager, verbose: bool) -> int {
 	r := launch(m, "print", target(m))
-	no_color := os.get_env("NO_COLOR", context.temp_allocator) != ""
-	color := isatty(i32(posix.STDOUT_FILENO)) != 0 && !no_color
-	style := Status_Style{color, m.home}
+	style := Status_Style{stdout_color(), m.home}
 	if r.code != 0 {
 		fmt.printf("%s  %s\n", paint(style, BOLD, "Shoji"), paint(style, RED, "○ not loaded"))
 		fmt.println(paint(style, DIM, "  start it with: shoji service start"))

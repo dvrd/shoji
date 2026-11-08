@@ -9,6 +9,7 @@ import "core:sys/posix"
 import "core:time"
 import support "support"
 import health "health"
+import service "service"
 
 // Scripting-addition protocol client
 // ------------------------------------------------------------------------
@@ -510,4 +511,17 @@ addition_reload_load_finished :: proc(
 	}
 	addition_reload_record_failure(r, cause, crash_report, now)
 	addition_reload_backoff(r, now)
+}
+
+// One capability per line, absent ones included, so a missing bit is as
+// visible as a present one.
+addition_print_capabilities :: proc(caps: dock.Capabilities) {
+	style := service.Status_Style{color = service.stdout_color()}
+	fmt.printf("Dock scripting addition: %d of %d capabilities\n", card(caps), len(dock.Capability))
+	for capability in dock.Capability {
+		mark := capability in caps \
+			? service.paint(style, service.GREEN, "✓") \
+			: service.paint(style, service.RED, "✗")
+		fmt.printf("  %s %v\n", mark, capability)
+	}
 }
