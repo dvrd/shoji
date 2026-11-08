@@ -357,7 +357,8 @@ tick_proxy_recovery :: proc() {
 // A concealed window is invisible and lets clicks through, so it must never
 // outlive the Shoji process that concealed it. Each entry remembers that
 // client; tick_concealed reveals the window once the client has exited.
-// A Dock restart drops this table (the concealing daemon still owns them).
+// The table is also written to the conceal journal. A Dock restart reloads
+// it and advances the boot id; WindowServer keeps the alpha and event shape.
 CONCEALED_LIMIT :: 256
 CONCEALED_CHECK_INTERVAL :: 250 * time.Millisecond
 Concealed :: struct {
@@ -366,6 +367,7 @@ Concealed :: struct {
 }
 concealed: map[u32]Concealed
 concealed_checked: time.Time
+conceal_boot: u64
 
 peer_pid :: proc(fd: i32) -> i32 {
 	pid: i32;size := posix.socklen_t(size_of(pid))
@@ -377,7 +379,9 @@ peer_pid :: proc(fd: i32) -> i32 {
 conceal_request :: proc(id: u32, conceal: bool, client: i32, diagnostic: ^dock.Native_Failure) -> dock.Status {
 	if !conceal {
 		delete_key(&concealed, id)
-		return conceal_window(id, false, diagnostic)
+		result := conceal_window(id, false, diagnostic)
+		if result == .OK {conceal_persist()}
+		return result
 	}
 	// Refuse what the watchdog could not undo.
 	if client <= 0 {return .Operation_Failed}
@@ -386,8 +390,19 @@ conceal_request :: proc(id: u32, conceal: bool, client: i32, diagnostic: ^dock.N
 	if len(concealed) >= CONCEALED_LIMIT && id not_in concealed {return .Operation_Failed}
 	concealed[id] = {owner, client}
 	result := conceal_window(id, true, diagnostic)
-	if result != .OK {delete_key(&concealed, id)}
+	if result != .OK {delete_key(&concealed, id); return result}
+	conceal_persist()
 	return result
+}
+
+conceal_persist :: proc() {
+	if conceal_boot == 0 {return}
+	entries := make([]dock.Conceal_Record, 0, len(concealed), context.temp_allocator)
+	for id, entry in concealed {entries = append(entries, dock.Conceal_Record{id, entry.owner, entry.client})}
+	path := dock.conceal_journal_path(u32(m.getuid()))
+	if err := dock.conceal_journal_write(path, conceal_boot, entries); err != "" {
+		fmt.eprintln("shoji-sa: conceal journal:", err)
+	}
 }
 
 tick_concealed :: proc() {
@@ -404,7 +419,9 @@ tick_concealed :: proc() {
 			if conceal_window(id, false, nil) == .OK {append(&done, id)}
 		}
 	}
+	if len(done) == 0 {return}
 	for id in done {delete_key(&concealed, id)}
+	conceal_persist()
 }
 
 conceal_window :: proc(id: u32, conceal: bool, diagnostic: ^dock.Native_Failure) -> dock.Status {
@@ -642,6 +659,15 @@ initialize_payload :: proc "c" (unused: rawptr) {
 	discover();g.caps += {.Transaction_Diagnostics, .Window_Layer_Keys, .Space_Transaction, .Window_Conceal};if g.add != nil {g.caps += {.Tracked_Space_Create}}
 	fades = make(map[u32]Fade);hidden_proxies = make(map[u32]dock.Entry)
 	concealed = make(map[u32]Concealed)
+	path := dock.conceal_journal_path(u32(m.getuid()))
+	file, _, found, read_err := dock.conceal_journal_read(path)
+	if read_err != "" {fmt.eprintln("shoji-sa: conceal journal:", read_err)}
+	if found && read_err == "" {
+		for entry in file.entries {concealed[entry.window] = {entry.owner, entry.client}}
+		conceal_boot = file.boot + 1
+	}
+	if conceal_boot == 0 {conceal_boot = 1}
+	conceal_persist()
 }
 listen_fd: i32 = -1
 serve :: proc "c" (unused: rawptr) -> rawptr {

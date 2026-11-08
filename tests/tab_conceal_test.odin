@@ -1,8 +1,12 @@
 package tests
 
 import mac "../src"
-import "core:testing"
+import dock "../src/dock"
 import layout "../src/layout"
+import "core:fmt"
+import "core:strings"
+import "core:sys/posix"
+import "core:testing"
 
 @(private = "file")
 conceals :: proc(r: ^Recorder) -> (on, off: [dynamic]u32) {
@@ -154,6 +158,57 @@ tabbed_strip :: proc(m: ^mac.Manager, r: ^Recorder, top: bool) {
 	mac.execute(m, {"window", "2", "--column-display", "tabbed"})
 	mac.execute(m, {"config", "tab_indicator_position", top ? "top" : "left"})
 	mac.execute(m, {"window", "3", "--focus"})
+}
+
+@(test)
+conceal_journal_round_trips_and_rejects_bad_records :: proc(t: ^testing.T) {
+	path := fmt.tprintf("/tmp/shoji-test-concealed-round-%d.json", posix.getpid())
+	defer posix.unlink(strings.clone_to_cstring(path, context.temp_allocator))
+	entries := []dock.Conceal_Record{
+		{window = 1, owner = 2, client = 3},
+		{window = 4, owner = 5, client = 6},
+	}
+	testing.expect_value(t, dock.conceal_journal_write(path, 1, entries), "")
+	file, mtime, found, err := dock.conceal_journal_read(path)
+	testing.expect(t, found && err == "")
+	testing.expect(t, mtime != 0)
+	testing.expect_value(t, file.boot, u64(1))
+	testing.expect_value(t, len(file.entries), 2)
+	testing.expect_value(t, file.entries[1].window, u32(4))
+	testing.expect(t, dock.conceal_journal_write(path, 0, entries) != "")
+	testing.expect(t, dock.conceal_journal_write(path, 1, []dock.Conceal_Record{{window = 1, owner = 2, client = 0}}) != "")
+	// The failed writes must leave the previous file intact.
+	again, _, found_again, err_again := dock.conceal_journal_read(path)
+	testing.expect(t, found_again && err_again == "")
+	testing.expect_value(t, again.boot, u64(1))
+}
+
+@(test)
+conceal_boot_change_retries_a_refused_tab :: proc(t: ^testing.T) {
+	m: mac.Manager; r: Recorder; tab_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
+	path := fmt.tprintf("/tmp/shoji-test-concealed-boot-%d.json", posix.getpid())
+	defer posix.unlink(strings.clone_to_cstring(path, context.temp_allocator))
+	testing.expect_value(t, dock.conceal_journal_write(path, 1, nil), "")
+	_, mtime, found, err := dock.conceal_journal_read(path)
+	testing.expect(t, found && err == "" && mtime != 0)
+	m.conceal_journal = strings.clone(path)
+	m.conceal_boot = 1
+	m.conceal_stamp = mtime
+	m.tab_conceal = true
+	r.fail = true
+	calls := r.calls
+	testing.expect_value(t, mac.flush(&m, m.spaces[0]), "")
+	testing.expect(t, !m.windows[3].concealed && m.windows[3].conceal_refused)
+	attempts := r.calls - calls
+	mac.flush(&m, m.spaces[0])
+	testing.expect_value(t, r.calls - calls, attempts)
+	testing.expect_value(t, dock.conceal_journal_write(path, 2, nil), "")
+	r.fail = false
+	mac.flush(&m, m.spaces[0])
+	testing.expect(t, !m.windows[3].conceal_refused)
+	testing.expect(t, m.windows[3].concealed)
+	testing.expect(t, r.calls - calls > attempts)
 }
 
 @(test)

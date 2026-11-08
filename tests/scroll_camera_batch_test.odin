@@ -45,6 +45,31 @@ scroll_camera_frames_land_through_one_batch_and_resync_once_settled :: proc(t: ^
 }
 
 @(test)
+scroll_camera_hold_submits_once_with_owned_surfaces :: proc(t: ^testing.T) {
+	m: mac.Manager; r: Recorder; camera_fixture(&m, &r, true)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
+	defer delete(batch_recorder.moves)
+	m.camera_hold = true
+	testing.expect_value(t, mac.scroll_motion_tick(&m, 0.04), "")
+	testing.expect_value(t, batch_recorder.calls, 0)
+	testing.expect(t, m.camera_held > 0)
+	owned := []mac.Layout_Move{{window = 99, x = 4, y = 5}}
+	testing.expect(t, mac.layout_frame_submit(&m, owned))
+	testing.expect_value(t, batch_recorder.calls, 1)
+	testing.expect_value(t, m.camera_held, 0)
+	found := false
+	for move in batch_recorder.moves {
+		if move.window == 99 {
+			found = true
+			testing.expect_value(t, move.x, f64(4))
+			testing.expect_value(t, move.y, f64(5))
+		}
+	}
+	testing.expect(t, found)
+	testing.expect(t, len(batch_recorder.moves) > 1)
+}
+
+@(test)
 scroll_camera_batch_refusal_falls_back_to_frame_writes :: proc(t: ^testing.T) {
 	m: mac.Manager; r: Recorder; camera_fixture(&m, &r, false)
 	defer mac.manager_destroy(&m); defer delete(r.actions)

@@ -276,6 +276,9 @@ State :: struct {
 	feedback_backend: Feedback_Backend,
 	focus_ring: Focus_Ring,
 	tab_indicator: Tab_Indicator_State,
+	// Owned surfaces queued for the open camera layout batch.
+	frame_owned: [OWNED_BATCH_LIMIT]Layout_Move,
+	frame_owned_count: int,
 	focus_geometry_dirty: bool,
 	focus_frame_probe: proc(state: ^State, window: u32) -> (Rect, bool),
 	focus_scroll_pending: u32,

@@ -10,6 +10,7 @@ foreign import surface_cg "system:CoreGraphics.framework"
 Animation_Transform :: struct {
 	a, b, c, d, tx, ty: f64,
 }
+Surface_Point :: struct {x, y: f64}
 @(default_calling_convention = "c")
 foreign surface_sls {
 	CGSNewRegionWithRect :: proc(rect: ^Rect, region: ^Ref) -> i32 ---
@@ -23,6 +24,7 @@ foreign surface_sls {
 	SLSSetWindowLevel :: proc(cid: i32, window: u32, level: i32) -> i32 ---
 	SLSSetWindowSubLevel :: proc(cid: i32, window: u32, level: i32) -> i32 ---
 	SLSSetWindowTransform :: proc(cid: i32, window: u32, transform: Animation_Transform) -> i32 ---
+	SLSMoveWindowWithGroup :: proc(cid: i32, window: u32, point: ^Surface_Point) -> i32 ---
 }
 @(default_calling_convention = "c")
 foreign surface_cg {
@@ -125,4 +127,15 @@ surface_update :: proc(
 		return "could not transform surface"
 	}
 	return ""
+}
+
+surface_set_identity :: proc(state: ^State, window: u32) -> bool {
+	if state.connection == 0 || window == 0 {return false}
+	return SLSSetWindowTransform(state.connection, window, {a = 1, d = 1}) == 0
+}
+
+surface_move :: proc(state: ^State, window: u32, x, y: f64) -> bool {
+	if state.connection == 0 || window == 0 {return false}
+	point := Surface_Point{x, y}
+	return SLSMoveWindowWithGroup(state.connection, window, &point) == 0
 }

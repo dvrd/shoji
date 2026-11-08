@@ -33,7 +33,7 @@ document maps it.
   - Surfaces: 0x33–0x36
   - Geometry: 0x41
 
-  Source: `GATED_OPS` in `src/payloads/windowserver/payload.odin`.
+  Source: `GATED_OPS` in `src/windowserver/gate/mach.odin`.
   Install-time checks cover all 139 handlers (`gate_expected.odin`).
 - **What "gated" means:** the op can be *held and released*. Shoji cannot
   *issue* any of these ops through the gate.
@@ -48,9 +48,12 @@ document maps it.
   - `SpacePlace`, `SpaceApply`
 
   Source: `Gate_Command` in `src/windowserver/gate/mach.odin`.
-- **Batch limits:** a layout batch holds at most 8 moves (`LAYOUT_LIMIT` in
-  `src/windowserver/gate/layout.odin`). Shoji uses it only for unanimated,
-  move-only relayouts (`layout_batch_eligible` in `src/manager.odin`).
+- **Batch limits:** one layout submit holds at most 72 moves (`LAYOUT_LIMIT`
+  in `src/windowserver/gate/layout.odin`): 32 windows plus owned focus-ring
+  and tab-indicator surfaces. A payload that predates Capabilities still
+  caps a submit at 8. Scroll-camera frames use the batch; size changes stay
+  per window. Unanimated move-only relayouts still go through
+  `layout_batch_eligible` in `src/manager.odin`.
 - **Holds serialize all of WindowServer [live]:** every client's transactions
   wait while one op is held. Holds must therefore last about one frame
   (B2, `f2533af`).
@@ -145,7 +148,7 @@ sync, offscreen render, capture, protocol. "Protocol" means Wayland client state
 | --- | --- | --- | --- | --- |
 | 26 | `window-open` | Transform plus alpha on the first frame | The ordering hook already holds a window's first show [live]. Add 0x0f and 0x03 from the Dock connection in the same held commit. [static] | GATE |
 | 27 | `window-close` | Keep the last buffer as a snapshot | Needs a hold point before the backing is released. Window destroy is not hooked. 0x09 `ReleasesBackingOnOrderOut` is related [static]. | NEW |
-| 28 | `horizontal-view-movement`, `window-movement` | Frame-synced transforms | `LayoutBegin`/`Add`/`Arm` exist, but Shoji excludes animated frames (`layout_batch_eligible`) and caps the batch at 8 | GATE |
+| 28 | `horizontal-view-movement`, `window-movement` | Frame-synced transforms | Scroll-camera frames use one `LayoutSubmit` (72 items, including the focus ring and tab indicators). Size animation stays per window. No frame clock yet (F1). | GATE |
 | 29 | `window-resize` | Snapshot crossfade plus shader | Owned proxy and resize-fade content blend [doc] | COV (approximation) |
 | 30 | Synchronized animations (wait for the client's commit) | Wayland transactions | Hold geometry until surface bind 0x33/0x35 (both gated). Needs a window↔surface link and a command. [static] | GATE |
 | 31 | `custom-shader` (open, close, resize) | GLSL on live buffers | Live: none. Proxy-only with Metal. 0x11 `SetWindowWarp` gives mesh distortion only [static]. | NF |
@@ -237,11 +240,11 @@ builds.
 
 | # | Task | Acceptance |
 | --- | --- | --- |
-| E1 | **Partly done 2026-11-07:** `Capabilities` reports features and the layout item limit; build UUID and gated ops are not reported yet. **Capabilities handshake.** The WindowServer payload reports build UUID, gated ops, supported commands and limits. This replaces `Load_Probe`-only (`protocol.odin:12`). Merge it with Dock capabilities and enable o
-| E2 | **In progress 2026-11-07:** scroll-camera frames batch through `LayoutSubmit` (32 moves, one message); window and ring animations still use per-window writes. **Per-frame motion batch.** The motion tick sends camera, window and owned-ring moves through one `LayoutArm` per display frame. Raise `LAYOUT_LIMIT` with a bounded plan. Keep the hold at or under one frame. | The
+| E1 | **Done 2026-11-08 (unit tests; no live WindowServer run).** `Capabilities` appends this build's SkyLight UUID and `GATED_OPS`. A trailer that does not match turns gate features off. A reply of exactly `GATE_MSG_SIZE` still honors the feature bit and the item limit. Dock capabilities stay a separate handshake. | A foreign UUID or op set leaves layout features off. An older payload without the trailer keeps working. |
+| E2 | **Done 2026-11-08 (unit tests; no live frame capture).** One held camera frame sends window moves, focus-ring bars and tab indicators in one `LayoutSubmit`, placed from the layout frame. `LAYOUT_LIMIT` is 72. Size changes stay per window. The hold budget stays 8000 µs. Frame-clock alignment is F1. | A held camera tick does not submit until that frame's ring and indicators are queued. A payload that rejects the combined submit still batches the windows. |
 | E3 | **Foreign-op commands.** Add alpha (0x03/0x0e), clip (0x2f/0x05), shape (0x0b), event shape (0x45) and transform (0x0f). They are issued as Dock-connection transactions, staged inside the gated commit, with a rest
 | E4 | **Viewport clipping (B01)** using E3 | Checklist B01 passes on one display and on two physical displays. |
-| E5 | **In progress 2026-11-07:** `tab_conceal on` conceals inactive tabs through the Dock payload (`Window_Conceal`); the payload reveals them if the concealing daemon exits. Not yet journaled across a Dock restart. **True tab concealment (B02)** using E3 | Checklist B02 passes, including restoration after interruption. |
+| E5 | **Journal done 2026-11-08 (unit tests; no live Dock restart).** The payload writes `{window, owner, client}` and a boot id to `/tmp/shoji-concealed_<uid>.json`, reloads it on start, and bumps the boot id once per process. A new boot clears `conceal_refused`. Corners, shadows, dialogs and application-driven ordering (B02) stay open, as do the E3 foreign alpha and clip commands. | After a Dock restart the payload still watches concealed windows. A same-boot rewrite does not retry a refused conceal. B02's visual checks remain open. |
 | E6 | **Dialog and floating relationships (P05)**: level, sublevel, ordering groups (0x59–0x5b) and movement groups (0x55–0x57) | Sheets, modals and popovers follow their owner during E2 motion and are never hidden behi
 
 ### Phase F: synchronization

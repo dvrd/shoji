@@ -14,6 +14,9 @@ foreign import feedback_cg "system:CoreGraphics.framework"
 Feedback_Window :: struct {
 	plan: Feedback_Plan,
 	surface: Owned_Surface,
+	// Positioned by window origin so a layout batch can move it with the
+	// column. Transform placement is restored when the hold ends.
+	origin_placed: bool,
 }
 Feedback_Backend :: struct {
 	create: proc(
@@ -95,6 +98,7 @@ tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
 		plan := Feedback_Plan{window = relative, frame = tabs[i].frame, color = color, solid = true}
 		if plan != bar.plan {
 			indicator.order_dirty = true
+			if feedback_hold_origin(state, bar, plan) {continue}
 			// A new owner window only needs the reorder below; only a color
 			// change redraws. The replacement exists before the old bar goes, so
 			// a tab switch or a new tab never shows a gap in the bar.
@@ -196,7 +200,77 @@ focus_ring_fail :: proc(state: ^State, err: string) {
 	fmt.eprintln("shoji: focus ring:", err)
 }
 
+feedback_same_size :: proc(a, b: Rect) -> bool {
+	return a.w > 0 && a.h > 0 && math.abs(a.w - b.w) < 0.5 && math.abs(a.h - b.h) < 0.5
+}
+
+feedback_queue_owned :: proc(state: ^State, id: u32, frame: Rect) -> bool {
+	if id == 0 || state.frame_owned_count >= len(state.frame_owned) {return false}
+	for held in state.manager.camera_moves[:state.manager.camera_held] {
+		if held.window == id {return false}
+	}
+	for i in 0 ..< state.frame_owned_count {
+		if state.frame_owned[i].window == id {return false}
+	}
+	state.frame_owned[state.frame_owned_count] = {id, frame.x, frame.y}
+	state.frame_owned_count += 1
+	return true
+}
+
+// Puts a position-only owned surface on the open layout batch. A size change
+// stays on the transform path: a layout item has no width or height.
+feedback_hold_origin :: proc(state: ^State, bar: ^Feedback_Window, plan: Feedback_Plan) -> bool {
+	if !state.manager.camera_hold || state.manager.layout_batch == nil || state.connection == 0 {
+		return false
+	}
+	if bar.surface.id == 0 {return false}
+	drawn := bar.plan.frame
+	if drawn.w <= 0 {drawn = bar.surface.frame}
+	if !feedback_same_size(drawn, plan.frame) {return false}
+	placed_now := false
+	if !bar.origin_placed {
+		if !surface_set_identity(state, bar.surface.id) {return false}
+		if math.abs(drawn.x - bar.surface.frame.x) >= 0.5 || math.abs(drawn.y - bar.surface.frame.y) >= 0.5 {
+			if !surface_move(state, bar.surface.id, drawn.x, drawn.y) {return false}
+		}
+		placed_now = true
+	}
+	if !feedback_queue_owned(state, bar.surface.id, plan.frame) {
+		if placed_now {surface_move(state, bar.surface.id, bar.surface.frame.x, bar.surface.frame.y)}
+		return false
+	}
+	bar.origin_placed = true
+	bar.plan = plan
+	return true
+}
+
+feedback_release_origin :: proc(state: ^State) {
+	if state.manager.camera_hold {return}
+	release :: proc(state: ^State, bars: []Feedback_Window) {
+		for &bar in bars {
+			if !bar.origin_placed {continue}
+			if state.connection != 0 && bar.surface.id != 0 {
+				surface_move(state, bar.surface.id, bar.surface.frame.x, bar.surface.frame.y)
+			}
+			bar.origin_placed = false
+			bar.plan.frame = {}
+		}
+	}
+	release(state, state.focus_ring.bars[:])
+	release(state, state.tab_indicator.bars[:])
+}
+
+// The layout batch did not take these surfaces. They are already on an
+// identity transform, so a plain move lands them on this frame's plan.
+feedback_owned_fallback :: proc(state: ^State) {
+	if state.connection == 0 {return}
+	for move in state.frame_owned[:state.frame_owned_count] {
+		surface_move(state, move.window, move.x, move.y)
+	}
+}
+
 focus_ring_tick :: proc(state: ^State) {
+	feedback_release_origin(state)
 	w := state.manager.windows[state.manager.focused]
 	if focus_ring_opening_hold(state, w) {return}
 	if state.read_only ||
@@ -229,20 +303,24 @@ focus_ring_tick :: proc(state: ^State) {
 			state.focus_scroll_deadline = CACurrentMediaTime() + 1
 		}
 		if moving || state.focus_scroll_pending == w.id {
-			probe := state.focus_frame_probe
-			if probe == nil && state.connection != 0 { probe = mouse_native_resize_frame }
-			if probe != nil {
-				observed, valid := probe(state, w.id)
-				if !valid || !valid_frame(observed) {
-					focus_ring_stop(state); tab_indicator_stop(state); return
-				}
-				frame = observed
-				if !moving && (CACurrentMediaTime() >= state.focus_scroll_deadline ||
-				   math.abs(observed.x-w.frame.x) < 1.5 &&
-				   math.abs(observed.y-w.frame.y) < 1.5 &&
-				   math.abs(observed.w-w.frame.w) < 1.5 &&
-				   math.abs(observed.h-w.frame.h) < 1.5) {
-					state.focus_scroll_pending = 0
+			if state.manager.camera_hold {
+				frame = w.frame
+			} else {
+				probe := state.focus_frame_probe
+				if probe == nil && state.connection != 0 {probe = mouse_native_resize_frame}
+				if probe != nil {
+					observed, valid := probe(state, w.id)
+					if !valid || !valid_frame(observed) {
+						focus_ring_stop(state); tab_indicator_stop(state); return
+					}
+					frame = observed
+					if !moving && (CACurrentMediaTime() >= state.focus_scroll_deadline ||
+					   math.abs(observed.x - w.frame.x) < 1.5 &&
+					   math.abs(observed.y - w.frame.y) < 1.5 &&
+					   math.abs(observed.w - w.frame.w) < 1.5 &&
+					   math.abs(observed.h - w.frame.h) < 1.5) {
+						state.focus_scroll_pending = 0
+					}
 				}
 			}
 		}
@@ -308,6 +386,7 @@ focus_ring_tick :: proc(state: ^State) {
 			(bar.plan.frame.w != plan.frame.w ||
 					bar.plan.frame.h != plan.frame.h ||
 					bar.plan.stroke_width != plan.stroke_width)
+		if !corner_changed && feedback_hold_origin(state, bar, plan) {continue}
 		if bar.surface.id != 0 && backend.update != nil && !corner_changed {
 			err = backend.update(state, bar.surface, plan.frame)
 		} else {
@@ -547,7 +626,7 @@ feedback_sync :: proc(state: ^State, plans: map[u32]Feedback_Plan) {
 			state.feedback = make(map[u32]Feedback_Window)
 		}
 		// Cache failed plans too, avoiding a log/allocation storm every frame.
-		state.feedback[key] = Feedback_Window{plan, surface}
+		state.feedback[key] = Feedback_Window{plan = plan, surface = surface}
 	}
 }
 
