@@ -313,7 +313,7 @@ live_desktop_run :: proc(c: tc.Context, l: ^Live, prebuilt: bool = false) -> (er
 }
 live_cli :: proc(c: tc.Context, args: []string) -> string {
 	if len(args) == 0 {
-		return "live expects desktop|spaces|animation"
+		return "live expects desktop|spaces|animation|windowserver"
 	}
 	if os.get_euid() == 0 {
 		return "run live validation as the logged-in user, not root"
@@ -321,13 +321,26 @@ live_cli :: proc(c: tc.Context, args: []string) -> string {
 	o, err := support.parse(
 		args[1:],
 		nil,
-		[]string{"load-payload", "reload-payload", "dock-restart", "prebuilt-fixture"},
+		[]string {
+			"load-payload",
+			"reload-payload",
+			"dock-restart",
+			"prebuilt-fixture",
+			"move-space",
+		},
 	); if err != "" {
 		return err
 	}; if len(o.positionals) != 0 {
 		return "unexpected live-validation argument"
 	}
+	if args[0] != "windowserver" && o.flags["move-space"] {
+		return "--move-space applies to windowserver only"
+	}
 	switch args[0] {
+	case "windowserver":
+		if o.flags["load-payload"] || o.flags["reload-payload"] || o.flags["dock-restart"] {
+			return "windowserver does not accept payload/Dock flags"
+		}; return live_windowserver(c, o.flags["move-space"], o.flags["prebuilt-fixture"])
 	case "desktop":
 		if o.flags["load-payload"] || o.flags["reload-payload"] || o.flags["dock-restart"] {
 			return "desktop does not accept payload/Dock flags"

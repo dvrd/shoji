@@ -11,6 +11,7 @@ HELP :: `Usage: harness COMMAND [OPTIONS]
   live desktop [--prebuilt-fixture]   Owned-window validation; refuses an existing daemon
   live spaces [--load-payload] [--prebuilt-fixture]
   live animation [--reload-payload] [--dock-restart] [--prebuilt-fixture]
+  live windowserver [--move-space] [--prebuilt-fixture]   WindowServer gate acceptance
 
 Dock restart and live desktop mutations require explicit live options.`
 dispatch :: proc(c: tc.Context, args: []string) -> string {
