@@ -223,8 +223,10 @@ sync, offscreen render, capture, protocol. "Protocol" means Wayland client state
    slides and the open animation. Whether input maps through a transform is
    unknown.
 4. **Frame clock and synchronized resize (#11, #30).** Niri commits frames on
-   vsync and waits for clients. Shoji has no frame-clock hook, and its
-   surface-bind correlation is unused.
+   vsync and waits for clients. Shoji's camera tick already runs on the
+   display link (E2 submits inside that pulse). F1 records the tick against
+   the link target. `commit_ca` was not found. Surface-bind correlation is
+   unused.
 5. **Window-close snapshot (#27).** No hold point before teardown has been
    mapped.
 
@@ -256,7 +258,7 @@ builds.
 
 | # | Task | Acceptance |
 | --- | --- | --- |
-| F1 | **Locate the frame clock**: vsync or display-link handling, and the `sls_transaction_commit_ca` path. Align E2 commits with it. This is a new hook family. | Commit-to-present latency is measured and stays at or un
+| F1 | **Partial 2026-11-08 (unit tests; no live capture).** The clock is the existing display link. E2 already submits on that pulse. `sls_transaction_commit_ca` and `SLSTransactionCommitCA` are absent. `SLSTransactionCommitUsingMethod` is unresolved and is not called. A `frame-latency` trace records `CACurrentMediaTime` against the link target after the tick. No latency budget is claimed. | The trace is the measurement. No live budget. |
 | F2 | **Synchronized resize.** Link each window to its surface. Hold the geometry ops until 0x33/0x35 binds the new size, with a bounded timeout. | During a resize spring, no captured frame shows content mismatched with
 | F3 | **Open and close animations.** Open: hold the first show, then apply transform and alpha. Close: find a hold point before backing release, which is new, and snapshot into a proxy there. | No first-frame flash on o
 

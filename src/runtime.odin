@@ -391,6 +391,17 @@ run :: proc(
 				sample_now,
 				CACurrentMediaTime(),
 			)
+			if frame_ready && moving && state.manager.scroll_frame_pacing && !fallback {
+				target := state.display_clock.pacer.target
+				motion_trace_record(
+					&state.manager.motion_trace,
+					{
+						kind = "frame-latency",
+						duration_ms = frame_present_latency_ms(CACurrentMediaTime(), target),
+						source_time = target,
+					},
+				)
+			}
 			state.manager.scroll_time = time.duration_seconds(
 				time.diff(time.Time{}, time.now()),
 			)
