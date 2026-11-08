@@ -37,6 +37,8 @@ Window :: struct {
 	min_width, min_height, max_width, max_height: f64,
 	ordered_in: Maybe(bool),
 	root_window: Maybe(bool),
+	// SLS parent window. Unmanaged children follow this window's frame delta.
+	parent: u32,
 	rules_pending, grabbed: bool,
 	rule_error: string,
 	windowed_frame: Maybe(Rect),
@@ -792,6 +794,15 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 	if m.suspended || m.gesture_active || s == nil || s.view.layout == .Float {
 		return ""
 	}
+	// Parent frames before this flush moves them. dialog_follow adds the delta
+	// to unmanaged children, including a held camera batch.
+	parent_before := make(map[u32]Rect, context.temp_allocator)
+	for _, w in m.windows {
+		if w == nil || w.parent == 0 || w.space != s.id {continue}
+		if p := m.windows[w.parent]; p != nil && p.space == s.id {
+			parent_before[p.id] = p.frame
+		}
+	}
 	live_resize := live_resize
 	if s.view.layout == .BSP && !bsp_constraints(m, &s.view) {
 		return "BSP needs more room for native window constraints"
@@ -961,6 +972,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		d.window.ax_stale = false
 	}
 	tab_conceal_sync(m, s)
+	dialog_follow(m, s, parent_before)
 	viewport_clip_sync(m, s)
 	for _, w in m.windows {
 		if w.space == s.id {
@@ -1006,6 +1018,40 @@ conceal_payload_changed :: proc(m: ^Manager) {
 tab_conceal_sync :: proc(m: ^Manager, s: ^Space) {
 	conceal_payload_changed(m)
 	for pass in ([2]bool{false, true}) {tab_conceal_pass(m, s, pass)}
+}
+
+// An unmanaged child (a sheet, modal, or popover with an SLS parent) moves by
+// the same delta as its owner. Movement-group symbols take an unproven
+// argument, so this is a frame translation. A held camera stores the child
+// in that frame's batch; a full batch falls through to a direct move.
+dialog_follow :: proc(m: ^Manager, s: ^Space, before: map[u32]Rect) {
+	for _, w in m.windows {
+		if w == nil || w.parent == 0 || w.space != s.id || managed(w) {continue}
+		p := m.windows[w.parent]
+		if p == nil || p.space != s.id {continue}
+		old, ok := before[p.id]
+		if !ok {continue}
+		dx := p.frame.x - old.x
+		dy := p.frame.y - old.y
+		if math.abs(dx) < 0.5 && math.abs(dy) < 0.5 {continue}
+		frame := w.frame
+		frame.x += dx
+		frame.y += dy
+		if m.camera_hold && m.layout_batch != nil {
+			held := [1]Deferred_Frame{{w, frame}}
+			if camera_hold_store(m, held[:]) {
+				w.frame = frame
+				w.server_placed = true
+				w.ax_stale = true
+				continue
+			}
+		}
+		if err := perform(m, {kind = .Frame, window = w.id, frame = frame, direct = true}); err != "" {
+			fmt.eprintln("shoji: dialog follow:", err)
+			continue
+		}
+		w.frame = frame
+	}
 }
 
 // Clip the parked frame to this space's viewport. Parking keeps a sliver on

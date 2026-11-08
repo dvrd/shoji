@@ -45,18 +45,15 @@ collect_window :: proc(
 	}
 	w := &result
 	frame := window_frame(element)
+	root, parent := window_is_root(state, id, element, app.element)
 	w^ = {
 		id                    = id,
 		pid                   = pid,
 		app                   = app.name,
 		title                 = attribute_text(element, "AXTitle"),
 		ordered_in            = window_ordered_in(state, id),
-		root_window           = window_is_root(
-			state,
-			id,
-			element,
-			app.element,
-		),
+		root_window           = root,
+		parent                = parent,
 		frame                 = frame.? or_else Rect{},
 		frame_valid           = frame != nil,
 		can_resize            = attribute_capability(element, "AXSize"),
@@ -152,6 +149,7 @@ reconcile_window_model :: proc(
 			w.can_resize = value.can_resize
 		}
 		w.root_window = value.root_window
+		w.parent = value.parent
 		w.hidden, w.minimized, w.fullscreen =
 			value.hidden, value.minimized, value.fullscreen
 		if (value.frame_valid.? or_else true) && valid_frame(value.frame) {

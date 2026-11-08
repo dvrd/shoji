@@ -608,7 +608,7 @@ window_is_root :: proc(
 	state: ^State,
 	id: u32,
 	element, application: Ref,
-) -> bool {
+) -> (root: bool, parent: u32) {
 	id := id
 	number := CFNumberCreate(nil, 3, &id); defer CFRelease(number)
 	array := CFArrayCreate(nil, &number, 1, nil); defer CFRelease(array)
@@ -625,14 +625,12 @@ window_is_root :: proc(
 			}
 		}
 	}
-	if parent_id == 0 {
-		return true
-	}
-	parent := attribute(element, "AXParent")
-	if parent == nil {
-		return false
-	}; defer CFRelease(parent)
-	return CFEqual(parent, application)
+	parent = parent_id
+	if parent_id == 0 {return true, 0}
+	ax_parent := attribute(element, "AXParent")
+	if ax_parent == nil {return false, parent_id}
+	defer CFRelease(ax_parent)
+	return CFEqual(ax_parent, application), parent_id
 }
 native_frame_read :: proc(
 	element: Ref,
