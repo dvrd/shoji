@@ -32,11 +32,31 @@ Gate_Command :: enum u32 {
 	// for a single-threaded owner whose own commit is the trigger). Release
 	// before a claim still cancels with placement status 8.
 	SpaceApply = 15,
+	// Protocol features of this payload: data0 GATE_FEATURE_* bits, data1 the
+	// layout item limit. A payload older than this command answers status 1.
+	Capabilities = 16,
+	// LayoutBegin + LayoutAdd* + LayoutArm in one message: arg0 marker window,
+	// arg1 timing budget in us; the items follow the body (GATE_ITEMS_OFF).
+	LayoutSubmit = 17,
 }
+
+GATE_FEATURE_LAYOUT_SUBMIT :: u64(1)
+// Item limit of payloads that predate Capabilities.
+GATE_LEGACY_LAYOUT_LIMIT :: 8
 
 GATE_HEADER_SIZE :: 24
 GATE_BODY_SIZE :: 32
 GATE_MSG_SIZE :: GATE_HEADER_SIZE + GATE_BODY_SIZE
+
+// LayoutSubmit appends u32 count, u32 reserved, then count packed items
+// (u32 wid, i32 x, i32 y). Its msgh_size is exactly GATE_ITEMS_OFF + 12*count.
+GATE_ITEMS_HEADER_OFF :: GATE_MSG_SIZE
+GATE_ITEMS_OFF :: GATE_MSG_SIZE + 8
+GATE_ITEM_SIZE :: 12
+GATE_SUBMIT_MAX_SIZE :: GATE_ITEMS_OFF + LAYOUT_LIMIT * GATE_ITEM_SIZE
+// Receive buffers hold the largest request plus the audit trailer.
+GATE_RECEIVE_BUFFER_SIZE :: 512
+#assert(GATE_SUBMIT_MAX_SIZE + GATE_AUDIT_TRAILER_SIZE <= GATE_RECEIVE_BUFFER_SIZE)
 
 // Body field offsets (from message start)
 GATE_OFF_MAGIC :: 24
@@ -207,12 +227,19 @@ Gate_Request :: struct {
 	arg0, arg1:              u64,
 }
 
-gate_pack_request :: proc "contextless" (buf: []u8, remote, reply: u32, command: Gate_Command, arg0, arg1: u64) -> (n: int, ok: bool) {
-	if len(buf) < GATE_MSG_SIZE || remote == 0 || reply == 0 {return}
-	for i in 0 ..< GATE_MSG_SIZE {buf[i] = 0}
+gate_pack_request :: proc "contextless" (
+	buf: []u8,
+	remote, reply: u32,
+	command: Gate_Command,
+	arg0, arg1: u64,
+	items: []Layout_Item = nil,
+) -> (n: int, ok: bool) {
+	size := len(items) == 0 ? GATE_MSG_SIZE : GATE_ITEMS_OFF + len(items) * GATE_ITEM_SIZE
+	if len(items) > LAYOUT_LIMIT || len(buf) < size || remote == 0 || reply == 0 {return}
+	for i in 0 ..< size {buf[i] = 0}
 	bits := u32(MACH_MSG_TYPE_COPY_SEND) | u32(MACH_MSG_TYPE_MAKE_SEND_ONCE) << 8
 	if !gate_store_u32(buf, 0, bits) {return}
-	if !gate_store_u32(buf, 4, u32(GATE_MSG_SIZE)) {return}
+	if !gate_store_u32(buf, 4, u32(size)) {return}
 	if !gate_store_u32(buf, 8, remote) {return}
 	if !gate_store_u32(buf, 12, reply) {return}
 	if !gate_store_u32(buf, 20, 1) {return}
@@ -221,7 +248,34 @@ gate_pack_request :: proc "contextless" (buf: []u8, remote, reply: u32, command:
 	if !gate_store_u32(buf, GATE_OFF_COMMAND, u32(command)) {return}
 	if !gate_store_u64(buf, GATE_OFF_ARG0, arg0) {return}
 	if !gate_store_u64(buf, GATE_OFF_ARG1, arg1) {return}
-	return GATE_MSG_SIZE, true
+	if len(items) == 0 {return GATE_MSG_SIZE, true}
+	if !gate_store_u32(buf, GATE_ITEMS_HEADER_OFF, u32(len(items))) {return}
+	for item, index in items {
+		off := GATE_ITEMS_OFF + index * GATE_ITEM_SIZE
+		if !gate_store_u32(buf, off, item.wid) {return}
+		if !gate_store_i32(buf, off + 4, item.x) {return}
+		if !gate_store_i32(buf, off + 8, item.y) {return}
+	}
+	return size, true
+}
+
+// Items of a received LayoutSubmit. The count must match msgh_size exactly,
+// so a truncated or padded message is rejected rather than read past.
+gate_unpack_items :: proc "contextless" (buf: []u8) -> (items: [LAYOUT_LIMIT]Layout_Item, count: int, ok: bool) {
+	size, size_ok := gate_load_u32(buf, 4)
+	declared, declared_ok := gate_load_u32(buf, GATE_ITEMS_HEADER_OFF)
+	if !size_ok || !declared_ok || declared == 0 || declared > LAYOUT_LIMIT {return}
+	if u64(size) != u64(GATE_ITEMS_OFF) + u64(declared) * GATE_ITEM_SIZE || int(size) > len(buf) {return}
+	count = int(declared)
+	for index in 0 ..< count {
+		off := GATE_ITEMS_OFF + index * GATE_ITEM_SIZE
+		wid, wid_ok := gate_load_u32(buf, off)
+		x, x_ok := gate_load_i32(buf, off + 4)
+		y, y_ok := gate_load_i32(buf, off + 8)
+		if !wid_ok || !x_ok || !y_ok {return}
+		items[index] = {wid, x, y}
+	}
+	return items, count, true
 }
 
 gate_unpack_request :: proc "contextless" (buf: []u8) -> (request: Gate_Request, ok: bool) {
@@ -320,7 +374,7 @@ gate_should_reclaim :: proc "contextless" (owner_pid, owner_pidversion, hello_pi
 // pidversion does not inherit it.
 gate_decide :: proc "contextless" (owner_pid, owner_pidversion: ^u32, audit_ok: bool, pid, pidversion, version, command: u32) -> i32 {
 	if !audit_ok || pid == 0 {return 4}
-	if version != GATE_VERSION || command < 1 || command > u32(Gate_Command.SpaceApply) {return 1}
+	if version != GATE_VERSION || command < 1 || command > u32(Gate_Command.LayoutSubmit) {return 1}
 	if command == u32(Gate_Command.Hello) {
 		if owner_pid^ == 0 {
 			owner_pid^ = pid

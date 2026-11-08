@@ -565,7 +565,7 @@ gate_space_apply_is_owner_only_and_bounds_the_command_set :: proc(t: ^testing.T)
 	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.Hello)), i32(0))
 	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.SpaceApply)), i32(0))
 	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 11, 3, gate.GATE_VERSION, u32(gate.Gate_Command.SpaceApply)), i32(4))
-	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.SpaceApply) + 1), i32(1))
+	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.LayoutSubmit) + 1), i32(1))
 }
 
 @(test)
@@ -643,4 +643,43 @@ dispatch_redirect_encoder_reproduces_skylight_instructions :: proc(t: ^testing.T
 	testing.expect(t, !far_ok)
 	_, register_ok := gate.encode_adrp_add(0x1000, 0x2000, 31)
 	testing.expect(t, !register_ok)
+}
+
+@(test)
+gate_layout_submit_round_trips_items_and_rejects_bad_sizes :: proc(t: ^testing.T) {
+	buffer: [gate.GATE_RECEIVE_BUFFER_SIZE]u8
+	items := []gate.Layout_Item{{10, -1200, 25}, {11, 0, 0}, {12, 3000, 900}}
+	n, ok := gate.gate_pack_request(buffer[:], 1, 2, .LayoutSubmit, 99, 8000, items)
+	testing.expect(t, ok)
+	testing.expect_value(t, n, gate.GATE_ITEMS_OFF + 3 * gate.GATE_ITEM_SIZE)
+	request, request_ok := gate.gate_unpack_request(buffer[:])
+	testing.expect(t, request_ok)
+	testing.expect_value(t, request.command, u32(gate.Gate_Command.LayoutSubmit))
+	testing.expect_value(t, request.arg0, u64(99))
+	decoded, count, decoded_ok := gate.gate_unpack_items(buffer[:])
+	testing.expect(t, decoded_ok)
+	testing.expect_value(t, count, 3)
+	for item, index in items {testing.expect_value(t, decoded[index], item)}
+	// A count that disagrees with msgh_size is refused, never read past.
+	gate.gate_store_u32(buffer[:], gate.GATE_ITEMS_HEADER_OFF, 4)
+	_, _, mismatch_ok := gate.gate_unpack_items(buffer[:])
+	testing.expect(t, !mismatch_ok)
+	plain, plain_ok := gate.gate_pack_request(buffer[:], 1, 2, .Status, 0, 0)
+	testing.expect(t, plain_ok)
+	testing.expect_value(t, plain, gate.GATE_MSG_SIZE)
+	_, _, empty_ok := gate.gate_unpack_items(buffer[:])
+	testing.expect(t, !empty_ok)
+	too_many: [gate.LAYOUT_LIMIT + 1]gate.Layout_Item
+	_, over_ok := gate.gate_pack_request(buffer[:], 1, 2, .LayoutSubmit, 99, 8000, too_many[:])
+	testing.expect(t, !over_ok)
+}
+
+@(test)
+gate_accepts_capabilities_and_submit_from_the_owner :: proc(t: ^testing.T) {
+	pid, version: u32 = 10, 3
+	for command in ([2]gate.Gate_Command{.Capabilities, .LayoutSubmit}) {
+		testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(command)), i32(0))
+		testing.expect_value(t, gate.gate_decide(&pid, &version, true, 11, 3, gate.GATE_VERSION, u32(command)), i32(4))
+	}
+	testing.expect_value(t, gate.gate_decide(&pid, &version, true, 10, 3, gate.GATE_VERSION, u32(gate.Gate_Command.LayoutSubmit) + 1), i32(1))
 }

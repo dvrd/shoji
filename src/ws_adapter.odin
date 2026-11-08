@@ -124,7 +124,12 @@ Ws_Adapter_State :: enum {
 }
 
 // Transport seam: the real one is Mach, tests inject replies.
-Ws_Exchange :: #type proc(user: rawptr, command: gate.Gate_Command, arg0, arg1: u64) -> (gate.Gate_Reply, bool)
+Ws_Exchange :: #type proc(
+	user: rawptr,
+	command: gate.Gate_Command,
+	arg0, arg1: u64,
+	items: []gate.Layout_Item,
+) -> (gate.Gate_Reply, bool)
 
 Ws_Adapter :: struct {
 	state:    Ws_Adapter_State,
@@ -135,6 +140,10 @@ Ws_Adapter :: struct {
 	mach:     Ws_Mach,
 	marker:   Ws_Marker,
 	focus:    Ws_Focus_Receipt,
+	// From Capabilities after the claim; zero means a payload that predates
+	// it (one LayoutAdd per item, GATE_LEGACY_LAYOUT_LIMIT items).
+	features:     u64,
+	layout_limit: int,
 }
 
 // C2: AXRaise is handled by the owning app after the call returns; on the
@@ -216,9 +225,14 @@ ws_adapter_claim :: proc(a: ^Ws_Adapter) {
 
 // Validate identity, version and command echo; a mismatched reply means the
 // peer is not the gate we built against and is treated as transport failure.
-ws_adapter_raw :: proc(a: ^Ws_Adapter, command: gate.Gate_Command, arg0, arg1: u64) -> (reply: gate.Gate_Reply, ok: bool) {
+ws_adapter_raw :: proc(
+	a: ^Ws_Adapter,
+	command: gate.Gate_Command,
+	arg0, arg1: u64,
+	items: []gate.Layout_Item = nil,
+) -> (reply: gate.Gate_Reply, ok: bool) {
 	if a.exchange == nil {return}
-	reply, ok = a.exchange(a.user, command, arg0, arg1)
+	reply, ok = a.exchange(a.user, command, arg0, arg1, items)
 	if !ok {return}
 	if reply.magic != gate.GATE_REPLY_MAGIC || reply.version != gate.GATE_VERSION || reply.command != u32(command) {
 		return {}, false
@@ -228,9 +242,14 @@ ws_adapter_raw :: proc(a: ^Ws_Adapter, command: gate.Gate_Command, arg0, arg1: u
 
 // One gate call while serving. Transport failure or "not owner" latches
 // .Lost; every other status is returned to the typed operation.
-ws_adapter_call :: proc(a: ^Ws_Adapter, command: gate.Gate_Command, arg0, arg1: u64) -> (reply: gate.Gate_Reply, ok: bool) {
+ws_adapter_call :: proc(
+	a: ^Ws_Adapter,
+	command: gate.Gate_Command,
+	arg0, arg1: u64,
+	items: []gate.Layout_Item = nil,
+) -> (reply: gate.Gate_Reply, ok: bool) {
 	if a.state != .Serving {return}
-	reply, ok = ws_adapter_raw(a, command, arg0, arg1)
+	reply, ok = ws_adapter_raw(a, command, arg0, arg1, items)
 	if !ok || reply.status == WS_STATUS_NOT_OWNER {
 		a.state = .Lost
 		if ok {a.status = reply.status}
@@ -315,9 +334,19 @@ Ws_Layout_Move :: struct {
 // ordering. Any rejected step leaves the plan unsealed (never armed) and the
 // caller applies the moves itself.
 ws_layout_stage :: proc(a: ^Ws_Adapter, moves: []Ws_Layout_Move, marker: u32, budget_us: u64) -> (generation: u32, handled: bool) {
-	if a.state != .Serving || len(moves) == 0 || len(moves) > gate.LAYOUT_LIMIT || marker == 0 || budget_us == 0 || budget_us > 8_000 {return}
+	if a.state != .Serving || len(moves) == 0 || len(moves) > ws_layout_limit(a) ||
+	   marker == 0 || budget_us == 0 || budget_us > 8_000 {
+		return
+	}
 	for move in moves {
 		if move.wid == marker || !gate.placement_coordinates_valid(u64(move.wid), i64(move.x), i64(move.y)) {return}
+	}
+	if a.features & gate.GATE_FEATURE_LAYOUT_SUBMIT != 0 {
+		items: [gate.LAYOUT_LIMIT]gate.Layout_Item
+		for move, index in moves {items[index] = {move.wid, move.x, move.y}}
+		reply, ok := ws_adapter_call(a, .LayoutSubmit, u64(marker), budget_us, items[:len(moves)])
+		if !ok || reply.status != WS_STATUS_OK {return}
+		return u32(reply.data1), true
 	}
 	reply, ok := ws_adapter_call(a, .LayoutBegin, 0, 0)
 	if !ok || reply.status != WS_STATUS_OK {return}
@@ -392,16 +421,21 @@ ws_receipt :: proc(a: ^Ws_Adapter, generation: u32) -> (receipt: Ws_Receipt, han
 // ------------------------------------------------------------------------
 
 Ws_Mach_Buffer :: struct #align (16) {
-	bytes: [128]u8,
+	bytes: [gate.GATE_RECEIVE_BUFFER_SIZE]u8,
 }
 
-ws_mach_exchange :: proc(user: rawptr, command: gate.Gate_Command, arg0, arg1: u64) -> (reply: gate.Gate_Reply, ok: bool) {
+ws_mach_exchange :: proc(
+	user: rawptr,
+	command: gate.Gate_Command,
+	arg0, arg1: u64,
+	items: []gate.Layout_Item,
+) -> (reply: gate.Gate_Reply, ok: bool) {
 	m := (^Ws_Mach)(user)
 	if m == nil || m.service == 0 {return}
 	port_type: u32
 	if gate.gate_mach_port_type(m.task, m.service, &port_type) != 0 || port_type & gate.MACH_PORT_TYPE_SEND == 0 {return}
 	msg: Ws_Mach_Buffer
-	n, packed := gate.gate_pack_request(msg.bytes[:], m.service, 1, command, arg0, arg1)
+	n, packed := gate.gate_pack_request(msg.bytes[:], m.service, 1, command, arg0, arg1, items)
 	if !packed {return}
 	reply_port: u32
 	if gate.gate_mach_port_allocate(m.task, gate.MACH_PORT_RIGHT_RECEIVE, &reply_port) != 0 {return}
@@ -511,6 +545,24 @@ ws_adapter_connect :: proc(a: ^Ws_Adapter, task, service: u32) {
 	a.exchange = ws_mach_exchange
 	a.user = &a.mach
 	ws_adapter_claim(a)
+	ws_adapter_capabilities(a)
+}
+
+// Ask a serving gate what it supports. A payload that predates the command
+// answers status 1; that, or any failure, keeps the legacy protocol. It does
+// not mark the adapter Lost or record a status: legacy is a normal state.
+ws_adapter_capabilities :: proc(a: ^Ws_Adapter) {
+	a.features, a.layout_limit = 0, 0
+	if a.state != .Serving {return}
+	reply, ok := ws_adapter_raw(a, .Capabilities, 0, 0)
+	if !ok || reply.status != WS_STATUS_OK {return}
+	a.features = reply.data0
+	a.layout_limit = int(min(reply.data1, u64(gate.LAYOUT_LIMIT)))
+}
+
+// Items one staged layout may hold with this payload.
+ws_layout_limit :: proc(a: ^Ws_Adapter) -> int {
+	return a.layout_limit > 0 ? a.layout_limit : gate.GATE_LEGACY_LAYOUT_LIMIT
 }
 
 ws_adapter_close :: proc(a: ^Ws_Adapter) {
@@ -533,7 +585,8 @@ ws_adapter_describe :: proc(a: ^Ws_Adapter) -> string {
 	case .Refused:
 		return fmt.tprintf("WindowServer adapter refused (status %d, owner pid %d); using native paths", a.status, a.owner)
 	case .Serving:
-		return "WindowServer adapter serving"
+		protocol := a.features & gate.GATE_FEATURE_LAYOUT_SUBMIT != 0 ? "layout submit" : "legacy layout"
+		return fmt.tprintf("WindowServer adapter serving (%s, %d items)", protocol, ws_layout_limit(a))
 	case .Lost:
 		return fmt.tprintf("WindowServer adapter lost (status %d); using native paths", a.status)
 	}
@@ -603,7 +656,7 @@ ws_marker :: proc(a: ^Ws_Adapter, connection: i32) -> u32 {
 ws_layout_batch :: proc(user: rawptr, moves: []Layout_Move) -> bool {
 	state := (^State)(user)
 	a := &state.ws
-	if a.state != .Serving || len(moves) == 0 || len(moves) > LAYOUT_BATCH_LIMIT {return false}
+	if a.state != .Serving || len(moves) == 0 || len(moves) > ws_layout_limit(a) {return false}
 	for move in moves {
 		if _, animating := state.animations[move.window]; animating {return false}
 	}
@@ -613,8 +666,17 @@ ws_layout_batch :: proc(user: rawptr, moves: []Layout_Move) -> bool {
 	for move, i in moves {
 		items[i] = {move.window, i32(math.round(move.x)), i32(math.round(move.y))}
 	}
+	started := time.tick_now()
 	applied := ws_layout_run(a, items, marker, state.connection)
-	motion_trace_record(&state.manager.motion_trace, {kind = applied ? "ws-layout-batch-applied" : "ws-layout-batch-fallback", window = moves[0].window})
+	motion_trace_record(
+		&state.manager.motion_trace,
+		{
+			kind = applied ? "ws-layout-batch-applied" : "ws-layout-batch-fallback",
+			window = moves[0].window,
+			value = f64(len(moves)),
+			duration_ms = f64(time.tick_since(started)) / 1e6,
+		},
+	)
 	return applied
 }
 
