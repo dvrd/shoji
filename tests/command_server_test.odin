@@ -177,3 +177,38 @@ command_server_rejects_oversized_length_and_limits_pending_clients :: proc(t: ^t
 	}
 	testing.expect_value(t, len(server.clients), mac.MAX_COMMAND_CLIENTS)
 }
+
+// A reply larger than the socket buffer goes out over several ticks. The
+// motion dump hit this: the client got the first 16 KB, then the deadline.
+@(test)
+command_server_sends_a_reply_larger_than_the_socket_buffer :: proc(t: ^testing.T) {
+	server: mac.Command_Server;m: mac.Manager;mac.manager_init(&m)
+	defer mac.manager_destroy(&m);defer mac.command_server_stop(&server)
+	testing.expect(t, !mac.execute(&m, {"debug", "motion", "start"}).failed)
+	for _ in 0 ..< 400 {
+		mac.motion_trace_record(&m.motion_trace, {kind = "loop"})
+	}
+	pair: [2]i32
+	if !testing.expect_value(t, socketpair(1, 1, 0, &pair), i32(0)) {return}
+	defer mac.close(pair[0])
+	testing.expect(t, mac.command_accept(&server, pair[1]))
+	data, _ := ipc.encode_message([]string{"debug", "motion", "dump"});defer delete(data)
+	testing.expect(t, mac.write_all(pair[0], data))
+	mac.shutdown(pair[0], 1)
+	reply: [dynamic]u8;defer delete(reply)
+	buffer: [8192]u8
+	closed := false
+	for _ in 0 ..< 200 {
+		mac.command_server_tick(&server, &m)
+		for {
+			n := mac.recv(pair[0], &buffer[0], len(buffer), 0x80)
+			if n == 0 {closed = true;break}
+			if n < 0 {break}
+			append(&reply, ..buffer[:n])
+		}
+		if closed {break}
+	}
+	testing.expect(t, closed)
+	testing.expect(t, len(reply) > 64 * 1024)
+	testing.expect_value(t, reply[len(reply) - 1], u8('\n'))
+}
