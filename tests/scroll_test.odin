@@ -1,9 +1,25 @@
 package tests
 
 import e "../src"
+import dock "../src/dock"
 import "core:encoding/json"
+import "core:fmt"
+import "core:math"
 import "core:testing"
 import layout "../src/layout"
+
+@(thread_local) scale_seen: [8]dock.Present_Request
+@(thread_local) scale_last: dock.Present_Request
+@(thread_local) scale_count: int
+
+scale_record :: proc(_: rawptr, req: dock.Present_Request) -> string {
+	if scale_count < len(scale_seen) {
+		scale_seen[scale_count] = req
+	}
+	scale_last = req
+	scale_count += 1
+	return ""
+}
 
 @(test)
 scroll_close_fills_the_vacated_viewport_and_restores_widths_on_open :: proc(t: ^testing.T) {
@@ -54,6 +70,21 @@ scroll_resize_shuffle_and_focus_use_animated_frame_actions :: proc(
 	)
 	testing.expect_value(t, m.windows[1].frame.w, f64(600))
 	testing.expect_value(t, m.windows[2].frame.w, f64(500))
+	// left:+ moves that edge inward. left:- grows. right:+ is the grow key.
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "left:100:0"}).failed)
+	testing.expect_value(t, m.windows[1].frame.w, f64(500))
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "left:-100:0"}).failed)
+	testing.expect_value(t, m.windows[1].frame.w, f64(600))
+	// Keyboard scroll resize stays on the geometry spring. A live write would
+	// resize the app on every key repeat.
+	animated := 0
+	for a in r.actions {
+		if a.kind == .Frame {
+			animated += 1
+			testing.expect(t, !a.live_resize)
+		}
+	}
+	testing.expect(t, animated >= 1)
 	testing.expect(t, !e.execute(&m, {"window", "1", "--swap", "east"}).failed)
 	testing.expect_value(t, layout.first(m.spaces[0].view.root).windows[0], u32(2))
 	frames := 0
@@ -63,6 +94,192 @@ scroll_resize_shuffle_and_focus_use_animated_frame_actions :: proc(
 		}
 	}
 	testing.expect(t, frames >= 2)
+}
+
+@(test)
+scroll_keyboard_resize_keeps_the_geometry_spring :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	m.scroll_animate = true
+	m.animation_duration = 0.2
+	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:100:0"}).failed)
+	testing.expect(t, m.spaces[0].view.scroll.geometry_active)
+	testing.expect_value(t, m.windows[1].frame.w, f64(500))
+	testing.expect_value(t, layout.find(m.spaces[0].view.root, 1).column_width, f64(600))
+	for a in r.actions {
+		if a.kind == .Frame {
+			testing.expect(t, !a.live_resize)
+		}
+	}
+}
+
+@(test)
+scroll_keyboard_resize_chase_starts_at_omega_and_does_not_overshoot :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	m.scroll_animate = true
+	m.animation_duration = 0.2
+	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	w := m.windows[1]
+	w.scroll_frame.velocity.w = 5000
+	w.scroll_frame.initial_velocity.w = 5000
+	m.scroll_time = 10
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:100:0"}).failed)
+	f := w.scroll_frame
+	delta := f.target.w - f.from.w
+	testing.expect_value(t, f.from.w, f64(500))
+	testing.expect_value(t, f.target.w, f64(600))
+	testing.expect(t, math.abs(f.initial_velocity.w - e.SCROLL_SPRING_OMEGA * delta) < 0.001)
+	testing.expect(t, math.abs(f.initial_velocity.w - 5000) > 1)
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.05), "")
+	expect := f.target.w + (f.from.w - f.target.w) * math.exp(-e.SCROLL_SPRING_OMEGA * 0.05)
+	testing.expect(t, w.frame.w > f.from.w && w.frame.w < f.target.w)
+	testing.expect(t, math.abs(w.frame.w - expect) < 0.05)
+}
+
+@(test)
+scroll_keyboard_resize_repeat_configures_once_per_target :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	scale_count = 0
+	m.scale_present = scale_record
+	m.scroll_animate = true
+	m.animation_duration = 0.2
+	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	resize(&r.actions, 0)
+	m.scroll_time = 10
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:100:0"}).failed)
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.02), "")
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.04), "")
+	m.scroll_time = 10.04
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:100:0"}).failed)
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.06), "")
+	widths: [dynamic]f64
+	defer delete(widths)
+	for a in r.actions {
+		if a.kind == .Frame && a.window == 1 {
+			append(&widths, a.frame.w)
+		}
+	}
+	testing.expect_value(t, len(widths), 2)
+	if len(widths) == 2 {
+		testing.expect_value(t, widths[0], f64(600))
+		testing.expect_value(t, widths[1], f64(700))
+	}
+}
+
+@(test)
+scroll_keyboard_resize_holds_hidden_tabs_until_settle :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	scale_count = 0
+	m.scale_present = scale_record
+	m.scroll_animate = true
+	m.animation_duration = 0.2
+	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--stack", "2"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--column-display", "tabbed"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	n := layout.find(m.spaces[0].view.root, 1)
+	testing.expect(t, n != nil && n.column_tabbed && n.count == 2)
+	active := n.order[0]
+	hidden := active == 1 ? u32(2) : u32(1)
+	resize(&r.actions, 0)
+	m.scroll_time = 10
+	testing.expect(t, !e.execute(&m, {"window", fmt.tprintf("%d", active), "--resize", "right:100:0"}).failed)
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.05), "")
+	for a in r.actions {
+		if a.kind == .Frame && a.window == hidden {
+			testing.expect(t, false)
+		}
+	}
+	resize(&r.actions, 0)
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.5), "")
+	writes := 0
+	for a in r.actions {
+		if a.kind == .Frame && a.window == hidden {
+			writes += 1
+		}
+	}
+	testing.expect_value(t, writes, 1)
+	testing.expect(t, !m.windows[hidden].resize_scaled)
+}
+
+@(test)
+scroll_keyboard_resize_scales_until_one_configure :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	scale_count = 0
+	m.scale_present = scale_record
+	m.scroll_animate = true
+	m.animation_duration = 0.2
+	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	resize(&r.actions, 0)
+	scale_count = 0
+	m.scroll_time = 10
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:100:0"}).failed)
+	w := m.windows[1]
+	testing.expect(t, w.resize_scaled)
+	// Niri order: the app gets its final size at once, then only the
+	// presentation scale moves.
+	configures := 0
+	for a in r.actions {
+		if a.kind == .Frame && a.window == 1 {
+			configures += 1
+			testing.expect(t, !a.live_resize)
+			testing.expect_value(t, a.frame.w, f64(600))
+		}
+	}
+	testing.expect_value(t, configures, 1)
+	testing.expect_value(t, w.resize_request.w, f64(600))
+	testing.expect(t, scale_count >= 1)
+	resize(&r.actions, 0)
+	scale_count = 0
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.05), "")
+	testing.expect(t, scale_count >= 1)
+	mid := scale_last
+	testing.expect_value(t, mid.window, u32(1))
+	testing.expect_value(t, mid.mask, dock.PRESENT_TRANSFORM)
+	testing.expect_value(t, mid.b, f64(0))
+	testing.expect_value(t, mid.c, f64(0))
+	testing.expect(t, w.frame.w > 500 && w.frame.w < 600)
+	// The 600 buffer shown at the smaller animated width: a > 1, closing on 1.
+	testing.expect(t, math.abs(mid.a - 600 / w.frame.w) < 0.001)
+	testing.expect(t, math.abs(mid.d - w.resize_basis.h / w.frame.h) < 0.001)
+	testing.expect(t, math.abs(mid.tx - (-w.frame.x * mid.a)) < 0.001)
+	testing.expect(t, math.abs(mid.ty - (-w.frame.y * mid.d)) < 0.001)
+	for a in r.actions {
+		if a.kind == .Frame && a.window == 1 {
+			testing.expect(t, false)
+		}
+	}
+	before := scale_count
+	resize(&r.actions, 0)
+	testing.expect_value(t, e.scroll_motion_tick(&m, 10.5), "")
+	testing.expect(t, !m.spaces[0].view.scroll.geometry_active)
+	testing.expect(t, !w.resize_scaled)
+	testing.expect_value(t, w.frame.w, f64(600))
+	frames := 0
+	for a in r.actions {
+		if a.kind == .Frame && a.window == 1 {
+			frames += 1
+			testing.expect(t, !a.live_resize)
+			testing.expect_value(t, a.frame.w, f64(600))
+		}
+	}
+	testing.expect_value(t, frames, 1)
+	testing.expect(t, scale_count > before)
+	done := scale_last
+	testing.expect_value(t, done.mask, dock.PRESENT_TRANSFORM)
+	testing.expect_value(t, done.a, f64(1))
+	testing.expect_value(t, done.d, f64(1))
+	testing.expect_value(t, done.tx, -w.frame.x)
+	testing.expect_value(t, done.ty, -w.frame.y)
 }
 
 @(test)

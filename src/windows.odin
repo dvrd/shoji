@@ -732,7 +732,13 @@ resize_window :: proc(m: ^Manager, w: ^Window, handle: string, dx, dy: f64) -> s
 		if err := layout.scroll_set_width(&s.view, w.id, fmt.tprintf("rel:%g", delta)); err != "" {
 			return err
 		}
-		return flush(m, s)
+		// One configure when the spring settles. Until then the existing
+		// buffer is scaled, so the app does not relayout on every frame.
+		m.resize_chase = true
+		m.resize_scale = m.scale_present != nil
+		err := flush(m, s)
+		m.resize_chase = false
+		return err
 	}
 	if handle == "abs" {
 		s := space_by_id(m, w.space)

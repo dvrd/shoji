@@ -932,6 +932,10 @@ scroll_world_target :: proc(v: ^layout.View, n: ^layout.Node, w: ^Window) -> Rec
 }
 scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 	v := &s.view
+	// A keyboard step replaces leftover speed. Keeping it and restarting the
+	// clock walks through the new target, which is the bounce on a held key.
+	chase := m.resize_chase
+	m.resize_chase = false
 	changed := false
 	for n := layout.first(v.root); n != nil; n = layout.next(n) {
 		for i in 0 ..< n.count {
@@ -989,6 +993,15 @@ scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 				}
 				f.from, f.initial_velocity, f.target = f.current, f.velocity, target
 				f.progress = 0
+				if chase {
+					f.initial_velocity = {
+						SCROLL_SPRING_OMEGA * (f.target.x - f.from.x),
+						SCROLL_SPRING_OMEGA * (f.target.y - f.from.y),
+						SCROLL_SPRING_OMEGA * (f.target.w - f.from.w),
+						SCROLL_SPRING_OMEGA * (f.target.h - f.from.h),
+					}
+					f.velocity = f.initial_velocity
+				}
 				if f.snap_width {
 					f.current.w, f.from.w = target.w, target.w
 					f.velocity.w, f.initial_velocity.w = 0, 0

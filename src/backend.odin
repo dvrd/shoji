@@ -377,6 +377,9 @@ state_init :: proc(state: ^State) {
 	state.dirty = true
 	manager_init(&state.manager, perform_native, state)
 	state.manager.present = viewport_present
+	state.manager.scale_present = resize_scale_present
+	state.manager.window_bounds = resize_window_bounds
+	state.manager.resize_configure = resize_configure
 	state.manager.resize_fade = true
 	state.manager.scroll_animate = true
 	state.manager.scroll_frame_pacing = true

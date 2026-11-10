@@ -182,6 +182,25 @@ scroll_ring_tracks_observed_window_during_motion :: proc(t: ^testing.T) {
 }
 
 @(test)
+scroll_ring_follows_the_model_frame_during_geometry :: proc(t: ^testing.T) {
+	state: mac.State; actions: Recorder; r: Animation_Recorder
+	fixture(&state.manager, &actions)
+	defer mac.manager_destroy(&state.manager); defer delete(actions.actions)
+	state.event_user = &r
+	state.feedback_backend = {create = feedback_create, destroy = feedback_destroy, update = feedback_update}
+	state.focus_frame_probe = scroll_ring_frame_probe
+	defer mac.feedback_stop(&state)
+	testing.expect(t, !mac.execute(&state.manager, {"space", "--layout", "scroll"}).failed)
+	w := state.manager.windows[state.manager.focused]
+	w.frame.x = 400
+	state.manager.spaces[0].view.scroll.geometry_active = true
+	mac.focus_ring_tick(&state)
+	testing.expect_value(t, state.focus_ring.bars[0].plan.frame.x, f64(410))
+	testing.expect_value(t, state.focus_scroll_pending, u32(0))
+	testing.expect_value(t, w.frame.x, f64(400))
+}
+
+@(test)
 floating_ring_tracks_native_moves_without_refreshing_the_desktop :: proc(
 	t: ^testing.T,
 ) {

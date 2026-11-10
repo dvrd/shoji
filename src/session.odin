@@ -397,12 +397,23 @@ run :: proc(config_path: string, payload_path: string = "", validation_pid: i32 
 	scratch: mem.Dynamic_Arena
 	mem.dynamic_arena_init(&scratch)
 	defer mem.dynamic_arena_destroy(&scratch)
+	loop_body_began: time.Tick
 	for sync.atomic_load(&stop_requested) == 0 {
 		defer scratch_reset(&scratch)
 		pool := pool_push(); defer pool_pop(pool)
 		{
 			context.temp_allocator = mem.dynamic_arena_allocator(&scratch)
+			// A stalled iteration is either its own work or the run loop
+			// (Accessibility callbacks, timers). Record only the slow ones.
+			wait_began := time.tick_now()
+			if body := time.duration_milliseconds(time.tick_diff(loop_body_began, wait_began)); body > 25 && loop_body_began != {} {
+				motion_trace_record(&state.manager.motion_trace, {kind = "stall-body", duration_ms = body})
+			}
 			CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.016, true)
+			if wait := time.duration_milliseconds(time.tick_since(wait_began)); wait > 25 {
+				motion_trace_record(&state.manager.motion_trace, {kind = "stall-runloop", duration_ms = wait})
+			}
+			loop_body_began = time.tick_now()
 			action_now := time.now()
 			state.manager.scroll_time = time.duration_seconds(time.diff(time.Time{}, action_now))
 			motion_trace_record(&state.manager.motion_trace, {kind = "loop"})
@@ -470,6 +481,7 @@ run :: proc(config_path: string, payload_path: string = "", validation_pid: i32 
 			}
 			state.manager.scroll_time = time.duration_seconds(time.diff(time.Time{}, time.now()))
 			frame_size_feedback_tick(&state, time.now())
+			resize_transform_tick(&state)
 			screen_capture_guide_tick()
 			opening_tick(&state)
 			feedback_tick(&state)

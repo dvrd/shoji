@@ -337,7 +337,10 @@ focus_ring_tick :: proc(state: ^State) {
 	   s != nil && s.view.layout == .Scroll && managed(w) && w.id not_in state.animations {
 		moving :=
 			s.view.scroll.dragging || s.view.scroll.motion.active || s.view.scroll.geometry_active
-		if moving {
+		// A geometry resize draws the window at the model frame (the scaled
+		// buffer). The Accessibility bounds stay at the old size and would
+		// leave the ring behind that window.
+		if moving && !(s.view.scroll.geometry_active && !s.view.scroll.dragging) {
 			state.focus_scroll_pending = w.id
 			state.focus_scroll_deadline = CACurrentMediaTime() + 1
 		}
@@ -348,7 +351,10 @@ focus_ring_tick :: proc(state: ^State) {
 			tab_indicator_stop(state)
 			return
 		}
-		if moving || state.focus_scroll_pending == w.id {
+		if s.view.scroll.geometry_active && !s.view.scroll.dragging {
+			frame = w.frame
+			state.focus_scroll_pending = 0
+		} else if moving || state.focus_scroll_pending == w.id {
 			if state.manager.camera_hold && state.feedback_batch_origin {
 				frame = w.frame
 			} else {
@@ -1156,6 +1162,7 @@ foreign surface_sls {
 	SLSSetWindowLevel :: proc(cid: i32, window: u32, level: i32) -> i32 ---
 	SLSSetWindowSubLevel :: proc(cid: i32, window: u32, level: i32) -> i32 ---
 	SLSSetWindowTransform :: proc(cid: i32, window: u32, transform: Animation_Transform) -> i32 ---
+	SLSGetWindowTransform :: proc(cid: i32, window: u32, transform: ^Animation_Transform) -> i32 ---
 	SLSMoveWindowWithGroup :: proc(cid: i32, window: u32, point: ^Surface_Point) -> i32 ---
 }
 @(default_calling_convention = "c")
@@ -1410,7 +1417,7 @@ capture_snapshot :: proc(
 	if !valid || !capture_fits(&state.capture_memory, estimate) {
 		return nil, 0, "resize capture memory budget exhausted"
 	}
-	image := resize_snapshot(state, window)
+	image := resize_snapshot(state, window, scale)
 	if image == nil {
 		return nil, 0, "could not capture resize contents"
 	}
@@ -1455,9 +1462,12 @@ foreign resize_cg {
 	CGBitmapContextCreateImage :: proc "c" (ctx: Ref) -> Ref ---
 	CGContextSetAlpha :: proc "c" (ctx: Ref, alpha: f64) ---
 }
-resize_snapshot :: proc(state: ^State, window: u32) -> Ref {
+// `scale` 1 captures at nominal (point) resolution: a quarter of the pixels
+// on Retina, for surfaces that are themselves 1x.
+resize_snapshot :: proc(state: ^State, window: u32, scale: f64 = 2) -> Ref {
 	window := window
-	images := SLSHWCaptureWindowList(state.connection, &window, 1, (1 << 11) | (1 << 8))
+	resolution: i32 = scale > 1 ? (1 << 8) : (1 << 9)
+	images := SLSHWCaptureWindowList(state.connection, &window, 1, (1 << 11) | resolution)
 	if images == nil {
 		return nil
 	}; defer CFRelease(images)
@@ -1529,7 +1539,9 @@ native_resize_cover_create :: proc(
 	if !valid || !capture_reserve(&state.capture_memory, surface_bytes) {
 		return {}, "resize capture memory budget exhausted"
 	}
-	image, image_bytes, capture_error := capture_snapshot(state, window, frame, 2)
+	// The cover surface below is 1x, so a Retina capture would only be
+	// downsampled again on its first draw (40 ms on the main loop).
+	image, image_bytes, capture_error := capture_snapshot(state, window, frame, 1)
 	if capture_error != "" {
 		capture_release(&state.capture_memory, surface_bytes)
 		return {}, capture_error
@@ -1739,6 +1751,9 @@ resize_cover_frame :: proc(
 	if !state.manager.resize_fade {
 		resize_cover_remove(state, window); return
 	}
+	// A scaled resize sends the final size first, so this capture is the old
+	// content, and its geometry blend is niri's old/new cross-fade. It also
+	// hides the frame where the app swaps to its new-size buffer.
 	if state.resize_cover_cancel {
 		return
 	}
@@ -1761,6 +1776,11 @@ resize_cover_frame :: proc(
 	}
 	s := space_by_id(&state.manager, w.space)
 	if s == nil || !s.visible || w.minimized || w.hidden || w.fullscreen {
+		return
+	}
+	// A hidden tab is behind the active one. Its capture would block the
+	// loop for 30-50 ms and show nothing.
+	if n := layout.find(s.view.root, window); n != nil && n.column_tabbed && n.order[0] != window {
 		return
 	}
 	cover, exists := state.resize_covers[window]

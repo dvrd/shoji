@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import dock "dock"
 import layout "layout"
 
@@ -61,6 +62,14 @@ Window :: struct {
 	ax_stale:                                                 bool,
 	// Inactive tab hidden through the Dock payload (not drawn, not hit-tested).
 	concealed:                                                bool,
+	// Keyboard scroll resize, niri style: the final size is sent once per
+	// target, and whatever buffer the app has (`resize_basis`) is scaled onto
+	// the animated rect. `frame` is that visual rect until the spring settles.
+	resize_basis, resize_request:                             Rect,
+	resize_scaled, resize_transformed:                        bool,
+	// When the last scaled resize settled. A late app move shifts the reset
+	// transform, so it is re-checked against the bounds for a moment.
+	resize_settled_at:                                        f64,
 	// Parked frame clipped to the viewport. Coords are window-local. Cleared
 	// once the frame sits fully inside again.
 	viewport_clipped:                                         bool,
@@ -167,6 +176,13 @@ Manager :: struct {
 	scroll_time:                                                  f64,
 	scroll_options:                                               layout.Scroll_Options,
 	native_resize_window:                                         u32,
+	// Set for one flush by a keyboard scroll resize. The geometry retarget
+	// then starts at speed omega*distance, which neither sits nor overshoots.
+	resize_chase:                                                 bool,
+	// While set, an in-flight keyboard resize scales through scale_present
+	// instead of sending the app every intermediate size.
+	resize_scale:                                                 bool,
+	resize_scale_noted:                                           bool,
 	feedback_color:                                               u32,
 	focus_ring:                                                   Focus_Ring_Config,
 	tab_indicator_top:                                            bool,
@@ -229,6 +245,28 @@ Manager :: struct {
 	layout_batch:                                                 Layout_Batch,
 	// Dock presentation for viewport clip. Nil skips it (tests, no payload).
 	present:                                                      proc(
+		user: rawptr,
+		req: dock.Present_Request,
+	) -> string,
+	// Sends a scaled resize's final size without blocking the frame loop. Nil
+	// (tests) sends it as a Frame action.
+	resize_configure:                                             proc(
+		user: rawptr,
+		id: u32,
+		request: Rect,
+	) -> string,
+	// Size WindowServer holds for the window's buffer. Nil (tests) assumes the
+	// app took the last size write.
+	window_bounds:                                                proc(
+		user: rawptr,
+		id: u32,
+	) -> (
+		Rect,
+		bool,
+	),
+	// Direct Dock transform for a keyboard resize. Nil keeps per-frame size
+	// writes. Not the gated present path: that hold would run every frame.
+	scale_present:                                                proc(
 		user: rawptr,
 		req: dock.Present_Request,
 	) -> string,
@@ -912,6 +950,120 @@ layout_batch_apply :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resize:
 	return m.layout_batch(m.backend_user, moves)
 }
 
+// Maps the committed buffer onto the visual rect. The inverse form matches
+// the identity WindowServer stores for an unscaled window, {1, 0, 0, 1, -x, -y}.
+resize_scale_matrix :: proc(basis, visual: Rect) -> (a, d, tx, ty: f64, ok: bool) {
+	if basis.w < 1 || basis.h < 1 || visual.w < 1 || visual.h < 1 {
+		return
+	}
+	a, d = basis.w / visual.w, basis.h / visual.h
+	tx, ty = -visual.x * a, -visual.y * d
+	return a, d, tx, ty, true
+}
+
+resize_scale_send :: proc(m: ^Manager, w: ^Window, a, d, tx, ty: f64) -> string {
+	if m.scale_present == nil {
+		return "resize scale is unavailable"
+	}
+	started := time.tick_now()
+	err := m.scale_present(
+		m.backend_user,
+		dock.Present_Request {
+			window = w.id,
+			mask = dock.PRESENT_TRANSFORM,
+			a = a,
+			d = d,
+			tx = tx,
+			ty = ty,
+		},
+	)
+	motion_trace_record(
+		&m.motion_trace,
+		{
+			kind = "resize-scale",
+			window = w.id,
+			value = a,
+			duration_ms = f64(time.tick_since(started)) / 1e6,
+		},
+	)
+	return err
+}
+
+// Hold sizes the app to the target once and scales its current buffer onto
+// the animated rect. Settle writes the final position and drops the scale.
+Resize_Scale :: enum {
+	Normal,
+	Hold,
+	Settle,
+}
+
+resize_scale_abort :: proc(m: ^Manager, w: ^Window, err: string) -> Resize_Scale {
+	if w.resize_transformed {
+		_ = resize_scale_send(m, w, 1, 1, -w.frame.x, -w.frame.y)
+	}
+	w.resize_scaled, w.resize_transformed = false, false
+	m.resize_scale = false
+	if !m.resize_scale_noted {
+		m.resize_scale_noted = true
+		fmt.eprintln("shoji: resize scale:", err)
+	}
+	return .Normal
+}
+
+resize_scale_step :: proc(m: ^Manager, s: ^Space, w: ^Window, visual: Rect) -> Resize_Scale {
+	if s.view.layout != .Scroll || !m.resize_scale || m.scale_present == nil || !w.scroll_frame.valid {
+		return .Normal
+	}
+	target := w.scroll_frame.target
+	if !s.view.scroll.geometry_active {
+		return w.resize_scaled ? .Settle : .Normal
+	}
+	if !w.resize_scaled {
+		if math.abs(target.w - w.frame.w) <= 1.5 && math.abs(target.h - w.frame.h) <= 1.5 {
+			return .Normal
+		}
+		w.resize_scaled, w.resize_transformed = true, false
+		w.resize_request = w.frame
+	}
+	// One configure per target, like niri: the app redraws at the final size
+	// while the spring runs, so the stretch shrinks to 1:1 instead of growing.
+	// A hidden tab sits behind the active one: no transform, no snapshot,
+	// and its one size write waits for Settle.
+	if n := layout.find(s.view.root, w.id); w.concealed || (n != nil && n.column_tabbed && n.order[0] != w.id) {
+		w.frame = visual
+		return .Hold
+	}
+	if math.abs(target.w - w.resize_request.w) > 1.5 || math.abs(target.h - w.resize_request.h) > 1.5 {
+		request := Rect{visual.x, visual.y, target.w, target.h}
+		err: string
+		if m.resize_configure != nil {
+			err = m.resize_configure(m.backend_user, w.id, request)
+		} else {
+			err = perform(m, Action{kind = .Frame, window = w.id, frame = request, direct = true})
+		}
+		if err != "" {
+			return resize_scale_abort(m, w, err)
+		}
+		w.resize_request = request
+	}
+	w.resize_basis = w.resize_request
+	if m.window_bounds != nil {
+		if bounds, ok := m.window_bounds(m.backend_user, w.id); ok && bounds.w >= 1 && bounds.h >= 1 {
+			w.resize_basis = bounds
+		}
+	}
+	a, d, tx, ty, ok := resize_scale_matrix(w.resize_basis, visual)
+	if !ok {
+		return resize_scale_abort(m, w, "resize scale has an empty rect")
+	}
+	if err := resize_scale_send(m, w, a, d, tx, ty); err != "" {
+		return resize_scale_abort(m, w, err)
+	}
+	w.resize_transformed = true
+	w.frame = visual
+	return .Hold
+}
+
 flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 	if m.suspended || m.gesture_active || s == nil || s.view.layout == .Float {
 		return ""
@@ -1023,7 +1175,13 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 					}
 				}
 			}
-			if math.abs(w.frame.x - r.x) < 1.5 &&
+			scale := resize_scale_step(m, s, w, r)
+			if scale == .Hold {
+				w.ax_stale = false
+				continue
+			}
+			if scale != .Settle &&
+			   math.abs(w.frame.x - r.x) < 1.5 &&
 			   math.abs(w.frame.y - r.y) < 1.5 &&
 			   math.abs(w.frame.w - r.w) < 1.5 &&
 			   math.abs(w.frame.h - r.h) < 1.5 &&
@@ -1055,6 +1213,25 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			}
 			w.frame = r
 			w.ax_stale = false
+			if scale == .Settle {
+				if w.resize_transformed {
+					_ = resize_scale_send(m, w, 1, 1, -r.x, -r.y)
+				}
+				w.resize_scaled, w.resize_transformed = false, false
+				w.resize_settled_at = m.scroll_time
+			}
+		}
+		if m.resize_scale && !s.view.scroll.geometry_active {
+			pending := false
+			for _, scaled in m.windows {
+				if scaled != nil && scaled.resize_scaled {
+					pending = true
+					break
+				}
+			}
+			if !pending {
+				m.resize_scale = false
+			}
 		}
 		if s.view.layout == .Scroll &&
 		   n.column_tabbed &&
