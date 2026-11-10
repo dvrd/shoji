@@ -117,7 +117,7 @@ The feature binary is installed as `bin/shoji`. The existing LaunchAgent was res
 
 Layout settings also accept `config --space SELECTOR NAME VALUE`; global changes preserve each Space's explicitly overridden settings. Preset lists accept 1–16 comma-separated `abs:pixels` or `ratio:fraction` values. Persist desired settings in your existing shojirc.
 
-`scroll_default_column_display` applies to new scrolling columns; existing columns keep their current display mode. It controls their appearance when they gain additional windows, and does not group new windows automatically.
+`scroll_default_column_display` applies to new scrolling columns; existing columns keep their current display mode. A window opened while the focused column is already tabbed joins that column, immediately to the right of the active tab, and becomes the active tab. An armed east/west insert, or a column that already holds 32 windows, still opens a new column.
 
 Tab indicator width is measured in logical pixels (1–32); the gap between tabs is 0–32 logical pixels. Colors accept `0xAARRGGBB`, or `default` to follow the focus ring for the active tab and use dark gray for inactive tabs. These settings are global and can be saved in shojirc.
 

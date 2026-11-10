@@ -309,7 +309,15 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	if v.layout == .Scroll {
 		scroll_before_add(v, id)
 	}
-	if n.count == 0 || v.layout == .Stack || n.insert_stack {
+	// A tabbed column takes the new window as the next tab. An armed
+	// east/west insert still opens a column, and a full column does too.
+	join_tab :=
+		v.layout == .Scroll &&
+		n.column_tabbed &&
+		n.count > 0 &&
+		n.count < MAX_STACK &&
+		n.insert_first == nil
+	if n.count == 0 || v.layout == .Stack || n.insert_stack || join_tab {
 		if n.count == 0 && v.layout == .Scroll {
 			n.column_tabbed = v.scroll_options.default_tabbed
 		}

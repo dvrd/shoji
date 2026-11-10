@@ -77,10 +77,11 @@ shoji -m window --expel                    # move the last window into a new col
 ```
 
 Use `--column-display normal` to show the windows in the column as rows.
-To put the *next new window* into the focused column, run
-`shoji -m window --insert stack` before opening it. Use
-`shoji -m window --toggle column-full-width` to toggle the focused column's
-full-width setting.
+A window opened while the focused column is tabbed joins that column, to the
+right of the active tab. To put the next new window into a normal column, run
+`shoji -m window --insert stack` before opening it. An east or west insert
+still opens a new column. Use `shoji -m window --toggle column-full-width` to
+toggle the focused column's full-width setting.
 
 For optional trackpad navigation, add these settings to `shojirc`:
 
@@ -111,6 +112,7 @@ hs.hotkey.bind({"ctrl", "alt"}, "h", run("-m window --focus west"))
 hs.hotkey.bind({"ctrl", "alt"}, "j", run("-m window --focus south"))
 hs.hotkey.bind({"ctrl", "alt"}, "k", run("-m window --focus north"))
 hs.hotkey.bind({"ctrl", "alt"}, "l", run("-m window --focus east"))
+-- A tabbed column already takes the next new window. This bind is for a normal column.
 hs.hotkey.bind({"ctrl", "alt", "shift"}, "t", run("-m window --insert stack"))
 ```
 
