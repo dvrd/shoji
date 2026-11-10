@@ -102,6 +102,10 @@ evidence before closing an item.
 - [ ] Complete user-facing command and configuration reference, troubleshooting,
   compatibility and security documentation; verify all repository links and
   examples from a clean installation. Add demonstration videos when available.
+  Settings, daemon defaults, tiling, and rules are in
+  [Configuration](CONFIGURATION.md) and locked by
+  `config_catalog_matches_daemon_defaults`. Troubleshooting, compatibility,
+  security, clean-install link checks, and videos remain open.
 
 ## Feature and experience work
 
