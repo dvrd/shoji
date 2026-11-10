@@ -606,16 +606,20 @@ window_space :: proc(state: ^State, id: u32) -> u64 {
 	return number(CFArrayGetValueAtIndex(spaces, 0))
 }
 
+// A failed SkyLight read is unknown. Parent 0 means root only after the
+// iterator actually returns that window. native_window_probe uses the same
+// failure shape.
 window_is_root :: proc(
 	state: ^State,
 	id: u32,
 	element, application: Ref,
-) -> (root: bool, parent: u32) {
+) -> (root: Maybe(bool), parent: u32) {
 	id := id
 	number := CFNumberCreate(nil, 3, &id); defer CFRelease(number)
 	array := CFArrayCreate(nil, &number, 1, nil); defer CFRelease(array)
 	query := SLSWindowQueryWindows(state.connection, array, 1)
 	parent_id: u32
+	known := false
 	if query != nil {
 		defer CFRelease(query)
 		iterator := SLSWindowQueryResultCopyWindows(query)
@@ -624,8 +628,12 @@ window_is_root :: proc(
 			if SLSWindowIteratorGetCount(iterator) == 1 &&
 			   SLSWindowIteratorAdvance(iterator) {
 				parent_id = SLSWindowIteratorGetParentID(iterator)
+				known = true
 			}
 		}
+	}
+	if !known {
+		return nil, 0
 	}
 	parent = parent_id
 	if parent_id == 0 {return true, 0}

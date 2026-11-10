@@ -1410,6 +1410,18 @@ opening_tick :: proc(state: ^State) {
 }
 
 opening_stop :: proc(state: ^State) {
+	// Conceal can fail before it stores a guard. Stage already forced the
+	// layer below, so those pending windows still need the same restore.
+	for id in state.opening_windows {
+		w := state.manager.windows[id]
+		if w == nil || !w.opening.staged || w.opening.phase != .Pending {
+			continue
+		}
+		if _, guarded := state.opening_guards[id]; guarded {
+			continue
+		}
+		perform(&state.manager, {kind = .Layer, window = id, value = w.opening.original_layer})
+	}
 	for id, guard in state.opening_guards {
 		if w := state.manager.windows[id]; w != nil && w.opening.phase == .Pending {
 			perform(&state.manager, {kind = .Layer, window = id, value = w.opening.original_layer})
@@ -1550,8 +1562,10 @@ reconcile_window_model :: proc(m: ^Manager, value: Window) -> (^Window, bool) {
 		if value.can_resize != nil {
 			w.can_resize = value.can_resize
 		}
-		w.root_window = value.root_window
-		w.parent = value.parent
+		if value.root_window != nil {
+			w.root_window = value.root_window
+			w.parent = value.parent
+		}
 		w.hidden, w.minimized, w.fullscreen = value.hidden, value.minimized, value.fullscreen
 		if (value.frame_valid.? or_else true) && valid_frame(value.frame) {
 			w.frame = value.frame

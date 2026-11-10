@@ -19,6 +19,22 @@ unknown_resize_stays_eligible_in_the_window_query :: proc(t: ^testing.T) {
 }
 
 @(test)
+failed_root_query_keeps_a_known_child :: proc(t: ^testing.T) {
+	m: mac.Manager
+	mac.manager_init(&m)
+	defer mac.manager_destroy(&m)
+	w := mac.add_window(&m, mac.Window{id = 1, root_window = false, parent = 9})
+	mac.reconcile_window_model(&m, mac.Window{id = 1})
+	root, known := w.root_window.?
+	testing.expect(t, known && !root)
+	testing.expect_value(t, w.parent, u32(9))
+	mac.reconcile_window_model(&m, mac.Window{id = 1, root_window = true})
+	root, known = w.root_window.?
+	testing.expect(t, known && root)
+	testing.expect_value(t, w.parent, u32(0))
+}
+
+@(test)
 unavailable_appearance_preserves_the_last_observed_window_layer :: proc(
 	t: ^testing.T,
 ) {

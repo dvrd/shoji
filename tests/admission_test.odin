@@ -5,6 +5,31 @@ import "core:testing"
 import layout "../src/layout"
 
 @(test)
+opening_stop_restores_a_staged_pending_window_without_a_guard :: proc(t: ^testing.T) {
+	state: e.State
+	r: Recorder
+	e.manager_init(&state.manager, record, &r)
+	defer e.manager_destroy(&state.manager)
+	defer delete(r.actions)
+	pending := e.add_window(&state.manager, e.Window{id = 7, layer = "below"})
+	pending.opening.phase = .Pending
+	pending.opening.staged = true
+	pending.opening.original_layer = 1
+	opening := e.add_window(&state.manager, e.Window{id = 8, layer = "below"})
+	opening.opening.phase = .Opening
+	opening.opening.staged = true
+	opening.opening.original_layer = 0
+	state.opening_windows = make(map[u32]bool)
+	state.opening_windows[7] = true
+	state.opening_windows[8] = true
+	e.opening_stop(&state)
+	testing.expect_value(t, len(r.actions), 1)
+	testing.expect_value(t, r.actions[0].kind, e.Action_Kind.Layer)
+	testing.expect_value(t, r.actions[0].window, u32(7))
+	testing.expect_value(t, r.actions[0].value, f64(1))
+}
+
+@(test)
 discovering_a_new_window_does_not_change_the_committed_layout :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; fixture(&m, &r)
 	defer e.manager_destroy(&m);defer delete(r.actions)
