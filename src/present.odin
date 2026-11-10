@@ -1806,6 +1806,14 @@ resize_cover_frame :: proc(
 	surface, err := resize_cover_backend(state).create(state, window, old)
 	if err != "" {
 		state.resize_cover_retry = now + 2
+		// A missing permission repeats on every resize. Say it once.
+		if !CGPreflightScreenCaptureAccess() {
+			if !resize_fade_permission_noted {
+				resize_fade_permission_noted = true
+				fmt.eprintln("shoji: resize fade:", err)
+			}
+			return
+		}
 		fmt.eprintln("shoji: resize fade:", err)
 		return
 	}
@@ -2027,6 +2035,8 @@ foreign animation_cg {
 	CGPreflightScreenCaptureAccess :: proc() -> bool ---
 	CGContextDrawImage :: proc(ctx: Ref, rect: Rect, image: Ref) ---
 }
+
+resize_fade_permission_noted: bool
 
 animation_swap :: proc(proxy: Animation_Proxy, hide: bool) -> string {
 	packet := dock.begin(hide ? dock.Opcode.Proxy_In : dock.Opcode.Proxy_Out)
