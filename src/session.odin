@@ -17,6 +17,7 @@ import dock "dock"
 import health "health"
 import ipc "ipc"
 import layout "layout"
+foreign import screen_cf "system:CoreFoundation.framework"
 
 foreign import libc "system:c"
 
@@ -183,6 +184,80 @@ desktop_commands_tick :: proc(
 	command_server_tick(server, &state.manager)
 }
 
+// Screen Recording guide
+// ------------------------------------------------------------------------
+
+// macOS does not reliably prompt for a locally signed app, so Shoji asks
+// itself: an alert that explains the permission and opens the right pane of
+// System Settings. Non-blocking; the main loop polls for the answer.
+SCREEN_CAPTURE_SETTINGS :: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+
+@(default_calling_convention = "c")
+foreign screen_cf {
+	CFUserNotificationCreate :: proc(allocator: Ref, timeout: f64, flags: uint, error: ^i32, dictionary: Ref) -> Ref ---
+	CFUserNotificationReceiveResponse :: proc(notification: Ref, timeout: f64, response: ^uint) -> i32 ---
+}
+
+screen_capture_alert: Ref
+
+screen_capture_guide :: proc() {
+	if CGPreflightScreenCaptureAccess() || screen_capture_alert != nil {
+		return
+	}
+	keys := [4]Ref {
+		cf_string("AlertHeader"),
+		cf_string("AlertMessage"),
+		cf_string("DefaultButtonTitle"),
+		cf_string("AlternateButtonTitle"),
+	}
+	values := [4]Ref {
+		cf_string("Shoji needs Screen Recording"),
+		cf_string(
+			"Window resize animations cross-fade from a snapshot of the window, which needs Screen Recording.\n\nIn System Settings, turn on Shoji under Screen & System Audio Recording, then restart Shoji (shoji service restart).",
+		),
+		cf_string("Open System Settings"),
+		cf_string("Not Now"),
+	}
+	defer for i in 0 ..< 4 {
+		CFRelease(keys[i]); CFRelease(values[i])
+	}
+	dictionary := CFDictionaryCreate(nil, &keys[0], &values[0], 4, nil, nil)
+	if dictionary == nil {
+		return
+	}
+	defer CFRelease(dictionary)
+	error: i32
+	screen_capture_alert = CFUserNotificationCreate(nil, 0, 0, &error, dictionary)
+	if screen_capture_alert == nil {
+		fmt.eprintln("shoji: Screen Recording is off; content fades are disabled")
+	}
+}
+
+// 0 is the default button (Open System Settings), 1 the alternate (Not Now).
+screen_capture_guide_tick :: proc() {
+	if screen_capture_alert == nil {
+		return
+	}
+	response: uint
+	if CFUserNotificationReceiveResponse(screen_capture_alert, 0, &response) != 0 {
+		return
+	}
+	CFRelease(screen_capture_alert)
+	screen_capture_alert = nil
+	if response & 3 != 0 {
+		return
+	}
+	argv := [3]cstring{"/usr/bin/open", SCREEN_CAPTURE_SETTINGS, nil}
+	environment := [1]cstring{nil}
+	pid: posix.pid_t
+	if posix.posix_spawn(&pid, "/usr/bin/open", nil, nil, &argv[0], &environment[0]) != .NONE {
+		fmt.eprintln("shoji: could not open System Settings")
+		return
+	}
+	status: i32
+	_ = posix.waitpid(pid, &status, {})
+}
+
 run :: proc(config_path: string, payload_path: string = "", validation_pid: i32 = 0) -> int {
 	pool := pool_push(); defer pool_pop(pool)
 	reload: Addition_Reload
@@ -310,6 +385,9 @@ run :: proc(config_path: string, payload_path: string = "", validation_pid: i32 
 		fmt.eprintln("shoji: waiting for the Dock payload before executing config")
 	}
 	fmt.eprintf("shoji: listening on %s\n", socket_name)
+	if validation_pid == 0 && state.manager.resize_fade {
+		screen_capture_guide()
+	}
 	last_refresh := time.now()
 	commands: Command_Server
 	defer command_server_stop(&commands)
@@ -392,6 +470,7 @@ run :: proc(config_path: string, payload_path: string = "", validation_pid: i32 
 			}
 			state.manager.scroll_time = time.duration_seconds(time.diff(time.Time{}, time.now()))
 			frame_size_feedback_tick(&state, time.now())
+			screen_capture_guide_tick()
 			opening_tick(&state)
 			feedback_tick(&state)
 			if window, outcome, waited, resolved := ws_focus_tick(&state.ws, time.now());
