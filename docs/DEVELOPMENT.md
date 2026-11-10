@@ -22,18 +22,24 @@ window manager and macOS runtime; subpackages hold code with a clear boundary.
 | `src/native` | Native types shared by Shoji and the payloads |
 | `src/loader` | arm64e `shoji-loader` executable |
 
-Root package files, grouped by responsibility:
+The root package is one Odin package, so these files call each other directly. They stay in one package because splitting them into packages that import each other would cycle. A file here is one area. Independent packages above do not import the daemon.
 
-| Area | Files |
+| File | Responsibility |
 | --- | --- |
-| Entry and commands | `main`, `commands`, `command_server`, `config_run`, `settings`, `rules`, `regex` |
-| Manager and windows | `manager`, `window_commands`, `window_opening`, `opening_notices`, `scratchpad`, `size_feedback`, `size_validation` |
-| Layout glue | `layout_scroll` (constraints, scroll commands, rows, transfers), `layout_motion` |
-| Runtime | `runtime`, `app_notifications`, `refresh`, `window_observation`, `window_readback`, `workspaces`, `notify`, `health_runtime` |
-| Motion | `display_clock`, `animation`, `animation_journal`, `motion_coordinator`, `motion_trace`, `surfaces`, `resize_transition`, `feedback` |
-| Input | `touch_input`, `pointer_input`, `scroll_input`, `pointer_drag`, `gesture_routing` |
-| Native backend | `backend` |
-| Payload clients | `payload_client` (Dock), `ws_adapter`, `ws_attach_runtime`, `ws_report` (WindowServer) |
+| `main` | Process entry, daemon flags, help |
+| `control` | Command dispatch, config, rules, notifications, opening notices |
+| `manager` | Window and space model, flush, camera batch, tab concealment, dialog follow |
+| `windows` | Window commands, admission, observation, SkyLight readback |
+| `scroll` | Scroll constraints, column transfers, rows, snapshot restore |
+| `workspaces` | Display and Space discovery, dynamic workspaces, overview |
+| `input` | Pointer, drag, touch, and gesture routing |
+| `present` | Focus ring, tab indicators, owned surfaces, resize transitions, animation |
+| `session` | Daemon loop, refresh, startup config, display clock, motion trace |
+| `ws_client` | Dock payload client and WindowServer gate client |
+| `backend` | Accessibility frame writes and native action dispatch |
+| `scratchpad` | Named scratchpad windows |
+| `regex` | Darwin `REG_EXTENDED` matcher used by rules |
+| `private_file` | Per-user files under `/tmp` |
 
 Architecture suffixes (`_arm64`, `_amd64`) are real build selections: Intel
 slices are still built. Shoji is macOS-only, so files carry no OS suffix.
