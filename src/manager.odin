@@ -264,7 +264,7 @@ Manager :: struct {
 	ws_gate_user:                                                 rawptr,
 	rules:                                                        [dynamic]Rule,
 	signals:                                                      [dynamic]Signal,
-	// Opt-in. See workspaces_niri.odin. Both stay off so existing Spaces are left alone.
+	// Opt-in. See workspaces.odin. Both stay off so existing Spaces are left alone.
 	dynamic_workspaces, workspace_hotplug, workspace_reconciling: bool,
 	workspace_seq:                                                u64,
 	workspace_pending_display:                                    [WORKSPACE_PENDING_MAX]u32,

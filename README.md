@@ -54,6 +54,8 @@ terminal's PATH. Restart with `shoji service restart` after editing the file.
 Replace `scroll` with `bsp` for a splitting layout, `stack` for stacked
 windows, or `float` to leave windows floating. Commands run in a terminal take
 effect immediately, but add them to `shojirc` to keep them after a restart.
+`shoji -m config SETTING` prints the current value. Names, defaults, and which
+windows are tiled are in the [configuration reference](docs/CONFIGURATION.md).
 
 ## Use
 
@@ -134,6 +136,7 @@ validation.
 
 ## Documentation
 
+- [Configuration](docs/CONFIGURATION.md): settings, defaults, tiling, and rules.
 - [Development](docs/DEVELOPMENT.md): source map, tools, tests and local files.
 - [Scroll layout](docs/SCROLL_LAYOUT.md) and [Niri parity](docs/NIRI_PARITY.md).
 - [WindowServer roadmap](docs/WINDOWSERVER_ROADMAP.md) and the

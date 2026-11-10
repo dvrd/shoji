@@ -1289,6 +1289,7 @@ command_server_start :: proc(server: ^Command_Server, fd: i32) -> string {
 // Configuration
 // ------------------------------------------------------------------------
 
+// Setting names and daemon defaults are locked by config_catalog_matches_daemon_defaults.
 config :: proc(m: ^Manager, args: []string) -> Response {
 	args := args
 	s: ^Space

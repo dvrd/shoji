@@ -121,7 +121,7 @@ scroll_config :: proc(m: ^Manager, s: ^Space, name, value: string, setting: bool
 			return success(flag^ ? "on" : "off")
 		}
 		if value != "on" && value != "off" {
-			return failure("scroll_center_single_column expects on or off")
+			return failure(fmt.tprintf("%s expects on or off", name))
 		}
 		flag^ = value == "on"
 	case "scroll_default_column_width":

@@ -4,10 +4,10 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import inject "inject"
 import ipc "ipc"
 import service "service"
 import attach "windowserver/attach"
-import inject "inject"
 
 HELP_MESSAGE :: `
 Usage: shoji [-c CONFIG] [--sa]
@@ -32,7 +32,8 @@ Run without arguments to start the window manager.
 --validate-swipe N Measure native swipe spacing with two named disposable fixture windows.
 
 Domains: config, query, window, space, display, rule, signal, debug.
-Default layout is float. Use: shoji -m config layout bsp`
+Default layout is float. Use: shoji -m config layout bsp
+shoji -m config SETTING prints the current value.`
 
 
 main :: proc() {
@@ -46,12 +47,18 @@ main :: proc() {
 		validation_pid: i32
 		for i := 0; i < len(args); i += 1 {
 			if args[i] == "--sa" {
-				if payload != "" {fmt.eprintln("duplicate --sa option"); os.exit(1)}
+				if payload != "" {
+					fmt.eprintln("duplicate --sa option"); os.exit(1)
+				}
 				resolved, err := addition_payload_path()
-				if err != "" {fmt.eprintln(err); os.exit(1)}
+				if err != "" {
+					fmt.eprintln(err); os.exit(1)
+				}
 				payload = resolved
 				// Plists written before --sa took no value still carry a path.
-				if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "-") {i += 1}
+				if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "-") {
+					i += 1
+				}
 				continue
 			}
 			if i + 1 >= len(args) || args[i + 1] == "" {
@@ -59,7 +66,9 @@ main :: proc() {
 			}
 			switch args[i] {
 			case "-c", "--config":
-				if config != "" {fmt.eprintln("duplicate config option"); os.exit(1)}
+				if config != "" {
+					fmt.eprintln("duplicate config option"); os.exit(1)
+				}
 				config = args[i + 1]
 			case "--validation-pid":
 				pid, ok := strconv.parse_u64(args[i + 1])
@@ -76,7 +85,7 @@ main :: proc() {
 
 		if validation_pid != 0 && config == "" {
 			fmt.eprintln("--validation-pid requires an explicit -c configuration")
-      os.exit(1)
+			os.exit(1)
 		}
 
 		os.exit(run(config, payload, validation_pid))
@@ -88,9 +97,13 @@ main :: proc() {
 			binary, _ := os.get_executable_path(context.allocator)
 			os.exit(service.service_cli(args[1:], binary))
 		case "--validate-sizes", "--validate-swipe":
-			if len(args) != 2 {fmt.eprintln("validation requires a fixture process ID"); os.exit(2)}
+			if len(args) != 2 {
+				fmt.eprintln("validation requires a fixture process ID"); os.exit(2)
+			}
 			pid, valid := strconv.parse_u64(args[1])
-			if !valid || pid == 0 || pid > 0x7fffffff {os.exit(2)}
+			if !valid || pid == 0 || pid > 0x7fffffff {
+				os.exit(2)
+			}
 			os.exit(validate_window_sizes(i32(pid), args[0] == "--validate-swipe"))
 		case "--load-sa":
 			if len(args) != 1 {
@@ -98,11 +111,13 @@ main :: proc() {
 				os.exit(2)
 			}
 			payload, payload_err := addition_payload_path()
-			if payload_err != "" {fmt.eprintln(payload_err); os.exit(1)}
+			if payload_err != "" {
+				fmt.eprintln(payload_err); os.exit(1)
+			}
 			if err := inject.inject(payload); err != "" {
-        fmt.eprintln(err)
-        os.exit(1)
-      }
+				fmt.eprintln(err)
+				os.exit(1)
+			}
 
 			fmt.println(
 				"Dock loaded the payload. Run --check-sa as your desktop user to inspect capabilities.",

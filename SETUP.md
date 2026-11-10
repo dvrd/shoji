@@ -1,7 +1,10 @@
 # Shoji setup
 
 The target is macOS 27.2 (26B123), Apple Silicon. Basic window management and
-Space operations have passed live checks. Experimental animations default off.
+Space operations have passed live checks. A fresh daemon enables resize fade,
+scroll animation, and scroll frame pacing. Dynamic workspaces, workspace
+hotplug, tab concealment, and trackpad gestures stay off until set. The
+[configuration reference](docs/CONFIGURATION.md) lists every setting.
 
 ## Configuration
 
