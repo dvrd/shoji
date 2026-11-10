@@ -288,7 +288,9 @@ restore_zooms :: proc(v: ^View, records: []Zoom_Record) {
 	}
 }
 
-add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
+// `join_tab` is set only for a newly opened window. Restore, move and
+// enumeration paths must keep their own columns.
+add :: proc(v: ^View, id: u32, insertion: u32 = 0, join_tab: bool = false) -> bool {
 	if id == 0 || find(v.root, id) != nil || v.layout == .Float {
 		return false
 	}
@@ -311,13 +313,14 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 	}
 	// A tabbed column takes the new window as the next tab. An armed
 	// east/west insert still opens a column, and a full column does too.
-	join_tab :=
+	joins :=
+		join_tab &&
 		v.layout == .Scroll &&
 		n.column_tabbed &&
 		n.count > 0 &&
 		n.count < MAX_STACK &&
 		n.insert_first == nil
-	if n.count == 0 || v.layout == .Stack || n.insert_stack || join_tab {
+	if n.count == 0 || v.layout == .Stack || n.insert_stack || joins {
 		if n.count == 0 && v.layout == .Scroll {
 			n.column_tabbed = v.scroll_options.default_tabbed
 		}
