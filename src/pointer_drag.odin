@@ -463,13 +463,53 @@ layout_drop_region :: proc(
 			clamp(point.y, frame.y, frame.y + frame.h)
 	}
 	action := mouse_drop_region(frame, point, stack, source_count)
-	if v.layout != .Scroll || action == .None || action == .Stack {
+	if v.layout != .Scroll || action == .None || action == .Stack ||
+	   action == .North || action == .South {
 		return action
 	}
-	// Scrolling drops insert a column at an explicit boundary. A center drop
-	// must not unexpectedly swap the source and target like a BSP drop.
+	// A center drop inserts a column. It does not swap the way a BSP drop does.
 	return point.x < frame.x + frame.w / 2 ? .West : .East
 }
+scroll_drop_row :: proc(
+	m: ^Manager,
+	source, destination: ^Window,
+	s, t: ^Space,
+	action: Mouse_Drop,
+) -> string {
+	b := layout.find(t.view.root, destination.id)
+	if b == nil {return "target column is gone"}
+	same := layout.find(s.view.root, source.id) == b
+	if !same && b.count >= layout.MAX_STACK {return "target column is full"}
+	index := 0
+	for i in 0 ..< b.count {
+		if b.windows[i] == destination.id {index = i; break}
+	}
+	if action == .South {index += 1}
+	if same {
+		source_index := 0
+		for i in 0 ..< b.count {
+			if b.windows[i] == source.id {source_index = i; break}
+		}
+		if source_index < index {index -= 1}
+	}
+	if s != t {
+		if err := perform(m, {kind = .Space, window = source.id, space = t.id}); err != "" {
+			return err
+		}
+		source.space, source.display = t.id, t.display
+	}
+	layout.remove(&s.view, source.id)
+	b = layout.find(t.view.root, destination.id)
+	if b == nil {return "target column is gone"}
+	// A row drop shows every window in the column. A tabbed column becomes rows.
+	b.column_tabbed = false
+	if !layout.scroll_insert_row(b, source.id, index) {return "target column is full"}
+	if s != t {
+		if err := flush(m, s); err != "" {return err}
+	}
+	return flush(m, t)
+}
+
 mouse_drop :: proc(
 	m: ^Manager,
 	d: Mouse_Drag,
@@ -515,12 +555,9 @@ mouse_drop :: proc(
 		return ""
 	}
 	a := layout.find(s.view.root, source.id); b := layout.find(t.view.root, target)
-	if a == nil || b == nil || a == b {
+	if a == nil || b == nil {
 		return ""
 	}
-	source_width := s.view.layout == .Scroll ? a.column_width : f64(0)
-	source_size, source_preset, source_full :=
-		a.column_size, a.column_preset, a.column_full
 	action := layout_drop_region(
 		&t.view,
 		destination.frame,
@@ -531,6 +568,18 @@ mouse_drop :: proc(
 	if action == .None {
 		return ""
 	}
+	// Top and bottom of a scrolling window insert a row. Left and right still
+	// insert a column. Focus is left where it was.
+	if t.view.layout == .Scroll && (action == .North || action == .South) {
+		if a == b && a.count < 2 {return ""}
+		return scroll_drop_row(m, source, destination, s, t, action)
+	}
+	if a == b {
+		return ""
+	}
+	source_width := s.view.layout == .Scroll ? a.column_width : f64(0)
+	source_size, source_preset, source_full :=
+		a.column_size, a.column_preset, a.column_full
 	if s != t {
 		if action == .Swap {
 			return(

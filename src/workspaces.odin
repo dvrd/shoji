@@ -12,7 +12,7 @@ import layout "layout"
 // ------------------------------------------------------------------------
 
 Display_Probe :: struct {
-	list: proc(state: ^State, ids: []u32, count: ^u32) -> i32,
+	list:   proc(state: ^State, ids: []u32, count: ^u32) -> i32,
 	spaces: proc(state: ^State) -> Ref,
 }
 native_display_list :: proc(_: ^State, ids: []u32, count: ^u32) -> i32 {
@@ -31,9 +31,7 @@ refresh_displays :: proc(state: ^State) {
 	ids: [64]u32
 	count: u32
 	// A failed observation must not destroy labels, display membership or trees.
-	if probe.list(state, ids[:], &count) != 0 ||
-	   count == 0 ||
-	   count > len(ids) {
+	if probe.list(state, ids[:], &count) != 0 || count == 0 || count > len(ids) {
 		return
 	}
 	data := probe.spaces(state)
@@ -51,11 +49,22 @@ refresh_displays :: proc(state: ^State) {
 			return
 		}
 		for j in 0 ..< CFArrayGetCount(spaces) {
-			if number(dictionary(CFArrayGetValueAtIndex(spaces, j), "id64")) ==
-			   0 {
+			if number(dictionary(CFArrayGetValueAtIndex(spaces, j), "id64")) == 0 {
 				return
 			}
 		}
+	}
+	seen_displays: [8]Display_Seen
+	seen_count := 0
+	for &d in m.displays {
+		if seen_count >= len(seen_displays) {
+			break
+		}
+		seen_displays[seen_count] = {d.id, strings.clone(d.uuid), d.active_space}
+		seen_count += 1
+	}
+	defer {
+		for i in 0 ..< seen_count {delete(seen_displays[i].uuid)}
 	}
 	labels := make(map[u32]string, context.temp_allocator)
 	for &d in m.displays {
@@ -88,25 +97,13 @@ refresh_displays :: proc(state: ^State) {
 			CFRelease(uuid)
 			if string != nil {
 				d.uuid = strings.clone(text(string))
-				d.active_space = SLSManagedDisplayGetCurrentSpace(
-					state.connection,
-					string,
-				)
+				d.active_space = SLSManagedDisplayGetCurrentSpace(state.connection, string)
 				CFRelease(string)
 			}
 		}
 		for j in 0 ..< intrinsics.objc_send(uint, screens, "count") {
-			screen := intrinsics.objc_send(
-				^objc.Object,
-				screens,
-				"objectAtIndex:",
-				j,
-			)
-			description := intrinsics.objc_send(
-				^objc.Object,
-				screen,
-				"deviceDescription",
-			)
+			screen := intrinsics.objc_send(^objc.Object, screens, "objectAtIndex:", j)
+			description := intrinsics.objc_send(^objc.Object, screen, "deviceDescription")
 			key := cf_string("NSScreenNumber")
 			number := intrinsics.objc_send(
 				^objc.Object,
@@ -124,6 +121,8 @@ refresh_displays :: proc(state: ^State) {
 		append(&m.displays, d)
 	}
 	order_displays(m)
+	existed := make(map[u64]bool, context.temp_allocator)
+	for s in m.spaces {existed[s.id] = true}
 	seen := make(map[u64]bool, context.temp_allocator)
 	index: u32 = 0
 	for i in 0 ..< CFArrayGetCount(data) {
@@ -166,21 +165,31 @@ refresh_displays :: proc(state: ^State) {
 			append(&d.spaces, id)
 		}
 	}
+	workspace_adopt_new(m, existed)
+	if m.workspace_hotplug {
+		for s in m.spaces {
+			if display_by_id(m, s.display) == nil {
+				seen[s.id] = true
+			}
+		}
+	}
 	for i := len(m.spaces) - 1; i >= 0; i -= 1 {
 		s := m.spaces[i]
+		if s.ephemeral {
+			continue
+		}
 		if !seen[s.id] {
 			layout.view_destroy(&s.view)
 			delete(s.overrides)
 			delete(s.uuid)
 			delete(s.label)
+			delete(s.home_uuid)
 			free(s)
 			ordered_remove(&m.spaces, i)
 		}
 	}
 	for i in 1 ..< len(m.spaces) {
-		for j := i;
-		    j > 0 && m.spaces[j - 1].index > m.spaces[j].index;
-		    j -= 1 {
+		for j := i; j > 0 && m.spaces[j - 1].index > m.spaces[j].index; j -= 1 {
 			m.spaces[j - 1], m.spaces[j] = m.spaces[j], m.spaces[j - 1]
 		}
 	}
@@ -193,16 +202,17 @@ refresh_displays :: proc(state: ^State) {
 			m.active_space = sid
 		}
 	}
+	workspace_hotplug_finish(m, seen_displays[:seen_count])
 }
 
 // Display focus
 // ------------------------------------------------------------------------
 
 Display_Focus_Backend :: struct {
-	windows: proc(state: ^State) -> []u32,
-	focus: proc(state: ^State, window: u32) -> string,
+	windows:  proc(state: ^State) -> []u32,
+	focus:    proc(state: ^State, window: u32) -> string,
 	activate: proc(state: ^State, display: ^Display) -> string,
-	warp: proc(state: ^State, point: Point) -> string,
+	warp:     proc(state: ^State, point: Point) -> string,
 }
 
 native_display_windows :: proc(state: ^State) -> []u32 {
@@ -230,8 +240,7 @@ native_display_activate :: proc(state: ^State, display: ^Display) -> string {
 	}
 	uuid := cf_string(display.uuid)
 	defer CFRelease(uuid)
-	if SLSSetActiveMenuBarDisplayIdentifier(state.connection, uuid, uuid) !=
-	   0 {
+	if SLSSetActiveMenuBarDisplayIdentifier(state.connection, uuid, uuid) != 0 {
 		return "could not activate display"
 	}
 	return ""
@@ -280,10 +289,8 @@ focus_display :: proc(state: ^State, id: u32) -> string {
 			return err
 		}
 	} else {
-		if err := backend.warp(
-			state,
-			{d.frame.x + d.frame.w / 2, d.frame.y + d.frame.h / 2},
-		); err != "" {
+		if err := backend.warp(state, {d.frame.x + d.frame.w / 2, d.frame.y + d.frame.h / 2});
+		   err != "" {
 			return err
 		}
 	}
@@ -298,63 +305,46 @@ focus_display :: proc(state: ^State, id: u32) -> string {
 // ------------------------------------------------------------------------
 
 Event :: struct {
-	name, app, title: string,
-	window, recent_window: u32,
-	pid: i32,
-	space, recent_space: u64,
+	name, app, title:        string,
+	window, recent_window:   u32,
+	pid:                     i32,
+	space, recent_space:     u64,
 	display, recent_display: u32,
-	active: bool,
+	active:                  bool,
 }
 
 Signal_Window :: struct {
-	id: u32,
-	pid: i32,
-	app, title: string,
-	frame: Rect,
-	space: u64,
-	display: u32,
+	id:                 u32,
+	pid:                i32,
+	app, title:         string,
+	frame:              Rect,
+	space:              u64,
+	display:            u32,
 	focused, minimized: bool,
 }
 signal_window :: proc(w: Window) -> Signal_Window {
-	return {
-		w.id,
-		w.pid,
-		w.app,
-		w.title,
-		w.frame,
-		w.space,
-		w.display,
-		w.focused,
-		w.minimized,
-	}
+	return {w.id, w.pid, w.app, w.title, w.frame, w.space, w.display, w.focused, w.minimized}
 }
 
 Snapshot :: struct {
-	allocator: mem.Allocator,
-	windows: map[u32]Signal_Window,
-	spaces: map[u64]u32,
-	displays: map[u32]Rect,
-	apps: map[i32]string,
-	app_hidden: map[i32]bool,
-	focused: u32,
-	active_space: u64,
+	allocator:      mem.Allocator,
+	windows:        map[u32]Signal_Window,
+	spaces:         map[u64]u32,
+	displays:       map[u32]Rect,
+	apps:           map[i32]string,
+	app_hidden:     map[i32]bool,
+	focused:        u32,
+	active_space:   u64,
 	active_display: u32,
 }
 
-snapshot :: proc(
-	state: ^State,
-	allocator: mem.Allocator = context.temp_allocator,
-) -> Snapshot {
+snapshot :: proc(state: ^State, allocator: mem.Allocator = context.temp_allocator) -> Snapshot {
 	result: Snapshot
 	snapshot_update(&result, state, allocator)
 	return result
 }
 
-snapshot_update :: proc(
-	result: ^Snapshot,
-	state: ^State,
-	allocator: mem.Allocator,
-) {
+snapshot_update :: proc(result: ^Snapshot, state: ^State, allocator: mem.Allocator) {
 	if result.allocator.procedure == nil {
 		result^ = Snapshot {
 			allocator  = allocator,
@@ -365,8 +355,7 @@ snapshot_update :: proc(
 			app_hidden = make(map[i32]bool, allocator),
 		}
 	}
-	result.focused, result.active_space =
-		state.manager.focused, state.manager.active_space
+	result.focused, result.active_space = state.manager.focused, state.manager.active_space
 	result.active_display = 0
 	if s := space_by_id(&state.manager, result.active_space); s != nil {
 		result.active_display = s.display
@@ -393,8 +382,8 @@ snapshot_update :: proc(
 		result.windows[id] = value
 	}
 	clear(&result.spaces); clear(&result.displays); clear(&result.app_hidden)
-	for s in state.manager.spaces { result.spaces[s.id] = s.display }
-	for d in state.manager.displays { result.displays[d.id] = d.frame }
+	for s in state.manager.spaces {result.spaces[s.id] = s.display}
+	for d in state.manager.displays {result.displays[d.id] = d.frame}
 	for pid, name in result.apps {
 		if _, exists := state.applications[pid]; !exists {
 			delete(name, result.allocator); delete_key(&result.apps, pid)
@@ -414,7 +403,7 @@ snapshot_destroy :: proc(before: ^Snapshot) {
 	for _, w in before.windows {
 		delete(w.app, before.allocator); delete(w.title, before.allocator)
 	}
-	for _, name in before.apps { delete(name, before.allocator) }
+	for _, name in before.apps {delete(name, before.allocator)}
 	delete(before.windows)
 	delete(before.spaces)
 	delete(before.displays)
@@ -435,8 +424,7 @@ observe_changes :: proc(state: ^State) {
 	// refreshes; event callbacks still see independent before/after values.
 	snapshot_update(&state.observation_next, state, context.allocator)
 	dispatch_changes(state, state.observed, state.observation_next)
-	state.observed, state.observation_next =
-		state.observation_next, state.observed
+	state.observed, state.observation_next = state.observation_next, state.observed
 }
 
 emit :: proc(state: ^State, event: Event) {
@@ -447,8 +435,7 @@ emit :: proc(state: ^State, event: Event) {
 		if signal.event != event.name {
 			continue
 		}
-		if !filter_matches(signal.app, event.app) ||
-		   !filter_matches(signal.title, event.title) {
+		if !filter_matches(signal.app, event.app) || !filter_matches(signal.title, event.title) {
 			continue
 		}
 		if active, ok := signal.active.?; ok && active != event.active {
@@ -485,10 +472,7 @@ launch_signal :: proc(signal: Signal, event: Event) {
 		}
 	}
 	for value in overrides {
-		append(
-			&environment,
-			strings.clone_to_cstring(value, context.temp_allocator),
-		)
+		append(&environment, strings.clone_to_cstring(value, context.temp_allocator))
 	}
 	append(&environment, nil)
 	argv := [4]cstring {
@@ -498,24 +482,12 @@ launch_signal :: proc(signal: Signal, event: Event) {
 		nil,
 	}
 	pid: posix.pid_t
-	if posix.posix_spawn(
-		   &pid,
-		   "/bin/sh",
-		   nil,
-		   nil,
-		   &argv[0],
-		   raw_data(environment),
-	   ) !=
-	   nil {
+	if posix.posix_spawn(&pid, "/bin/sh", nil, nil, &argv[0], raw_data(environment)) != nil {
 		fmt.eprintf("shoji: failed to launch signal '%s'\n", signal.label)
 	}
 }
 
-window_event :: proc(
-	name: string,
-	w: Signal_Window,
-	recent: u32 = 0,
-) -> Event {
+window_event :: proc(name: string, w: Signal_Window, recent: u32 = 0) -> Event {
 	return Event {
 		name = name,
 		app = w.app,
@@ -541,7 +513,7 @@ dispatch_changes :: proc(state: ^State, before, after: Snapshot) {
 	   after.active_display != before.active_display {
 		state.manager.last_display = before.active_display
 	}
-	for event in snapshot_changes(before, after) { emit(state, event) }
+	for event in snapshot_changes(before, after) {emit(state, event)}
 }
 
 // Event strings borrow their snapshots; dispatch before releasing either one.
@@ -549,17 +521,12 @@ snapshot_changes :: proc(before, after: Snapshot) -> [dynamic]Event {
 	events := make([dynamic]Event, context.temp_allocator)
 	for pid, app in after.apps {
 		if _, existed := before.apps[pid]; !existed {
-			append(
-				&events,
-				Event{name = "application_launched", app = app, pid = pid},
-			)
+			append(&events, Event{name = "application_launched", app = app, pid = pid})
 		} else if before.app_hidden[pid] != after.app_hidden[pid] {
 			append(
 				&events,
 				Event {
-					name = after.app_hidden[pid] \
-						? "application_hidden" \
-						: "application_visible",
+					name = after.app_hidden[pid] ? "application_hidden" : "application_visible",
 					app = app,
 					pid = pid,
 				},
@@ -568,10 +535,7 @@ snapshot_changes :: proc(before, after: Snapshot) -> [dynamic]Event {
 	}
 	for pid, app in before.apps {
 		if _, exists := after.apps[pid]; !exists {
-			append(
-				&events,
-				Event{name = "application_terminated", app = app, pid = pid},
-			)
+			append(&events, Event{name = "application_terminated", app = app, pid = pid})
 		}
 	}
 	for id, w in after.windows {
@@ -592,10 +556,7 @@ snapshot_changes :: proc(before, after: Snapshot) -> [dynamic]Event {
 		if old.minimized != w.minimized {
 			append(
 				&events,
-				window_event(
-					w.minimized ? "window_minimized" : "window_deminimized",
-					w,
-				),
+				window_event(w.minimized ? "window_minimized" : "window_deminimized", w),
 			)
 		}
 	}
@@ -612,20 +573,14 @@ snapshot_changes :: proc(before, after: Snapshot) -> [dynamic]Event {
 				append(&events, window_event("application_front_switched", w))
 				append(&events, window_event("application_activated", w))
 				if old.pid != 0 {
-					append(
-						&events,
-						window_event("application_deactivated", old),
-					)
+					append(&events, window_event("application_deactivated", old))
 				}
 			}
 		}
 	}
 	for id, display in after.spaces {
 		if _, exists := before.spaces[id]; !exists {
-			append(
-				&events,
-				Event{name = "space_created", space = id, display = display},
-			)
+			append(&events, Event{name = "space_created", space = id, display = display})
 		}
 	}
 	for id in before.spaces {

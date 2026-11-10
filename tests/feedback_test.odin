@@ -54,6 +54,19 @@ tab_indicator_surfaces_follow_geometry_and_focus_clicks :: proc(t: ^testing.T) {
 	mac.execute(&state.manager, {"window", "2", "--column-display", "normal"})
 	mac.tab_indicator_tick(&state, frame, 2)
 	testing.expect_value(t, state.tab_indicator.count, 0)
+	niri_open(&state.manager, 3); niri_open(&state.manager, 4)
+	mac.execute(&state.manager, {"window", "1", "--stack", "2"})
+	mac.execute(&state.manager, {"window", "1", "--column-display", "tabbed"})
+	mac.execute(&state.manager, {"window", "3", "--stack", "4"})
+	mac.execute(&state.manager, {"window", "3", "--column-display", "tabbed"})
+	mac.execute(&state.manager, {"window", "1", "--focus"})
+	mac.tab_indicator_tick(&state, state.manager.windows[1].frame, 1)
+	testing.expect(t, state.tab_indicator.count >= 4)
+	far := state.tab_indicator.tabs[2]
+	testing.expect(t, far.window != 1 && far.window != 0)
+	state.mouse.tab_pending, state.mouse.tab_pending_generation = far.window, far.generation
+	mac.mouse_tick(&state, false)
+	testing.expect_value(t, state.manager.focused, far.window)
 	testing.expect_value(t, mac.tab_indicator_hit(&state, {101, 400}).window, u32(0))
 }
 
@@ -816,6 +829,39 @@ scroll_drop_indicator_matches_column_insertion_and_preserves_width :: proc(
 	n = layout.next(n); testing.expect_value(t, n.windows[0], u32(1))
 	testing.expect_value(t, n.column_width, source_width)
 	n = layout.next(n); testing.expect_value(t, n.windows[0], u32(3))
+}
+
+@(test)
+scroll_top_drop_inserts_a_row_without_moving_focus :: proc(t: ^testing.T) {
+	m: mac.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer mac.manager_destroy(&m); defer delete(r.actions)
+	niri_open(&m, 2); niri_open(&m, 3)
+	mac.focus_window(&m, 2)
+	focused := m.focused
+	column := layout.find(m.spaces[0].view.root, 3)
+	column.column_tabbed = true
+	drag := mac.mouse_begin(&m, 1, .Move, {30, 40})
+	w := m.windows[3]
+	point := mac.Mouse_Point{w.frame.x + w.frame.w / 2, w.frame.y + 1}
+	plan, valid := mac.drag_feedback(&m, drag, 3, point)
+	testing.expect(t, valid && plan.solid)
+	testing.expect_value(t, plan.frame.h, f64(4))
+	testing.expect(t, plan.frame.w > 4)
+	testing.expect_value(t, mac.mouse_drop(&m, drag, 3, point), "")
+	testing.expect_value(t, m.focused, focused)
+	n := layout.find(m.spaces[0].view.root, 3)
+	testing.expect(t, n == layout.find(m.spaces[0].view.root, 1))
+	testing.expect_value(t, n.windows[0], u32(1))
+	testing.expect_value(t, n.windows[1], u32(3))
+	testing.expect(t, !n.column_tabbed)
+	w = m.windows[3]
+	drag = mac.mouse_begin(&m, 1, .Move, {30, 40})
+	point = {w.frame.x + w.frame.w / 2, w.frame.y + w.frame.h - 1}
+	testing.expect_value(t, mac.mouse_drop(&m, drag, 3, point), "")
+	n = layout.find(m.spaces[0].view.root, 3)
+	testing.expect_value(t, n.windows[0], u32(3))
+	testing.expect_value(t, n.windows[1], u32(1))
+	testing.expect_value(t, m.focused, focused)
 }
 
 @(test)

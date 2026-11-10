@@ -11,97 +11,102 @@ import layout "layout"
 // ------------------------------------------------------------------------
 
 Scroll_Return :: struct {
-	space: u64,
-	previous, next: u32,
+	space:             u64,
+	previous, next:    u32,
 	column_index, row: int,
-	peers: [layout.MAX_STACK]u32,
-	peer_count: int,
-	width: f64,
-	size: layout.Scroll_Size,
-	preset: Maybe(int),
-	full, tabbed: bool,
+	peers:             [layout.MAX_STACK]u32,
+	peer_count:        int,
+	width:             f64,
+	size:              layout.Scroll_Size,
+	preset:            Maybe(int),
+	full, tabbed:      bool,
 }
 
 Window :: struct {
-	generation: u64,
-	frame_valid: Maybe(bool),
-	opening: Opening,
-	resize_transitioning: bool,
-	size_feedback_reflow: bool,
-	size_intent: Size_Intent,
-	size_feedback: Size_Feedback,
-	row_revision: u64,
-	scroll_frame: Scroll_Frame,
-	row_fixed, row_weight: f64,
-	row_preset: Maybe(int),
-	min_width, min_height, max_width, max_height: f64,
-	ordered_in: Maybe(bool),
-	root_window: Maybe(bool),
+	generation:                                               u64,
+	frame_valid:                                              Maybe(bool),
+	opening:                                                  Opening,
+	resize_transitioning:                                     bool,
+	size_feedback_reflow:                                     bool,
+	size_intent:                                              Size_Intent,
+	size_feedback:                                            Size_Feedback,
+	row_revision:                                             u64,
+	scroll_frame:                                             Scroll_Frame,
+	row_fixed, row_weight:                                    f64,
+	row_preset:                                               Maybe(int),
+	min_width, min_height, max_width, max_height:             f64,
+	ordered_in:                                               Maybe(bool),
+	root_window:                                              Maybe(bool),
 	// SLS parent window. Unmanaged children follow this window's frame delta.
-	parent: u32,
-	rules_pending, grabbed: bool,
-	rule_error: string,
-	windowed_frame: Maybe(Rect),
-	scroll_return: Maybe(Scroll_Return),
+	parent:                                                   u32,
+	rules_pending, grabbed:                                   bool,
+	rule_error:                                               string,
+	// Last matched scroll-opening rule. Applied when this window is in a
+	// scrolling column, including a later switch onto the scroll layout.
+	rule_maximize:                                            Maybe(bool),
+	rule_column_width, rule_column_display:                   string,
+	windowed_frame:                                           Maybe(Rect),
+	scroll_return:                                            Maybe(Scroll_Return),
 	// Relative to the usable tile area; retained only during a lone-tile drag.
-	solo_tile_frame: Maybe(Rect),
-	can_move: bool,
-	can_resize: Maybe(bool),
-	application_accessory: bool,
+	solo_tile_frame:                                          Maybe(Rect),
+	can_move:                                                 bool,
+	can_resize:                                               Maybe(bool),
+	application_accessory:                                    bool,
 	// A gated WindowServer move (C1 batch, C4 landing) already shows the new
 	// position, but the owning app was not told; the next frame write must
 	// send AXPosition even though WindowServer's bounds match the target.
-	server_placed: bool,
+	server_placed:                                            bool,
 	// Moved by a gated camera batch during scroll motion: WindowServer shows
 	// the frame, the app has not been told. The first unbatched flush resyncs.
-	ax_stale: bool,
+	ax_stale:                                                 bool,
 	// Inactive tab hidden through the Dock payload (not drawn, not hit-tested).
-	concealed: bool,
+	concealed:                                                bool,
 	// Parked frame clipped to the viewport. Coords are window-local. Cleared
 	// once the frame sits fully inside again.
-	viewport_clipped: bool,
-	clip_repaired: bool,
-	clip_x, clip_y, clip_w, clip_h: i32,
+	viewport_clipped:                                         bool,
+	clip_repaired:                                            bool,
+	clip_x, clip_y, clip_w, clip_h:                           i32,
 	// The payload refused to conceal; retried once the window is active again.
-	conceal_refused: bool,
-	manage_override: Maybe(bool),
-	id: u32,
-	pid: i32,
-	app, title, role, subrole: string,
-	frame: Rect,
-	level, sub_level: i32,
-	display: u32,
-	space: u64,
+	conceal_refused:                                          bool,
+	manage_override:                                          Maybe(bool),
+	id:                                                       u32,
+	pid:                                                      i32,
+	app, title, role, subrole:                                string,
+	frame:                                                    Rect,
+	level, sub_level:                                         i32,
+	display:                                                  u32,
+	space:                                                    u64,
 	focused, floating, minimized, hidden, fullscreen, sticky: bool,
-	shadow: bool,
+	shadow:                                                   bool,
 	// Shadow tag cleared while this tab is concealed. The desired shadow stays
 	// in `shadow`; this only means the tag has to come back on reveal.
-	shadow_held: bool,
-	opacity: f64,
-	opacity_override, scratchpad_hidden: bool,
-	layer_override: bool,
-	mouse_follows_focus: Maybe(bool),
-	layer: string,
-	scratchpad: string,
+	shadow_held:                                              bool,
+	opacity:                                                  f64,
+	opacity_override, scratchpad_hidden:                      bool,
+	layer_override:                                           bool,
+	mouse_follows_focus:                                      Maybe(bool),
+	layer:                                                    string,
+	scratchpad:                                               string,
 }
 
 Display :: struct {
-	id, index: u32,
-	native_index: u32,
-	uuid: string,
+	id, index:     u32,
+	native_index:  u32,
+	uuid:          string,
 	frame, usable: Rect,
-	spaces: [dynamic]u64,
-	active_space: u64,
-	label: string,
+	spaces:        [dynamic]u64,
+	active_space:  u64,
+	label:         string,
 }
 
 Space :: struct {
-	id: u64,
-	index, display: u32,
-	uuid, label: string,
-	visible, fullscreen: bool,
-	view: layout.View,
-	overrides: map[string]bool,
+	id:                                                 u64,
+	index, display:                                     u32,
+	uuid, label:                                        string,
+	visible, fullscreen, ephemeral, kept, home_visible: bool,
+	home_uuid:                                          string,
+	view:                                               layout.View,
+	overrides:                                          map[string]bool,
 }
 
 Action_Kind :: enum {
@@ -129,16 +134,16 @@ Action_Kind :: enum {
 }
 
 Action :: struct {
-	direct: bool,
-	kind: Action_Kind,
-	window, relative: u32,
-	display: u32,
+	direct:             bool,
+	kind:               Action_Kind,
+	window, relative:   u32,
+	display:            u32,
 	space, destination: u64,
-	frame: Rect,
-	value: f64,
-	duration: f64,
-	flag: bool,
-	live_resize: bool,
+	frame:              Rect,
+	value:              f64,
+	duration:           f64,
+	flag:               bool,
+	live_resize:        bool,
 }
 
 Backend :: proc(user: rawptr, action: Action) -> string
@@ -152,104 +157,120 @@ LAYOUT_BATCH_LIMIT :: 32
 OWNED_BATCH_LIMIT :: 40
 Layout_Batch :: #type proc(user: rawptr, moves: []Layout_Move) -> bool
 Manager :: struct {
-	window_generation: u64,
-	resize_fade: bool,
-	motion_trace: Motion_Trace,
-	scroll_animate: bool,
+	window_generation:                                            u64,
+	resize_fade:                                                  bool,
+	motion_trace:                                                 Motion_Trace,
+	scroll_animate:                                               bool,
 	// B02: conceal inactive tabs instead of only ordering them behind.
-	tab_conceal: bool,
-	scroll_frame_pacing: bool,
-	scroll_time: f64,
-	scroll_options: layout.Scroll_Options,
-	native_resize_window: u32,
-	feedback_color: u32,
-	focus_ring: Focus_Ring_Config,
-	tab_indicator_top: bool,
-	tab_indicator_width: f64,
-	tab_indicator_gap: f64,
-	tab_indicator_active_color, tab_indicator_inactive_color: Maybe(u32),
-	main_display: u32,
-	display_order: enum {
+	tab_conceal:                                                  bool,
+	scroll_frame_pacing:                                          bool,
+	scroll_time:                                                  f64,
+	scroll_options:                                               layout.Scroll_Options,
+	native_resize_window:                                         u32,
+	feedback_color:                                               u32,
+	focus_ring:                                                   Focus_Ring_Config,
+	tab_indicator_top:                                            bool,
+	tab_indicator_width:                                          f64,
+	tab_indicator_gap:                                            f64,
+	tab_indicator_active_color, tab_indicator_inactive_color:     Maybe(u32),
+	main_display:                                                 u32,
+	display_order:                                                enum {
 		Default,
 		Vertical,
 		Horizontal,
 	},
-	origin_display: enum {
+	origin_display:                                               enum {
 		Default,
 		Focused,
 		Cursor,
 	},
-	external_bar: enum {
+	external_bar:                                                 enum {
 		Off,
 		Main,
 		All,
 	},
-	bar_top, bar_bottom: f64,
-	shadow_mode: enum {
+	bar_top, bar_bottom:                                          f64,
+	shadow_mode:                                                  enum {
 		On,
 		Off,
 		Float,
 	},
-	shadow_configured: bool,
-	suspended: bool,
-	gesture_active: bool,
-	mouse: Mouse_Config,
-	windows: map[u32]^Window,
-	spaces: [dynamic]^Space,
-	displays: [dynamic]Display,
-	focused, last_focused: u32,
-	active_space, last_space: u64,
-	last_display, mouse_window, mouse_display: u32,
-	default_layout: layout.Layout,
-	padding: layout.Padding,
-	gap, ratio: f64,
-	opacity_duration: f64,
-	animation_duration: f64,
-	animation_easing: Easing,
-	balance_axis: layout.Split,
-	active_opacity, normal_opacity: f64,
-	window_opacity: bool,
-	split: layout.Split,
-	first_child, auto_balance: bool,
-	zoom_persist: bool,
-	insertion_point: enum {
+	shadow_configured:                                            bool,
+	suspended:                                                    bool,
+	gesture_active:                                               bool,
+	mouse:                                                        Mouse_Config,
+	windows:                                                      map[u32]^Window,
+	spaces:                                                       [dynamic]^Space,
+	displays:                                                     [dynamic]Display,
+	focused, last_focused:                                        u32,
+	active_space, last_space:                                     u64,
+	last_display, mouse_window, mouse_display:                    u32,
+	default_layout:                                               layout.Layout,
+	padding:                                                      layout.Padding,
+	gap, ratio:                                                   f64,
+	opacity_duration:                                             f64,
+	animation_duration:                                           f64,
+	animation_easing:                                             Easing,
+	balance_axis:                                                 layout.Split,
+	active_opacity, normal_opacity:                               f64,
+	window_opacity:                                               bool,
+	split:                                                        layout.Split,
+	first_child, auto_balance:                                    bool,
+	zoom_persist:                                                 bool,
+	insertion_point:                                              enum {
 		Focused,
 		First,
 		Last,
 	},
-	backend: Backend,
-	backend_user: rawptr,
+	backend:                                                      Backend,
+	backend_user:                                                 rawptr,
 	// Frame-atomic position batch through the WindowServer gate (C1). Called with backend_user;
 	// true only when every move was applied. Nil → per-window frames.
-	layout_batch: Layout_Batch,
+	layout_batch:                                                 Layout_Batch,
 	// Dock presentation for viewport clip. Nil skips it (tests, no payload).
-	present: proc(user: rawptr, req: dock.Present_Request) -> string,
-	clip_noted: bool,
+	present:                                                      proc(
+		user: rawptr,
+		req: dock.Present_Request,
+	) -> string,
+	clip_noted:                                                   bool,
 	// Viewport clip is off until GlobalClipShape's coordinate space is
 	// live-checked: window-local rects cut windows at the bottom on 26B123.
 	// Off, each window gets one unbounded clip to undo an earlier cut.
-	viewport_clip: bool,
+	viewport_clip:                                                bool,
 	// While set, scroll_camera_apply stores moves instead of sending them.
 	// layout_frame_submit sends those moves and any owned surfaces together.
-	camera_hold: bool,
-	camera_held: int,
-	camera_moves: [LAYOUT_BATCH_LIMIT]Layout_Move,
+	camera_hold:                                                  bool,
+	camera_held:                                                  int,
+	camera_moves:                                                 [LAYOUT_BATCH_LIMIT]Layout_Move,
 	// Empty skips the Dock-restart check. The daemon sets the journal path.
-	conceal_journal: string,
-	conceal_boot: u64,
-	conceal_stamp: i64,
+	conceal_journal:                                              string,
+	conceal_boot:                                                 u64,
+	conceal_stamp:                                                i64,
 	// Daemon-only WindowServer diagnostics (`debug ws`); nil elsewhere.
-	ws_debug: proc(user: rawptr, dump: bool) -> string,
+	ws_debug:                                                     proc(
+		user: rawptr,
+		dump: bool,
+	) -> string,
 	// Daemon-only runtime health JSON (`query --health`); nil elsewhere.
-	health_report: proc(user: rawptr) -> string,
-	health_user: rawptr,
+	health_report:                                                proc(user: rawptr) -> string,
+	health_user:                                                  rawptr,
 	// Daemon-only `notify test`: posts a test notification; nil elsewhere.
-	health_notify_test: proc(user: rawptr) -> Response,
+	health_notify_test:                                           proc(user: rawptr) -> Response,
 	// Daemon-only `config windowserver_gate [on|off]`; "" queries. Nil elsewhere.
-	ws_gate_control: proc(user: rawptr, value: string) -> Response,
-	ws_gate_user: rawptr,
-	rules: [dynamic]Rule,
-	signals: [dynamic]Signal,
+	ws_gate_control:                                              proc(
+		user: rawptr,
+		value: string,
+	) -> Response,
+	ws_gate_user:                                                 rawptr,
+	rules:                                                        [dynamic]Rule,
+	signals:                                                      [dynamic]Signal,
+	// Opt-in. See workspaces_niri.odin. Both stay off so existing Spaces are left alone.
+	dynamic_workspaces, workspace_hotplug, workspace_reconciling: bool,
+	workspace_seq:                                                u64,
+	workspace_pending_display:                                    [WORKSPACE_PENDING_MAX]u32,
+	workspace_pending_space:                                      [WORKSPACE_PENDING_MAX]u64,
+	workspace_pending_count:                                      int,
+	overview:                                                     Overview,
 }
 
 manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
@@ -257,12 +278,7 @@ manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
 		scroll_options = layout.scroll_options_defaults(),
 		tab_indicator_width = 4,
 		feedback_color = 0xffd75f5f,
-		focus_ring = {
-			enabled = true,
-			width = 3,
-			radius = 10,
-			color = 0xff7fc8ff,
-		},
+		focus_ring = {enabled = true, width = 3, radius = 10, color = 0xff7fc8ff},
 		mouse = mouse_defaults(),
 		windows = make(map[u32]^Window),
 		ratio = 0.5,
@@ -278,6 +294,8 @@ manager_init :: proc(m: ^Manager, backend: Backend = nil, user: rawptr = nil) {
 
 window_destroy :: proc(w: ^Window) {
 	delete(w.rule_error)
+	delete(w.rule_column_width)
+	delete(w.rule_column_display)
 	delete(w.app)
 	delete(w.title)
 	delete(w.role)
@@ -287,6 +305,7 @@ window_destroy :: proc(w: ^Window) {
 }
 
 manager_destroy :: proc(m: ^Manager) {
+	overview_free_for_destroy(m)
 	delete(m.conceal_journal)
 	delete(m.motion_trace.events)
 	for _, w in m.windows {
@@ -298,6 +317,7 @@ manager_destroy :: proc(m: ^Manager) {
 		delete(s.overrides)
 		delete(s.uuid)
 		delete(s.label)
+		delete(s.home_uuid)
 		free(s)
 	}
 	delete(m.spaces)
@@ -335,12 +355,7 @@ display_by_id :: proc(m: ^Manager, id: u32) -> ^Display {
 	return nil
 }
 
-add_space :: proc(
-	m: ^Manager,
-	id: u64,
-	display, index: u32,
-	frame: Rect,
-) -> ^Space {
+add_space :: proc(m: ^Manager, id: u64, display, index: u32, frame: Rect) -> ^Space {
 	s := new(Space)
 	s.overrides = make(map[string]bool)
 	s.id = id
@@ -396,8 +411,7 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 	w.scratchpad = strings.clone(window.scratchpad)
 	// A confirmed fixed-size window must keep its native geometry. Unknown
 	// capabilities remain eligible; explicit management rules run afterward.
-	if resizable, known := w.can_resize.?;
-	   w.application_accessory || (known && !resizable) {
+	if resizable, known := w.can_resize.?; w.application_accessory || (known && !resizable) {
 		w.floating = true
 	}
 	m.windows[w.id] = w
@@ -407,10 +421,8 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 				? select_display(m, "") \
 				: display_by_id(m, m.mouse_display)
 		if d != nil && d.active_space != w.space {
-			if err := perform(
-				m,
-				{kind = .Space, window = w.id, space = d.active_space},
-			); err == "" {
+			if err := perform(m, {kind = .Space, window = w.id, space = d.active_space});
+			   err == "" {
 				w.space, w.display = d.active_space, d.id
 			}
 		}
@@ -419,11 +431,16 @@ add_window :: proc(m: ^Manager, window: Window) -> ^Window {
 	if s := space_by_id(m, w.space); s != nil && layout_admitted(w) {
 		insertion := s.view.insertion
 		layout.add(&s.view, w.id, window_insertion(m, &s.view))
+		scroll_rule_realize(m, w)
 		motion_trace_join(m, s, w.id, "layout-join")
 		if insertion != 0 && s.view.insertion == 0 {
-			motion_trace_record(&m.motion_trace, {kind = "insert-consumed", window = w.id, space = s.id, value = f64(insertion)})
+			motion_trace_record(
+				&m.motion_trace,
+				{kind = "insert-consumed", window = w.id, space = s.id, value = f64(insertion)},
+			)
 		}
 	}
+	workspace_reconcile(m)
 	return w
 }
 
@@ -439,7 +456,10 @@ window_insertion :: proc(m: ^Manager, v: ^layout.View) -> u32 {
 
 remove_window :: proc(m: ^Manager, id: u32) {
 	if w, ok := m.windows[id]; ok {
-		motion_trace_record(&m.motion_trace, {kind = "window-removed", window = id, space = w.space})
+		motion_trace_record(
+			&m.motion_trace,
+			{kind = "window-removed", window = id, space = w.space},
+		)
 		for &rule in m.rules {
 			if rule.pending_window == id {
 				rule.pending_window = 0
@@ -456,14 +476,11 @@ remove_window :: proc(m: ^Manager, id: u32) {
 		}
 		delete_key(&m.windows, id)
 		window_destroy(w)
+		workspace_reconcile(m)
 	}
 }
 
-sync_window_membership :: proc(
-	m: ^Manager,
-	w: ^Window,
-	previous_space: u64,
-) -> string {
+sync_window_membership :: proc(m: ^Manager, w: ^Window, previous_space: u64) -> string {
 	if previous := space_by_id(m, previous_space);
 	   previous != nil && (previous_space != w.space || !managed(w)) {
 		layout.remove(&previous.view, w.id)
@@ -480,20 +497,35 @@ sync_window_membership :: proc(
 			return "destination tiling tree is full"
 		}
 	}
+	workspace_reconcile(m)
 	return ""
 }
 
 scroll_return_remember :: proc(w: ^Window, space: ^Space, node: ^layout.Node) {
-	if space.view.layout != .Scroll || w.scroll_return != nil { return }
-	r := Scroll_Return {
-		space = space.id, width = node.column_width, size = node.column_size,
-		preset = node.column_preset, full = node.column_full, tabbed = node.column_tabbed,
+	if space.view.layout != .Scroll || w.scroll_return != nil {
+		return
 	}
-	for n := layout.first(space.view.root); n != nil && n != node; n = layout.next(n) { r.column_index += 1 }
-	if n := layout.previous(node); n != nil && n.count > 0 { r.previous = n.windows[0] }
-	if n := layout.next(node); n != nil && n.count > 0 { r.next = n.windows[0] }
+	r := Scroll_Return {
+		space  = space.id,
+		width  = node.column_width,
+		size   = node.column_size,
+		preset = node.column_preset,
+		full   = node.column_full,
+		tabbed = node.column_tabbed,
+	}
+	for n := layout.first(space.view.root);
+	    n != nil && n != node;
+	    n = layout.next(n) {r.column_index += 1}
+	if n := layout.previous(node); n != nil && n.count > 0 {
+		r.previous = n.windows[0]
+	}
+	if n := layout.next(node); n != nil && n.count > 0 {
+		r.next = n.windows[0]
+	}
 	for i in 0 ..< node.count {
-		if node.windows[i] == w.id { r.row = i; continue }
+		if node.windows[i] == w.id {
+			r.row = i; continue
+		}
 		r.peers[r.peer_count] = node.windows[i]; r.peer_count += 1
 	}
 	w.scroll_return = r
@@ -501,41 +533,56 @@ scroll_return_remember :: proc(w: ^Window, space: ^Space, node: ^layout.Node) {
 
 scroll_return_restore :: proc(w: ^Window, space: ^Space) -> bool {
 	r, saved := w.scroll_return.?
-	if !saved { return false }
+	if !saved {
+		return false
+	}
 	if r.space != space.id || space.view.layout != .Scroll {
 		w.scroll_return = nil; return false
 	}
 	v := &space.view
 	for id in r.peers[:r.peer_count] {
 		n := layout.find(v.root, id)
-		if n == nil || n.count == layout.MAX_STACK { continue }
-		if !layout.stack_push(n, w.id) { continue }
+		if n == nil || n.count == layout.MAX_STACK {
+			continue
+		}
+		if !layout.stack_push(n, w.id) {
+			continue
+		}
 		// stack_push inserts after the active row; restore the saved row order.
 		at := 0
-		for n.windows[at] != w.id { at += 1 }
+		for n.windows[at] != w.id {at += 1}
 		row := min(r.row, n.count - 1)
-		for at > row { n.windows[at] = n.windows[at - 1]; at -= 1 }
-		for at < row { n.windows[at] = n.windows[at + 1]; at += 1 }
+		for at > row {n.windows[at] = n.windows[at - 1]; at -= 1}
+		for at < row {n.windows[at] = n.windows[at + 1]; at += 1}
 		n.windows[row] = w.id
 		w.scroll_return = nil; return true
 	}
 	anchor := layout.find(v.root, r.previous)
 	before := false
-	if anchor == nil { anchor = layout.find(v.root, r.next); before = anchor != nil }
+	if anchor == nil {
+		anchor = layout.find(v.root, r.next); before = anchor != nil
+	}
 	if anchor == nil {
 		anchor = layout.first(v.root)
 		index := 0
-		for index < r.column_index && layout.next(anchor) != nil { anchor = layout.next(anchor); index += 1 }
+		for index < r.column_index &&
+		    layout.next(anchor) != nil {anchor = layout.next(anchor); index += 1}
 		before = anchor != nil && anchor.count > 0 && index == r.column_index
 	}
-	if anchor == nil { return false }
+	if anchor == nil {
+		return false
+	}
 	anchor_id := anchor.windows[0]
 	insert_first, insert_stack, insertion := anchor.insert_first, anchor.insert_stack, v.insertion
 	anchor.insert_first, anchor.insert_stack = before, false
 	ok := layout.add(v, w.id, anchor_id)
-	if old := layout.find(v.root, anchor_id); old != nil { old.insert_first, old.insert_stack = insert_first, insert_stack }
+	if old := layout.find(v.root, anchor_id); old != nil {
+		old.insert_first, old.insert_stack = insert_first, insert_stack
+	}
 	v.insertion = insertion
-	if !ok { return false }
+	if !ok {
+		return false
+	}
 	n := layout.find(v.root, w.id)
 	n.column_width, n.column_resolved = r.width, r.width
 	n.column_size, n.column_preset = r.size, r.preset
@@ -555,8 +602,7 @@ reconcile_window_memberships :: proc(m: ^Manager) -> string {
 				window := m.windows[id]
 				if window != nil {
 					destination := space_by_id(m, window.space)
-					if !layout_admitted(window) ||
-					   (destination != nil && destination.fullscreen) {
+					if !layout_admitted(window) || (destination != nil && destination.fullscreen) {
 						scroll_return_remember(window, space, node)
 					}
 				}
@@ -566,28 +612,52 @@ reconcile_window_memberships :: proc(m: ^Manager) -> string {
 				   window.space != space.id {
 					if window != nil && m.motion_trace.active {
 						reason: i32
-						if window.fullscreen { reason |= 1 }
-						if window.hidden { reason |= 2 }
-						if window.minimized { reason |= 4 }
-						if !(window.ordered_in.? or_else true) { reason |= 8 }
-						if window.floating { reason |= 16 }
-						if window.sticky { reason |= 32 }
-						if !(window.root_window.? or_else true) { reason |= 64 }
-						if !layout_admitted(window) { reason |= 128 }
-						if window.space != space.id { reason |= 256 }
-						motion_trace_record(&m.motion_trace, {
-							kind = "scroll-membership-remove", window = id, space = space.id,
-							value = f64(window.space), status = reason,
-						})
+						if window.fullscreen {
+							reason |= 1
+						}
+						if window.hidden {
+							reason |= 2
+						}
+						if window.minimized {
+							reason |= 4
+						}
+						if !(window.ordered_in.? or_else true) {
+							reason |= 8
+						}
+						if window.floating {
+							reason |= 16
+						}
+						if window.sticky {
+							reason |= 32
+						}
+						if !(window.root_window.? or_else true) {
+							reason |= 64
+						}
+						if !layout_admitted(window) {
+							reason |= 128
+						}
+						if window.space != space.id {
+							reason |= 256
+						}
+						motion_trace_record(
+							&m.motion_trace,
+							{
+								kind = "scroll-membership-remove",
+								window = id,
+								space = space.id,
+								value = f64(window.space),
+								status = reason,
+							},
+						)
 					}
 					append(&remove_ids, id)
 				}
 			}
 		}
-		for id in remove_ids { layout.remove(&space.view, id) }
+		for id in remove_ids {layout.remove(&space.view, id)}
 	}
 	ids := make([dynamic]u32, context.temp_allocator)
-	for id in m.windows { append(&ids, id) }
+	for id in m.windows {append(&ids, id)}
 	sort_ids(ids[:])
 	for id in ids {
 		window := m.windows[id]
@@ -636,12 +706,16 @@ Deferred_Frame :: struct {
 // small enough for the gate's plan, lands in one WindowServer frame before
 // the per-window writes. Any other shape skips the batch.
 layout_batch_eligible :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resize: bool) -> bool {
-	if m.layout_batch == nil || live_resize || m.animation_duration > 0 ||
-	   len(deferred) == 0 || len(deferred) > LAYOUT_BATCH_LIMIT {
+	if m.layout_batch == nil ||
+	   live_resize ||
+	   m.animation_duration > 0 ||
+	   len(deferred) == 0 ||
+	   len(deferred) > LAYOUT_BATCH_LIMIT {
 		return false
 	}
 	for d in deferred {
-		if math.abs(d.window.frame.w - d.frame.w) >= 1.5 || math.abs(d.window.frame.h - d.frame.h) >= 1.5 {
+		if math.abs(d.window.frame.w - d.frame.w) >= 1.5 ||
+		   math.abs(d.window.frame.h - d.frame.h) >= 1.5 {
 			return false
 		}
 	}
@@ -656,11 +730,13 @@ layout_batch_eligible :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resi
 // off, otherwise the flush that settles the spring.
 scroll_camera_batching :: proc(m: ^Manager, s: ^Space, live_resize: bool) -> bool {
 	moving := s.view.scroll.dragging || (m.scroll_animate && s.view.scroll.motion.active)
-	return m.layout_batch != nil &&
+	return(
+		m.layout_batch != nil &&
 		s.view.layout == .Scroll &&
 		moving &&
 		!live_resize &&
-		m.native_resize_window == 0
+		m.native_resize_window == 0 \
+	)
 }
 
 // A later flush in the same held frame replaces a window's position.
@@ -670,11 +746,17 @@ camera_hold_store :: proc(m: ^Manager, moves: []Deferred_Frame) -> bool {
 	for d in moves {
 		seen := false
 		for i in 0 ..< m.camera_held {
-			if m.camera_moves[i].window == d.window.id {seen = true; break}
+			if m.camera_moves[i].window == d.window.id {
+				seen = true; break
+			}
 		}
-		if !seen {fresh += 1}
+		if !seen {
+			fresh += 1
+		}
 	}
-	if m.camera_held + fresh > LAYOUT_BATCH_LIMIT {return false}
+	if m.camera_held + fresh > LAYOUT_BATCH_LIMIT {
+		return false
+	}
 	for d in moves {
 		move := Layout_Move{d.window.id, d.frame.x, d.frame.y}
 		replaced := false
@@ -696,8 +778,13 @@ camera_hold_store :: proc(m: ^Manager, moves: []Deferred_Frame) -> bool {
 layout_frame_fallback :: proc(m: ^Manager, moves: []Layout_Move) {
 	for move in moves {
 		w := m.windows[move.window]
-		if w == nil {continue}
-		if err := perform(m, Action{kind = .Frame, window = move.window, frame = w.frame, direct = true}); err != "" {
+		if w == nil {
+			continue
+		}
+		if err := perform(
+			m,
+			Action{kind = .Frame, window = move.window, frame = w.frame, direct = true},
+		); err != "" {
 			continue
 		}
 		w.ax_stale = false
@@ -713,21 +800,29 @@ layout_frame_submit :: proc(m: ^Manager, owned: []Layout_Move) -> bool {
 	held := m.camera_held
 	windows := m.camera_moves[:held]
 	m.camera_held = 0
-	if held == 0 && len(owned) == 0 {return true}
+	if held == 0 && len(owned) == 0 {
+		return true
+	}
 	if m.layout_batch == nil {
 		layout_frame_fallback(m, windows)
 		return false
 	}
 	if len(owned) == 0 {
-		if m.layout_batch(m.backend_user, windows) {return true}
+		if m.layout_batch(m.backend_user, windows) {
+			return true
+		}
 		layout_frame_fallback(m, windows)
 		return false
 	}
 	combined := make([dynamic]Layout_Move, 0, held + len(owned), context.temp_allocator)
 	append(&combined, ..windows)
 	append(&combined, ..owned)
-	if m.layout_batch(m.backend_user, combined[:]) {return true}
-	if held > 0 && m.layout_batch(m.backend_user, windows) {return false}
+	if m.layout_batch(m.backend_user, combined[:]) {
+		return true
+	}
+	if held > 0 && m.layout_batch(m.backend_user, windows) {
+		return false
+	}
 	layout_frame_fallback(m, windows)
 	return false
 }
@@ -735,7 +830,9 @@ layout_frame_submit :: proc(m: ^Manager, owned: []Layout_Move) -> bool {
 // Batches the frame's pure moves; any failure (too many windows, a window
 // still animating, the gate refusing) falls back to per-window writes.
 scroll_camera_apply :: proc(m: ^Manager, moves: []Deferred_Frame, live_resize: bool) -> string {
-	if len(moves) == 0 {return ""}
+	if len(moves) == 0 {
+		return ""
+	}
 	if m.camera_hold && m.layout_batch != nil {
 		if camera_hold_store(m, moves) {
 			for d in moves {
@@ -759,9 +856,19 @@ scroll_camera_apply :: proc(m: ^Manager, moves: []Deferred_Frame, live_resize: b
 					break
 				}
 			}
-			if replaced {continue}
-			action := Action{kind = .Frame, window = d.window.id, frame = d.frame, live_resize = live_resize, direct = true}
-			if err := perform(m, action); err != "" {return err}
+			if replaced {
+				continue
+			}
+			action := Action {
+				kind        = .Frame,
+				window      = d.window.id,
+				frame       = d.frame,
+				live_resize = live_resize,
+				direct      = true,
+			}
+			if err := perform(m, action); err != "" {
+				return err
+			}
 			d.window.frame = d.frame
 			d.window.ax_stale = false
 		}
@@ -780,8 +887,16 @@ scroll_camera_apply :: proc(m: ^Manager, moves: []Deferred_Frame, live_resize: b
 		}
 	}
 	for d in moves {
-		action := Action{kind = .Frame, window = d.window.id, frame = d.frame, live_resize = live_resize, direct = true}
-		if err := perform(m, action); err != "" {return err}
+		action := Action {
+			kind        = .Frame,
+			window      = d.window.id,
+			frame       = d.frame,
+			live_resize = live_resize,
+			direct      = true,
+		}
+		if err := perform(m, action); err != "" {
+			return err
+		}
 		d.window.frame = d.frame
 		d.window.ax_stale = false
 	}
@@ -789,7 +904,9 @@ scroll_camera_apply :: proc(m: ^Manager, moves: []Deferred_Frame, live_resize: b
 }
 
 layout_batch_apply :: proc(m: ^Manager, deferred: []Deferred_Frame, live_resize: bool) -> bool {
-	if !layout_batch_eligible(m, deferred, live_resize) {return false}
+	if !layout_batch_eligible(m, deferred, live_resize) {
+		return false
+	}
 	moves := make([]Layout_Move, len(deferred), context.temp_allocator)
 	for d, i in deferred {moves[i] = {d.window.id, d.frame.x, d.frame.y}}
 	return m.layout_batch(m.backend_user, moves)
@@ -799,11 +916,17 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 	if m.suspended || m.gesture_active || s == nil || s.view.layout == .Float {
 		return ""
 	}
+	// Thumbnail overview owns frames on this display until it closes.
+	if m.overview.active && s.display == m.overview.display {
+		return ""
+	}
 	// Parent frames before this flush moves them. dialog_follow adds the delta
 	// to unmanaged children, including a held camera batch.
 	parent_before := make(map[u32]Rect, context.temp_allocator)
 	for _, w in m.windows {
-		if w == nil || w.parent == 0 || w.space != s.id {continue}
+		if w == nil || w.parent == 0 || w.space != s.id {
+			continue
+		}
 		if p := m.windows[w.parent]; p != nil && p.space == s.id {
 			parent_before[p.id] = p.frame
 		}
@@ -818,15 +941,13 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		}
 	}
 	s.view.scroll.geometry_enabled =
-		m.scroll_animate &&
-		m.animation_duration > 0 &&
-		!live_resize &&
-		m.native_resize_window == 0
+		m.scroll_animate && m.animation_duration > 0 && !live_resize && m.native_resize_window == 0
 	if s.view.layout == .Scroll {
 		scroll_constraints(m, &s.view)
-		for n := layout.first(s.view.root);
-		    n != nil;
-		    n = layout.next(n) { n.column_observed = 0 }
+		for n := layout.first(s.view.root); n != nil; n = layout.next(n) {n.column_observed = 0}
+	}
+	if d := display_by_id(m, s.display); d != nil {
+		s.view.scroll.output = d.frame
 	}
 	layout.view_update(&s.view)
 	if s.view.layout == .Scroll {
@@ -846,8 +967,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		if layout.find(s.view.root, target) == nil {
 			target = s.view.scroll.focused
 		}
-		if !s.view.scroll.dragging &&
-		   (s.view.scroll.reveal || s.view.scroll.focused != target) {
+		if !s.view.scroll.dragging && (s.view.scroll.reveal || s.view.scroll.focused != target) {
 			layout.scroll_reveal(&s.view, target)
 			s.view.scroll.focused = target
 			s.view.scroll.reveal = false
@@ -856,9 +976,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 			scroll_motion_prepare(
 				&s.view,
 				m.scroll_time,
-				m.animation_duration > 0 &&
-				!live_resize &&
-				m.native_resize_window == 0,
+				m.animation_duration > 0 && !live_resize && m.native_resize_window == 0,
 			)
 			scroll_geometry_prepare(m, s)
 		}
@@ -895,10 +1013,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 					)
 				}
 			}
-			if s.view.layout != .Scroll &&
-			   n == s.view.root &&
-			   n.count == 1 &&
-			   n.zoom == nil {
+			if s.view.layout != .Scroll && n == s.view.root && n.count == 1 && n.zoom == nil {
 				if relative, chosen := w.solo_tile_frame.?; chosen {
 					r = {
 						r.x + relative.x * r.w,
@@ -922,9 +1037,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 				append(&deferred, Deferred_Frame{w, r})
 				continue
 			}
-			if camera &&
-			   math.abs(w.frame.w - r.w) < 1.5 &&
-			   math.abs(w.frame.h - r.h) < 1.5 {
+			if camera && math.abs(w.frame.w - r.w) < 1.5 && math.abs(w.frame.h - r.h) < 1.5 {
 				append(&camera_moves, Deferred_Frame{w, r})
 				continue
 			}
@@ -947,10 +1060,7 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 		   n.column_tabbed &&
 		   n.count > 0 &&
 		   n.column_raised != n.order[0] {
-			if err := perform(
-				m,
-				{kind = .Order, window = n.order[0], value = 1},
-			); err != "" {
+			if err := perform(m, {kind = .Order, window = n.order[0], value = 1}); err != "" {
 				return err
 			}
 			n.column_raised = n.order[0]
@@ -969,7 +1079,12 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 	for d in deferred {
 		if err := perform(
 			m,
-			Action{kind = .Frame, window = d.window.id, frame = d.frame, live_resize = live_resize},
+			Action {
+				kind = .Frame,
+				window = d.window.id,
+				frame = d.frame,
+				live_resize = live_resize,
+			},
 		); err != "" {
 			return err
 		}
@@ -993,10 +1108,18 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 TAB_STANDBY :: 1
 
 tab_concealable :: proc(s: ^Space, id: u32) -> bool {
-	if s.view.layout != .Scroll {return false}
+	if s.view.layout != .Scroll {
+		return false
+	}
 	n := layout.find(s.view.root, id)
-	if n == nil || !n.column_tabbed {return false}
-	for i in TAB_STANDBY + 1 ..< n.count {if n.order[i] == id {return true}}
+	if n == nil || !n.column_tabbed {
+		return false
+	}
+	for i in TAB_STANDBY + 1 ..< n.count {
+		if n.order[i] == id {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1009,14 +1132,22 @@ tab_concealable :: proc(s: ^Space, id: u32) -> bool {
 // the previous payload refused can be tried again; a rewrite that keeps the
 // boot (the same payload saving the table) does not retry.
 conceal_payload_changed :: proc(m: ^Manager) {
-	if m.conceal_journal == "" {return}
+	if m.conceal_journal == "" {
+		return
+	}
 	mtime, boot, ok := dock.conceal_journal_stamp(m.conceal_journal)
-	if !ok || mtime == m.conceal_stamp {return}
+	if !ok || mtime == m.conceal_stamp {
+		return
+	}
 	m.conceal_stamp = mtime
-	if boot == 0 || boot == m.conceal_boot {return}
+	if boot == 0 || boot == m.conceal_boot {
+		return
+	}
 	m.conceal_boot = boot
 	for _, w in m.windows {
-		if w != nil {w.conceal_refused = false}
+		if w != nil {
+			w.conceal_refused = false
+		}
 	}
 }
 
@@ -1031,14 +1162,22 @@ tab_conceal_sync :: proc(m: ^Manager, s: ^Space) {
 // in that frame's batch; a full batch falls through to a direct move.
 dialog_follow :: proc(m: ^Manager, s: ^Space, before: map[u32]Rect) {
 	for _, w in m.windows {
-		if w == nil || w.parent == 0 || w.space != s.id || managed(w) {continue}
+		if w == nil || w.parent == 0 || w.space != s.id || managed(w) {
+			continue
+		}
 		p := m.windows[w.parent]
-		if p == nil || p.space != s.id {continue}
+		if p == nil || p.space != s.id {
+			continue
+		}
 		old, ok := before[p.id]
-		if !ok {continue}
+		if !ok {
+			continue
+		}
 		dx := p.frame.x - old.x
 		dy := p.frame.y - old.y
-		if math.abs(dx) < 0.5 && math.abs(dy) < 0.5 {continue}
+		if math.abs(dx) < 0.5 && math.abs(dy) < 0.5 {
+			continue
+		}
 		frame := w.frame
 		frame.x += dx
 		frame.y += dy
@@ -1051,7 +1190,8 @@ dialog_follow :: proc(m: ^Manager, s: ^Space, before: map[u32]Rect) {
 				continue
 			}
 		}
-		if err := perform(m, {kind = .Frame, window = w.id, frame = frame, direct = true}); err != "" {
+		if err := perform(m, {kind = .Frame, window = w.id, frame = frame, direct = true});
+		   err != "" {
 			fmt.eprintln("shoji: dialog follow:", err)
 			continue
 		}
@@ -1064,36 +1204,52 @@ dialog_follow :: proc(m: ^Manager, s: ^Space, before: map[u32]Rect) {
 // one, and drops hit-testing there too. A frame that fits again restores the
 // full window-local rect. An unchanged rect is not sent.
 viewport_clip_sync :: proc(m: ^Manager, s: ^Space) {
-	if m.present == nil {return}
+	if m.present == nil {
+		return
+	}
 	if !m.viewport_clip {
 		viewport_clip_repair(m, s)
 		return
 	}
-	if s.view.layout != .Scroll {return}
+	if s.view.layout != .Scroll {
+		return
+	}
 	viewport := s.view.scroll.viewport
 	for _, win in m.windows {
-		if win == nil || win.space != s.id || !managed(win) || win.concealed {continue}
+		if win == nil || win.space != s.id || !managed(win) || win.concealed {
+			continue
+		}
 		x, y, w, h, partial := layout.viewport_clip(win.frame, viewport)
 		kind: u8 = 1
 		if partial && (w <= 0 || h <= 0) {
 			kind = 0
 			x, y, w, h = 0, 0, 0, 0
 		} else if !partial {
-			if !win.viewport_clipped {continue}
+			if !win.viewport_clipped {
+				continue
+			}
 			x, y = 0, 0
 			w = i32(math.round(win.frame.w))
 			h = i32(math.round(win.frame.h))
-			if w <= 0 || h <= 0 {continue}
+			if w <= 0 || h <= 0 {
+				continue
+			}
 		}
 		if win.viewport_clipped == partial &&
-		   win.clip_x == x && win.clip_y == y && win.clip_w == w && win.clip_h == h {
+		   win.clip_x == x &&
+		   win.clip_y == y &&
+		   win.clip_w == w &&
+		   win.clip_h == h {
 			continue
 		}
 		req := dock.Present_Request {
-			window = win.id,
-			mask = dock.PRESENT_CLIP | dock.PRESENT_EVENT,
+			window     = win.id,
+			mask       = dock.PRESENT_CLIP | dock.PRESENT_EVENT,
 			event_kind = kind,
-			x = x, y = y, w = w, h = h,
+			x          = x,
+			y          = y,
+			w          = w,
+			h          = h,
 		}
 		if err := m.present(m.backend_user, req); err != "" {
 			if !m.clip_noted {
@@ -1111,14 +1267,19 @@ viewport_clip_sync :: proc(m: ^Manager, s: ^Space) {
 // A failure stops this flush; the next flush retries.
 viewport_clip_repair :: proc(m: ^Manager, s: ^Space) {
 	for _, win in m.windows {
-		if win == nil || win.space != s.id || !managed(win) || win.clip_repaired {continue}
+		if win == nil || win.space != s.id || !managed(win) || win.clip_repaired {
+			continue
+		}
 		// GlobalClipShape is not window-local. A rect of the window's own size
 		// at the origin cuts the bottom (and the right) by the window origin.
 		clip := dock.Present_Request {
-			window = win.id,
-			mask = dock.PRESENT_CLIP,
+			window     = win.id,
+			mask       = dock.PRESENT_CLIP,
 			event_kind = 1,
-			x = -32768, y = -32768, w = 65536, h = 65536,
+			x          = -32768,
+			y          = -32768,
+			w          = 65536,
+			h          = 65536,
 		}
 		if err := m.present(m.backend_user, clip); err != "" {
 			if !m.clip_noted {
@@ -1131,10 +1292,13 @@ viewport_clip_repair :: proc(m: ^Manager, s: ^Space) {
 		eh := i32(math.round(win.frame.h))
 		if ew > 0 && eh > 0 {
 			event := dock.Present_Request {
-				window = win.id,
-				mask = dock.PRESENT_EVENT,
+				window     = win.id,
+				mask       = dock.PRESENT_EVENT,
 				event_kind = 1,
-				x = 0, y = 0, w = ew, h = eh,
+				x          = 0,
+				y          = 0,
+				w          = ew,
+				h          = eh,
 			}
 			if err := m.present(m.backend_user, event); err != "" {
 				if !m.clip_noted {
@@ -1151,32 +1315,51 @@ viewport_clip_repair :: proc(m: ^Manager, s: ^Space) {
 
 tab_conceal_pass :: proc(m: ^Manager, s: ^Space, conceal: bool) {
 	for _, w in m.windows {
-		if w == nil || w.space != s.id {continue}
+		if w == nil || w.space != s.id {
+			continue
+		}
 		want := m.tab_conceal && managed(w) && w.windowed_frame == nil && tab_concealable(s, w.id)
-		if !want {w.conceal_refused = false}
-		if want != conceal {continue}
+		if !want {
+			w.conceal_refused = false
+		}
+		if want != conceal {
+			continue
+		}
 		// Before the early-out: a reveal that already matched still has to
 		// retry a shadow the payload did not put back.
-		if !want && w.shadow_held {tab_shadow_restore(m, w)}
+		if !want && w.shadow_held {
+			tab_shadow_restore(m, w)
+		}
 		if want == w.concealed || (want && w.conceal_refused) {
-			if want && w.shadow && !w.shadow_held {tab_shadow_hold(m, w)}
+			if want && w.shadow && !w.shadow_held {
+				tab_shadow_hold(m, w)
+			}
 			continue
 		}
 		if err := perform(m, {kind = .Conceal, window = w.id, flag = want}); err != "" {
 			// A refused conceal keeps today's ordered-behind tab. A failed
 			// reveal stays recorded and is retried by the next flush.
-			if want {w.conceal_refused = true}
+			if want {
+				w.conceal_refused = true
+			}
 			fmt.eprintln("shoji: tab concealment:", err)
 			continue
 		}
 		w.concealed = want
-		if want && w.shadow {tab_shadow_hold(m, w)}
-		motion_trace_record(&m.motion_trace, {kind = want ? "tab-conceal" : "tab-reveal", window = w.id, space = s.id})
+		if want && w.shadow {
+			tab_shadow_hold(m, w)
+		}
+		motion_trace_record(
+			&m.motion_trace,
+			{kind = want ? "tab-conceal" : "tab-reveal", window = w.id, space = s.id},
+		)
 	}
 }
 
 tab_shadow_hold :: proc(m: ^Manager, w: ^Window) {
-	if !w.shadow || w.shadow_held {return}
+	if !w.shadow || w.shadow_held {
+		return
+	}
 	if err := perform(m, {kind = .Shadow, window = w.id, flag = false}); err != "" {
 		fmt.eprintln("shoji: tab shadow:", err)
 		return
@@ -1185,7 +1368,9 @@ tab_shadow_hold :: proc(m: ^Manager, w: ^Window) {
 }
 
 tab_shadow_restore :: proc(m: ^Manager, w: ^Window) {
-	if !w.shadow_held {return}
+	if !w.shadow_held {
+		return
+	}
 	if err := perform(m, {kind = .Shadow, window = w.id, flag = true}); err != "" {
 		fmt.eprintln("shoji: tab shadow:", err)
 		return
@@ -1197,7 +1382,9 @@ tab_shadow_restore :: proc(m: ^Manager, w: ^Window) {
 // Reveals every concealed window, at shutdown or when concealment is disabled.
 tab_conceal_release :: proc(m: ^Manager) {
 	for _, w in m.windows {
-		if w == nil || !w.concealed {continue}
+		if w == nil || !w.concealed {
+			continue
+		}
 		if err := perform(m, {kind = .Conceal, window = w.id, flag = false}); err != "" {
 			fmt.eprintln("shoji: tab reveal:", err)
 			continue
@@ -1246,11 +1433,7 @@ select_space :: proc(m: ^Manager, text: string) -> ^Space {
 	return nil
 }
 
-select_window :: proc(
-	m: ^Manager,
-	text: string,
-	reference: u32 = 0,
-) -> ^Window {
+select_window :: proc(m: ^Manager, text: string, reference: u32 = 0) -> ^Window {
 	if text == "mouse" {
 		return m.windows[m.mouse_window]
 	}
@@ -1281,8 +1464,7 @@ select_window :: proc(
 				continue
 			}
 			area := math.floor(candidate.frame.w * candidate.frame.h)
-			if best == nil ||
-			   (text == "largest" ? area > best_area : area <= best_area) {
+			if best == nil || (text == "largest" ? area > best_area : area <= best_area) {
 				best = candidate; best_area = area
 			}
 		}
@@ -1301,10 +1483,7 @@ select_window :: proc(
 	}
 	n := layout.find(s.view.root, w.id)
 	if s.view.layout == .Scroll &&
-	   (text == "north" ||
-			   text == "south" ||
-			   text == "east" ||
-			   text == "west") {
+	   (text == "north" || text == "south" || text == "east" || text == "west") {
 		return scroll_direction(m, s, w, text)
 	}
 	target: ^layout.Node
@@ -1325,16 +1504,9 @@ select_window :: proc(
 		target = layout.neighbor(s.view.root, n, .South)
 	case "west":
 		target = layout.neighbor(s.view.root, n, .West)
-	case "sibling",
-	     "first_nephew",
-	     "second_nephew",
-	     "uncle",
-	     "first_cousin",
-	     "second_cousin":
+	case "sibling", "first_nephew", "second_nephew", "uncle", "first_cousin", "second_cousin":
 		branch := n
-		if text == "uncle" ||
-		   text == "first_cousin" ||
-		   text == "second_cousin" {
+		if text == "uncle" || text == "first_cousin" || text == "second_cousin" {
 			if branch == nil {
 				return nil
 			}; branch = branch.parent
@@ -1342,10 +1514,7 @@ select_window :: proc(
 		if branch == nil || branch.parent == nil {
 			return nil
 		}
-		target =
-			branch.parent.left == branch \
-				? branch.parent.right \
-				: branch.parent.left
+		target = branch.parent.left == branch ? branch.parent.right : branch.parent.left
 		if text == "first_nephew" || text == "first_cousin" {
 			if target == nil {
 				return nil
@@ -1416,10 +1585,7 @@ set_layout :: proc(m: ^Manager, s: ^Space, mode: layout.Layout) {
 	for id, w in m.windows {
 		// Choosing a tiled layout explicitly adopts existing eligible windows;
 		// a newcomer still preparing must continue through admission.
-		if w.space == s.id &&
-		   mode != .Float &&
-		   w.opening.phase == .Excluded &&
-		   managed(w) {
+		if w.space == s.id && mode != .Float && w.opening.phase == .Excluded && managed(w) {
 			w.opening.phase = .Admitted
 		}
 		if w.space == s.id && layout_admitted(w) {
@@ -1436,6 +1602,9 @@ set_layout :: proc(m: ^Manager, s: ^Space, mode: layout.Layout) {
 	for id, i in ids {
 		insertion := mode == .Scroll && i > 0 ? ids[i - 1] : u32(0)
 		layout.add(&s.view, id, insertion)
+		if mode == .Scroll {
+			scroll_rule_realize(m, m.windows[id])
+		}
 	}
 	layout.view_update(&s.view)
 }

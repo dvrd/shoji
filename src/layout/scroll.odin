@@ -1,9 +1,9 @@
 package layout
 
+import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
-import "core:fmt"
 
 // Scroll layout and viewport
 // ------------------------------------------------------------------------
@@ -11,37 +11,47 @@ import "core:fmt"
 // One camera trajectory drives the strip; column geometry stays in target
 // coordinates and presentation translates every row by the same displacement.
 Scroll_Motion :: struct {
-	initialized, active: bool,
-	position, target, velocity: f64,
+	initialized, active:           bool,
+	position, target, velocity:    f64,
 	from, initial_velocity, began: f64,
-	anchor: u32,
+	anchor:                        u32,
 }
 
 // The tree supplies column membership and ordering. Split ratios are unused:
 // widths and viewport position are independent of BSP partition geometry.
 Scroll_State :: struct {
-	motion: Scroll_Motion,
-	dragging, fill_after_removal: bool,
+	motion:                            Scroll_Motion,
+	dragging, fill_after_removal:      bool,
 	geometry_enabled, geometry_active: bool,
-	geometry_began: f64,
-	viewport: Rect,
-	offset, content_width: f64,
-	focused: u32,
-	reveal: bool,
-	centered: bool,
+	geometry_began:                    f64,
+	viewport:                          Rect,
+	offset, content_width:             f64,
+	focused:                           u32,
+	reveal:                            bool,
+	centered:                          bool,
 	// Anchor by window identity, so resizing or removing earlier columns does
 	// not move the active column on screen. offset remains the queryable camera.
-	anchor: u32,
-	anchor_x: f64,
-	initialized: bool,
-	opened, return_to: u32,
-	return_x: f64,
+	anchor:                            u32,
+	anchor_x:                          f64,
+	initialized:                       bool,
+	opened, return_to:                 u32,
+	return_x:                          f64,
+	// Full output, including the area under system bars. Zero uses the viewport.
+	output:                            Rect,
 }
 
-scroll_gap :: proc(v: ^View) -> f64 { return v.gap_enabled ? v.gap : 0 }
+scroll_gap :: proc(v: ^View) -> f64 {return v.gap_enabled ? v.gap : 0}
 
 tab_indicator_gutter :: proc(v: ^View, n: ^Node) -> f64 {
-	return n != nil && n.column_tabbed && n.count > 1 && n.zoom == nil ? v.tab_indicator_width + 5 : 0
+	if n == nil ||
+	   !n.column_tabbed ||
+	   n.count < 2 ||
+	   n.zoom != nil ||
+	   n.column_maximize ||
+	   n.column_cover {
+		return 0
+	}
+	return v.tab_indicator_width + 5
 }
 
 scroll_update :: proc(v: ^View) {
@@ -58,32 +68,27 @@ scroll_update :: proc(v: ^View) {
 			continue
 		}
 		// Existing drag/warp callers may assign a pixel width directly.
+		previous := n.column_resolved
 		if n.column_width > 0 && n.column_width != n.column_resolved {
 			n.column_size = {.Fixed, n.column_width}
 			n.column_preset = nil
 		}
-		size :=
-			n.column_size.kind == .Default \
-				? v.scroll_options.default_width \
-				: n.column_size
-		requested :=
-			n.column_full \
-				? max(1, width - 2 * gap) \
-				: scroll_size_value(v, size)
+		size := n.column_size.kind == .Default ? v.scroll_options.default_width : n.column_size
+		requested := n.column_full ? max(1, width - 2 * gap) : scroll_size_value(v, size)
 		n.column_width = clamp(
 			requested,
 			max(1, n.column_min),
-			max(
-				max(1, n.column_min),
-				n.column_max > 0 ? n.column_max : 100000,
-			),
+			max(max(1, n.column_min), n.column_max > 0 ? n.column_max : 100000),
 		)
-		if find(v.root, v.scroll.anchor) == n &&
-		   n.column_resolved != n.column_width {
+		// An accepted size can differ from the request. The anchored column
+		// still has to be fitted, or its new edge stays off screen.
+		if n.column_observed > 0 {
+			n.column_width = n.column_observed
+		}
+		if find(v.root, v.scroll.anchor) == n && previous != n.column_width {
 			v.scroll.reveal = true
 		}
 		n.column_resolved = n.column_width
-		if n.column_observed > 0 {n.column_width, n.column_resolved = n.column_observed, n.column_observed}
 		total += n.column_width + gap
 	}
 	if v.scroll.fill_after_removal {
@@ -93,19 +98,27 @@ scroll_update :: proc(v: ^View) {
 		for remaining > 0.01 {
 			eligible := 0
 			for n := first(v.root); n != nil; n = next(n) {
-				if n.count > 0 && (n.column_max <= 0 || n.column_width < n.column_max - 0.01) { eligible += 1 }
+				if n.count > 0 && (n.column_max <= 0 || n.column_width < n.column_max - 0.01) {
+					eligible += 1
+				}
 			}
-			if eligible == 0 { break }
+			if eligible == 0 {
+				break
+			}
 			share := remaining / f64(eligible)
 			added: f64
 			for n := first(v.root); n != nil; n = next(n) {
-				if n.count == 0 { continue }
+				if n.count == 0 {
+					continue
+				}
 				room := n.column_max > 0 ? max(0, n.column_max - n.column_width) : share
 				increase := min(share, room)
 				n.column_width += increase; n.column_resolved = n.column_width
 				added += increase
 			}
-			if added <= 0.01 { break }
+			if added <= 0.01 {
+				break
+			}
 			total += added; remaining -= added
 		}
 	}
@@ -118,23 +131,33 @@ scroll_update :: proc(v: ^View) {
 		}
 		if n == anchor {
 			offset := logical_x - v.scroll.anchor_x
-			if !v.scroll.geometry_enabled && v.scroll.motion.initialized && v.scroll.motion.anchor == v.scroll.anchor {
+			if !v.scroll.geometry_enabled &&
+			   v.scroll.motion.initialized &&
+			   v.scroll.motion.anchor == v.scroll.anchor {
 				shift := offset - v.scroll.offset
-				v.scroll.motion.position += shift; v.scroll.motion.from += shift; v.scroll.motion.target += shift
+				v.scroll.motion.position += shift; v.scroll.motion.from += shift
+				v.scroll.motion.target += shift
 			}
 			v.scroll.offset = offset; break
 		}
 		logical_x += n.column_width + gap
-	}
-	if v.scroll.fill_after_removal && !v.scroll.dragging && !v.scroll.centered {
-		v.scroll.offset = clamp(v.scroll.offset, -gap, max(-gap, v.scroll.content_width - width + gap))
 	}
 	x := r.x - v.scroll.offset
 	for n := first(v.root); n != nil; n = next(n) {
 		if n.count == 0 {
 			continue
 		}
-		n.frame = {x, r.y + gap, n.column_width, max(1, r.h - 2 * gap)}
+		if n.column_cover {
+			out := v.scroll.output
+			if out.w <= 0 || out.h <= 0 {
+				out = r
+			}
+			n.frame = out
+		} else if n.column_maximize {
+			n.frame = r
+		} else {
+			n.frame = {x, r.y + gap, n.column_width, max(1, r.h - 2 * gap)}
+		}
 		x += n.column_width + gap
 	}
 }
@@ -183,9 +206,7 @@ scroll_before_remove :: proc(v: ^View, id: u32) {
 		return
 	}
 	v.scroll.fill_after_removal = true
-	if v.scroll.opened == id &&
-	   v.scroll.focused == id &&
-	   find(v.root, v.scroll.return_to) != nil {
+	if v.scroll.opened == id && v.scroll.focused == id && find(v.root, v.scroll.return_to) != nil {
 		v.scroll.anchor = v.scroll.return_to
 		v.scroll.anchor_x = v.scroll.return_x
 		v.scroll.focused = v.scroll.return_to
@@ -222,8 +243,7 @@ scroll_reveal :: proc(v: ^View, window: u32, center: bool = false) {
 		if old != nil && old != n {
 			neighbor := old.frame.x < n.frame.x ? previous(n) : next(n)
 			if neighbor != nil &&
-			   neighbor.column_width + n.column_width + 3 * scroll_gap(v) >
-				   r.w {
+			   neighbor.column_width + n.column_width + 3 * scroll_gap(v) > r.w {
 				center = true
 			}
 		}
@@ -255,7 +275,14 @@ scroll_window_frame :: proc(
 	camera: Maybe(f64) = nil,
 ) -> Rect {
 	r := frame_for(n)
-	if position, current := camera.?; current {r.x += v.scroll.offset - position}
+	// Maximize fills the usable viewport. Cover fills the output, bars included.
+	// Neither keeps the column gap or the tab gutter. Full-width still does.
+	if n.column_cover || n.column_maximize {
+		return n.frame
+	}
+	if position, current := camera.?; current {
+		r.x += v.scroll.offset - position
+	}
 	if n.zoom != nil {
 		return v.scroll.viewport
 	}
@@ -277,7 +304,7 @@ scroll_window_frame :: proc(
 		gap := min(scroll_gap(v), max(0, r.h / f64(n.count)))
 		for i in 0 ..< n.count {
 			if n.windows[i] == window {
-				for j in 0 ..< i { r.y += n.row_heights[j] + gap }
+				for j in 0 ..< i {r.y += n.row_heights[j] + gap}
 				r.h = max(1, n.row_heights[i])
 				break
 			}
@@ -289,7 +316,11 @@ scroll_window_frame :: proc(
 scroll_park_frame :: proc(v: ^View, frame: Rect) -> Rect {
 	r := frame
 	sliver := min(32, v.scroll.viewport.w, r.w)
-	r.x = clamp(r.x, v.scroll.viewport.x - r.w + sliver, v.scroll.viewport.x + v.scroll.viewport.w - sliver)
+	r.x = clamp(
+		r.x,
+		v.scroll.viewport.x - r.w + sliver,
+		v.scroll.viewport.x + v.scroll.viewport.w - sliver,
+	)
 	return r
 }
 
@@ -297,7 +328,9 @@ scroll_park_frame :: proc(v: ^View, frame: Rect) -> Rect {
 // false when the frame sits inside (half a pixel of slack). No overlap is an
 // empty clip. A zero-size input is not a clip.
 viewport_clip :: proc(frame, viewport: Rect) -> (x, y, w, h: i32, partial: bool) {
-	if frame.w <= 0 || frame.h <= 0 || viewport.w <= 0 || viewport.h <= 0 {return}
+	if frame.w <= 0 || frame.h <= 0 || viewport.w <= 0 || viewport.h <= 0 {
+		return
+	}
 	if frame.x >= viewport.x - 0.5 &&
 	   frame.y >= viewport.y - 0.5 &&
 	   frame.x + frame.w <= viewport.x + viewport.w + 0.5 &&
@@ -308,12 +341,16 @@ viewport_clip :: proc(frame, viewport: Rect) -> (x, y, w, h: i32, partial: bool)
 	y0 := max(frame.y, viewport.y)
 	x1 := min(frame.x + frame.w, viewport.x + viewport.w)
 	y1 := min(frame.y + frame.h, viewport.y + viewport.h)
-	if x1 <= x0 || y1 <= y0 {return 0, 0, 0, 0, true}
+	if x1 <= x0 || y1 <= y0 {
+		return 0, 0, 0, 0, true
+	}
 	x = i32(math.round(x0 - frame.x))
 	y = i32(math.round(y0 - frame.y))
 	w = i32(math.round(x1 - x0))
 	h = i32(math.round(y1 - y0))
-	if w <= 0 || h <= 0 {return 0, 0, 0, 0, true}
+	if w <= 0 || h <= 0 {
+		return 0, 0, 0, 0, true
+	}
 	partial = true
 	return
 }
@@ -341,7 +378,7 @@ scroll_set_width :: proc(v: ^View, window: u32, operand: string) -> string {
 		if !valid {
 			return "invalid proportional column width"
 		}
-		n.column_size = size; n.column_preset = nil; n.column_full = false
+		n.column_size = size; n.column_preset = nil; column_span_clear(n)
 		n.column_revision += 1
 		v.scroll.reveal = true; return ""
 	case:
@@ -353,16 +390,22 @@ scroll_set_width :: proc(v: ^View, window: u32, operand: string) -> string {
 	n.column_size = {.Fixed, value}
 	n.column_revision += 1
 	n.column_preset = nil
-	n.column_full = false
+	column_span_clear(n)
 	v.scroll.reveal = true
 	return ""
+}
+
+column_span_clear :: proc(n: ^Node) {
+	n.column_full = false
+	n.column_maximize = false
+	n.column_cover = false
 }
 
 // Column and row sizing
 // ------------------------------------------------------------------------
 
 Scroll_Size :: struct {
-	kind: enum {
+	kind:  enum {
 		Default,
 		Fixed,
 		Proportion,
@@ -370,18 +413,18 @@ Scroll_Size :: struct {
 	value: f64,
 }
 Scroll_Options :: struct {
-	center: enum {
+	center:              enum {
 		Never,
 		Always,
 		On_Overflow,
 	},
-	center_single: bool,
-	default_tabbed: bool,
-	warp_pointer: bool,
-	default_width: Scroll_Size,
-	presets: [16]Scroll_Size,
-	preset_count: int,
-	height_presets: [16]Scroll_Size,
+	center_single:       bool,
+	default_tabbed:      bool,
+	warp_pointer:        bool,
+	default_width:       Scroll_Size,
+	presets:             [16]Scroll_Size,
+	preset_count:        int,
+	height_presets:      [16]Scroll_Size,
 	height_preset_count: int,
 }
 scroll_options_defaults :: proc() -> Scroll_Options {
@@ -398,10 +441,7 @@ scroll_options_defaults :: proc() -> Scroll_Options {
 }
 scroll_size_value :: proc(v: ^View, size: Scroll_Size) -> f64 {
 	if size.kind == .Proportion {
-		return max(
-			1,
-			(v.scroll.viewport.w - scroll_gap(v)) * size.value - scroll_gap(v),
-		)
+		return max(1, (v.scroll.viewport.w - scroll_gap(v)) * size.value - scroll_gap(v))
 	}
 	return max(1, size.value)
 }
@@ -423,11 +463,7 @@ scroll_parse_size :: proc(text: string) -> (Scroll_Size, bool) {
 	return {}, false
 }
 scroll_size_text :: proc(size: Scroll_Size) -> string {
-	return fmt.tprintf(
-		"%s:%g",
-		size.kind == .Proportion ? "ratio" : "abs",
-		size.value,
-	)
+	return fmt.tprintf("%s:%g", size.kind == .Proportion ? "ratio" : "abs", size.value)
 }
 
 scroll_cycle_width :: proc(v: ^View, n: ^Node, reverse: bool) {
@@ -440,9 +476,7 @@ scroll_cycle_width :: proc(v: ^View, n: ^Node, reverse: bool) {
 		for step in 0 ..< count {
 			i := reverse ? count - 1 - step : step
 			width := scroll_size_value(v, v.scroll_options.presets[i])
-			if reverse \
-				   ? width + 1 < n.column_width \
-				   : n.column_width + 1 < width {
+			if reverse ? width + 1 < n.column_width : n.column_width + 1 < width {
 				index = i; break
 			}
 		}
@@ -450,7 +484,7 @@ scroll_cycle_width :: proc(v: ^View, n: ^Node, reverse: bool) {
 	n.column_size = v.scroll_options.presets[index]
 	n.column_revision += 1
 	n.column_preset = index
-	n.column_full = false
+	column_span_clear(n)
 	v.scroll.reveal = true
 }
 
@@ -459,6 +493,32 @@ scroll_append_row :: proc(n: ^Node, id: u32) {
 	n.windows[n.count] = id
 	n.order[n.count] = id
 	n.count += 1
+}
+
+// Inserts a visible row. `order[0]` stays the active window.
+scroll_insert_row :: proc(n: ^Node, id: u32, index: int) -> bool {
+	if n == nil || id == 0 || n.count >= MAX_STACK {
+		return false
+	}
+	for i in 0 ..< n.count {
+		if n.windows[i] == id {
+			return false
+		}
+	}
+	at := index
+	if at < 0 {
+		at = 0
+	}
+	if at > n.count {
+		at = n.count
+	}
+	for i := n.count; i > at; i -= 1 {
+		n.windows[i] = n.windows[i - 1]
+	}
+	n.windows[at] = id
+	n.order[n.count] = id
+	n.count += 1
+	return true
 }
 
 scroll_move_column :: proc(v: ^View, n: ^Node, west: bool) {
@@ -470,11 +530,12 @@ scroll_move_column :: proc(v: ^View, n: ^Node, west: bool) {
 	swap(n, other)
 	n.column_size, other.column_size = other.column_size, n.column_size
 	n.column_width, other.column_width = other.column_width, n.column_width
-	n.column_resolved, other.column_resolved =
-		other.column_resolved, n.column_resolved
+	n.column_resolved, other.column_resolved = other.column_resolved, n.column_resolved
 	n.column_preset, other.column_preset = other.column_preset, n.column_preset
 	n.column_revision, other.column_revision = other.column_revision, n.column_revision
 	n.column_full, other.column_full = other.column_full, n.column_full
+	n.column_maximize, other.column_maximize = other.column_maximize, n.column_maximize
+	n.column_cover, other.column_cover = other.column_cover, n.column_cover
 	n.column_tabbed, other.column_tabbed = other.column_tabbed, n.column_tabbed
 	n.column_raised, other.column_raised = 0, 0
 	v.scroll.opened, v.scroll.return_to = 0, 0

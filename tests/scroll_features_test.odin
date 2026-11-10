@@ -236,6 +236,34 @@ scroll_tab_indicators_follow_stable_order_and_active_window :: proc(t: ^testing.
 }
 
 @(test)
+scroll_unfocused_tabbed_columns_keep_indicators :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	niri_open(&m, 2); niri_open(&m, 3); niri_open(&m, 4)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--stack", "2"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "3", "--stack", "4"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--column-display", "tabbed"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "3", "--column-display", "tabbed"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--focus"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	focused := m.windows[1].frame
+	tabs, count := e.tab_indicators(&m, focused)
+	testing.expect_value(t, count, 4)
+	testing.expect_value(t, tabs[0].window, u32(1))
+	testing.expect_value(t, tabs[1].window, u32(2))
+	testing.expect(t, tabs[0].active && !tabs[1].active && !tabs[2].active && !tabs[3].active)
+	testing.expect_value(t, tabs[2].window, u32(3))
+	testing.expect_value(t, tabs[3].window, u32(4))
+	testing.expect(t, tabs[2].frame.x != tabs[0].frame.x)
+	other := layout.find(m.spaces[0].view.root, 3)
+	testing.expect(t, other != nil && other != layout.find(m.spaces[0].view.root, 1))
+	parked := m.windows[other.order[0]]
+	parked.frame.x = m.spaces[0].view.scroll.viewport.x - parked.frame.w - 10
+	_, count = e.tab_indicators(&m, focused)
+	testing.expect_value(t, count, 2)
+}
+
+@(test)
 scroll_tab_indicator_position_changes_layout_and_preserves_tab_order :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)

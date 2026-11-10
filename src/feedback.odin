@@ -831,6 +831,55 @@ Tab_Indicator :: struct {
 	active: bool,
 }
 
+tab_column_complete :: proc(m: ^Manager, n: ^layout.Node) -> bool {
+	if n == nil || !n.column_tabbed || n.count < 2 {return false}
+	for i in 0 ..< n.count {
+		if m.windows[n.windows[i]] == nil {return false}
+	}
+	return true
+}
+
+tab_column_on_screen :: proc(frame, viewport: Rect) -> bool {
+	return frame.w > 0 && frame.h > 0 &&
+		frame.x < viewport.x + viewport.w && frame.x + frame.w > viewport.x &&
+		frame.y < viewport.y + viewport.h && frame.y + frame.h > viewport.y
+}
+
+// Appends one column's tabs. `focused` is the space's focused window, so only
+// that tab uses the active color. A full buffer stops early.
+tab_indicator_place :: proc(
+	m: ^Manager,
+	s: ^Space,
+	n: ^layout.Node,
+	frame: Rect,
+	focused: u32,
+	result: []Tab_Indicator,
+	start_count: int,
+) -> int {
+	count := start_count
+	if count >= len(result) || frame.w < 8 || frame.h < 16 {return count}
+	slot := (s.view.tab_indicator_top ? frame.w : frame.h) * 0.5 / f64(n.count)
+	gap := min(m.tab_indicator_gap, slot * 0.8)
+	width := s.view.tab_indicator_width
+	x := frame.x - width - 5
+	if !s.view.tab_indicator_top && x < s.view.scroll.viewport.x {
+		x = frame.x + max(m.focus_ring.width, 0) + 6
+	}
+	for i in 0 ..< n.count {
+		if count >= len(result) {break}
+		tab := m.windows[n.windows[i]]
+		start := f64(i) * slot + (i > 0 ? gap / 2 : 0)
+		end := f64(i + 1) * slot - (i + 1 < n.count ? gap / 2 : 0)
+		r := Rect{x, frame.y + frame.h * 0.25 + start, width, end - start}
+		if s.view.tab_indicator_top {
+			r = {frame.x + frame.w * 0.25 + start, frame.y - width - 5, end - start, width}
+		}
+		result[count] = {tab.id, tab.generation, r, tab.id == focused}
+		count += 1
+	}
+	return count
+}
+
 tab_indicators :: proc(m: ^Manager, frame: Rect) -> ([layout.MAX_STACK]Tab_Indicator, int) {
 	result: [layout.MAX_STACK]Tab_Indicator
 	w := m.windows[m.focused]
@@ -841,29 +890,29 @@ tab_indicators :: proc(m: ^Manager, frame: Rect) -> ([layout.MAX_STACK]Tab_Indic
 	if s == nil || !s.visible || s.view.layout != .Scroll {
 		return result, 0
 	}
-	n := layout.find(s.view.root, w.id)
-	if n == nil || !n.column_tabbed || n.count < 2 || n.order[0] != w.id {
-		return result, 0
-	}
-	slot := (s.view.tab_indicator_top ? frame.w : frame.h) * 0.5 / f64(n.count)
-	gap := min(m.tab_indicator_gap, slot * 0.8)
-	width := s.view.tab_indicator_width
-	x := frame.x - width - 5
-	if !s.view.tab_indicator_top && x < s.view.scroll.viewport.x {
-		x = frame.x + max(m.focus_ring.width, 0) + 6
-	}
-	for i in 0 ..< n.count {
-		tab := m.windows[n.windows[i]]
-		if tab == nil { return {}, 0 }
-		start := f64(i) * slot + (i > 0 ? gap / 2 : 0)
-		end := f64(i + 1) * slot - (i + 1 < n.count ? gap / 2 : 0)
-		r := Rect{x, frame.y + frame.h * 0.25 + start, width, end - start}
-		if s.view.tab_indicator_top {
-			r = {frame.x + frame.w * 0.25 + start, frame.y - width - 5, end - start, width}
+	// The focused column uses the presented frame. A missing tab there still
+	// drops every indicator, matching the single-column failure.
+	focused_node := layout.find(s.view.root, w.id)
+	count := 0
+	if focused_node != nil && focused_node.column_tabbed && focused_node.count >= 2 {
+		if !tab_column_complete(m, focused_node) {return {}, 0}
+		if focused_node.order[0] == w.id {
+			count = tab_indicator_place(m, s, focused_node, frame, w.id, result[:], count)
 		}
-		result[i] = {tab.id, tab.generation, r, tab.id == w.id}
 	}
-	return result, n.count
+	// A window still being prepared has not joined a column. Other columns
+	// keep their indicators only once focus has settled on a real window.
+	viewport := s.view.scroll.viewport
+	if w.opening.phase == .Pending {return result, count}
+	for n := layout.first(s.view.root); n != nil; n = layout.next(n) {
+		if n == focused_node || !tab_column_complete(m, n) {continue}
+		active := m.windows[n.order[0]]
+		if active == nil || active.hidden || active.minimized || !tab_column_on_screen(active.frame, viewport) {
+			continue
+		}
+		count = tab_indicator_place(m, s, n, active.frame, w.id, result[:], count)
+	}
+	return result, count
 }
 
 Feedback_Corner :: enum {
@@ -1068,6 +1117,19 @@ drag_feedback :: proc(
 	)
 	if action == .None || (action == .Stack && b.count >= layout.MAX_STACK) {
 		return {}, false
+	}
+	if t.view.layout == .Scroll && (action == .North || action == .South) {
+		viewport := t.view.scroll.viewport
+		gap := layout.scroll_gap(&t.view)
+		y := action == .North ? destination.frame.y : destination.frame.y + destination.frame.h
+		y += action == .North ? -gap / 2 : gap / 2
+		frame := Rect {
+			destination.frame.x,
+			clamp(y - 2, viewport.y, max(viewport.y, viewport.y + viewport.h - 4)),
+			max(1, destination.frame.w),
+			min(4, viewport.h),
+		}
+		return {window = target, frame = frame, color = m.feedback_color, solid = true}, true
 	}
 	if t.view.layout == .Scroll && (action == .West || action == .East) {
 		viewport := t.view.scroll.viewport
