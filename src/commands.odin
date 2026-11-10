@@ -1,9 +1,9 @@
 package shoji
 
-import "core:strings"
+import "core:encoding/json"
 import "core:math"
 import "core:strconv"
-import "core:encoding/json"
+import "core:strings"
 import layout "layout"
 
 // Command dispatch
@@ -70,8 +70,12 @@ parse_numbers :: proc(text: string, values: []f64) -> bool {
 }
 
 select_display :: proc(m: ^Manager, text: string) -> ^Display {
-	if text == "recent" {return display_by_id(m, m.last_display)}
-	if text == "mouse" {return display_by_id(m, m.mouse_display)}
+	if text == "recent" {
+		return display_by_id(m, m.last_display)
+	}
+	if text == "mouse" {
+		return display_by_id(m, m.mouse_display)
+	}
 	current := space_by_id(m, m.active_space)
 	if text == "" {
 		if current != nil {
@@ -87,12 +91,16 @@ select_display :: proc(m: ^Manager, text: string) -> ^Display {
 	}
 	if current != nil && (text == "north" || text == "east" || text == "south" || text == "west") {
 		origin := display_by_id(m, current.display)
-		if origin == nil {return nil}
+		if origin == nil {
+			return nil
+		}
 		ox, oy := origin.frame.x + origin.frame.w / 2, origin.frame.y + origin.frame.h / 2
 		best: ^Display
 		best_score := math.inf_f64(1)
 		for &candidate in m.displays {
-			if candidate.id == origin.id {continue}
+			if candidate.id == origin.id {
+				continue
+			}
 			x := candidate.frame.x + candidate.frame.w / 2 - ox
 			y := candidate.frame.y + candidate.frame.h / 2 - oy
 			major, minor: f64
@@ -106,11 +114,15 @@ select_display :: proc(m: ^Manager, text: string) -> ^Display {
 			case "west":
 				major, minor = -x, y
 			}
-			if major <= 0 {continue}
+			if major <= 0 {
+				continue
+			}
 			// Prefer the closest display in the requested direction, then the
 			// one most aligned with that direction.
 			score := major * 10000 + math.abs(minor)
-			if score < best_score {best, best_score = &candidate, score}
+			if score < best_score {
+				best, best_score = &candidate, score
+			}
 		}
 		return best
 	}
@@ -151,7 +163,9 @@ execute :: proc(m: ^Manager, args: []string) -> Response {
 	case "signal":
 		return signal_command(m, args[1:])
 	case "notify":
-		if len(args) != 2 || args[1] != "test" {return failure("usage: notify test")}
+		if len(args) != 2 || args[1] != "test" {
+			return failure("usage: notify test")
+		}
 		if m.health_notify_test == nil {
 			return failure("notifications are posted only by the daemon")
 		}
@@ -164,62 +178,62 @@ execute :: proc(m: ^Manager, args: []string) -> Response {
 // ------------------------------------------------------------------------
 
 Window_JSON :: struct {
-	opening_state: string `json:"opening-state"`,
-	resize_transitioning: bool `json:"resize-transitioning"`,
-	size_request_pending: bool `json:"size-request-pending"`,
-	width_adjusted: bool `json:"width-adjusted"`,
-	height_adjusted: bool `json:"height-adjusted"`,
-	accepted_width: f64 `json:"accepted-width"`,
-	accepted_height: f64 `json:"accepted-height"`,
-	layout_frame: Rect `json:"layout-frame"`,
-	column_index: int `json:"column-index"`,
-	column_tabbed: bool `json:"column-tabbed"`,
-	column_active: bool `json:"column-active"`,
-	column_full: bool `json:"column-full-width"`,
-	column_width_request: f64 `json:"column-width-request"`,
+	opening_state:             string `json:"opening-state"`,
+	resize_transitioning:      bool `json:"resize-transitioning"`,
+	size_request_pending:      bool `json:"size-request-pending"`,
+	width_adjusted:            bool `json:"width-adjusted"`,
+	height_adjusted:           bool `json:"height-adjusted"`,
+	accepted_width:            f64 `json:"accepted-width"`,
+	accepted_height:           f64 `json:"accepted-height"`,
+	layout_frame:              Rect `json:"layout-frame"`,
+	column_index:              int `json:"column-index"`,
+	column_tabbed:             bool `json:"column-tabbed"`,
+	column_active:             bool `json:"column-active"`,
+	column_full:               bool `json:"column-full-width"`,
+	column_width_request:      f64 `json:"column-width-request"`,
 	column_width_proportional: bool `json:"column-width-proportional"`,
-	row_height_request: f64 `json:"row-height-request"`,
-	row_weight: f64 `json:"row-weight"`,
-	id:                   u32,
-	pid:                  i32,
-	app, title:           string,
-	scratchpad:           string,
-	frame:                Rect,
-	role, subrole:        string,
-	root_window:          bool `json:"root-window"`,
-	display:              u32,
-	space:                u32,
-	level:                int,
-	sub_level:            int `json:"sub-level"`,
-	layer:                string,
-	sub_layer:            string `json:"sub-layer"`,
-	opacity:              f64,
-	split_type:           string `json:"split-type"`,
-	split_child:          string `json:"split-child"`,
-	stack_index:          int `json:"stack-index"`,
-	can_move:             bool `json:"can-move"`,
-	can_resize:           bool `json:"can-resize"`,
-	has_focus:            bool `json:"has-focus"`,
-	has_shadow:           bool `json:"has-shadow"`,
-	has_parent_zoom:      bool `json:"has-parent-zoom"`,
-	has_fullscreen_zoom:  bool `json:"has-fullscreen-zoom"`,
-	has_ax_reference:     bool `json:"has-ax-reference"`,
-	is_native_fullscreen: bool `json:"is-native-fullscreen"`,
-	is_visible:           bool `json:"is-visible"`,
-	is_minimized:         bool `json:"is-minimized"`,
-	is_hidden:            bool `json:"is-hidden"`,
-	is_floating:          bool `json:"is-floating"`,
-	is_sticky:            bool `json:"is-sticky"`,
-	is_grabbed:           bool `json:"is-grabbed"`,
-	is_concealed:         bool `json:"is-concealed"`,
+	row_height_request:        f64 `json:"row-height-request"`,
+	row_weight:                f64 `json:"row-weight"`,
+	id:                        u32,
+	pid:                       i32,
+	app, title:                string,
+	scratchpad:                string,
+	frame:                     Rect,
+	role, subrole:             string,
+	root_window:               bool `json:"root-window"`,
+	display:                   u32,
+	space:                     u32,
+	level:                     int,
+	sub_level:                 int `json:"sub-level"`,
+	layer:                     string,
+	sub_layer:                 string `json:"sub-layer"`,
+	opacity:                   f64,
+	split_type:                string `json:"split-type"`,
+	split_child:               string `json:"split-child"`,
+	stack_index:               int `json:"stack-index"`,
+	can_move:                  bool `json:"can-move"`,
+	can_resize:                bool `json:"can-resize"`,
+	has_focus:                 bool `json:"has-focus"`,
+	has_shadow:                bool `json:"has-shadow"`,
+	has_parent_zoom:           bool `json:"has-parent-zoom"`,
+	has_fullscreen_zoom:       bool `json:"has-fullscreen-zoom"`,
+	has_ax_reference:          bool `json:"has-ax-reference"`,
+	is_native_fullscreen:      bool `json:"is-native-fullscreen"`,
+	is_visible:                bool `json:"is-visible"`,
+	is_minimized:              bool `json:"is-minimized"`,
+	is_hidden:                 bool `json:"is-hidden"`,
+	is_floating:               bool `json:"is-floating"`,
+	is_sticky:                 bool `json:"is-sticky"`,
+	is_grabbed:                bool `json:"is-grabbed"`,
+	is_concealed:              bool `json:"is-concealed"`,
 }
 
 Space_JSON :: struct {
-	scroll_resizing: bool `json:"scroll-resizing"`,
-	scroll_position: f64 `json:"scroll-position"`,
-	scroll_velocity: f64 `json:"scroll-velocity"`,
-	scroll_animating: bool `json:"scroll-animating"`,
-	scroll_interacting: bool `json:"scroll-interacting"`,
+	scroll_resizing:      bool `json:"scroll-resizing"`,
+	scroll_position:      f64 `json:"scroll-position"`,
+	scroll_velocity:      f64 `json:"scroll-velocity"`,
+	scroll_animating:     bool `json:"scroll-animating"`,
+	scroll_interacting:   bool `json:"scroll-interacting"`,
 	scroll_offset:        f64 `json:"scroll-offset"`,
 	scroll_width:         f64 `json:"scroll-width"`,
 	id:                   u64,
@@ -254,13 +268,17 @@ json_text :: proc(value: $T) -> string {
 
 window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 	result := Window_JSON {
-		opening_state = w.opening.phase == .Pending ? (w.opening.wait == .Space ? "needs-more-room" : (w.opening.wait == .Backend ? "waiting-for-backend" : "preparing")) : (w.opening.phase == .Opening ? "opening" : "settled"),
+		opening_state        = w.opening.phase == .Pending \
+			? (w.opening.wait == .Space \
+					? "needs-more-room" \
+					: (w.opening.wait == .Backend ? "waiting-for-backend" : "preparing")) \
+			: (w.opening.phase == .Opening ? "opening" : "settled"),
 		resize_transitioning = w.resize_transitioning,
 		size_request_pending = w.size_feedback.pending,
-		width_adjusted = w.size_feedback.width_valid,
-		height_adjusted = w.size_feedback.height_valid,
-		accepted_width = w.size_feedback.width_valid ? w.size_feedback.accepted.w : 0,
-		accepted_height = w.size_feedback.height_valid ? w.size_feedback.accepted.h : 0,
+		width_adjusted       = w.size_feedback.width_valid,
+		height_adjusted      = w.size_feedback.height_valid,
+		accepted_width       = w.size_feedback.width_valid ? w.size_feedback.accepted.w : 0,
+		accepted_height      = w.size_feedback.height_valid ? w.size_feedback.accepted.h : 0,
 		id                   = w.id,
 		pid                  = w.pid,
 		app                  = w.app,
@@ -299,12 +317,27 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 		result.is_visible = result.is_visible && (w.sticky || s.visible)
 		if n := layout.find(s.view.root, w.id); n != nil {
 			if s.view.layout == .Scroll {
-				result.layout_frame = size_feedback_frame(w, layout.scroll_window_frame(&s.view, n, w.id, false))
-				result.column_tabbed, result.column_active, result.column_full = n.column_tabbed, n.order[0] == w.id, n.column_full
-				size := n.column_size.kind == .Default ? s.view.scroll_options.default_width : n.column_size
-				result.column_width_request, result.column_width_proportional = size.value, size.kind == .Proportion
-				result.row_height_request, result.row_weight = w.row_fixed, w.row_weight > 0 ? w.row_weight : 1
-				for column := layout.first(s.view.root); column != nil; column = layout.next(column) {result.column_index += 1; if column == n {break}}
+				result.layout_frame = size_feedback_frame(
+					w,
+					layout.scroll_window_frame(&s.view, n, w.id, false),
+				)
+				result.column_tabbed, result.column_active, result.column_full =
+					n.column_tabbed, n.order[0] == w.id, n.column_full
+				size :=
+					n.column_size.kind == .Default \
+						? s.view.scroll_options.default_width \
+						: n.column_size
+				result.column_width_request, result.column_width_proportional =
+					size.value, size.kind == .Proportion
+				result.row_height_request, result.row_weight =
+					w.row_fixed, w.row_weight > 0 ? w.row_weight : 1
+				for column := layout.first(s.view.root);
+				    column != nil;
+				    column = layout.next(column) {
+					result.column_index += 1; if column == n {
+						break
+					}
+				}
 			}
 			for i in 0 ..< n.count {
 				if n.windows[i] == w.id {
@@ -324,13 +357,15 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 
 space_json :: proc(m: ^Manager, s: ^Space) -> Space_JSON {
 	result := Space_JSON {
-		scroll_resizing = s.view.scroll.geometry_active,
-		scroll_position = m.scroll_animate && s.view.scroll.motion.initialized ? s.view.scroll.motion.position : s.view.scroll.offset,
-		scroll_velocity = s.view.scroll.motion.velocity,
-		scroll_animating = s.view.scroll.motion.active,
-		scroll_interacting = s.view.scroll.dragging,
-		scroll_offset = s.view.scroll.offset,
-		scroll_width = s.view.scroll.content_width,
+		scroll_resizing      = s.view.scroll.geometry_active,
+		scroll_position      = m.scroll_animate && s.view.scroll.motion.initialized \
+			? s.view.scroll.motion.position \
+			: s.view.scroll.offset,
+		scroll_velocity      = s.view.scroll.motion.velocity,
+		scroll_animating     = s.view.scroll.motion.active,
+		scroll_interacting   = s.view.scroll.dragging,
+		scroll_offset        = s.view.scroll.offset,
+		scroll_width         = s.view.scroll.content_width,
 		id                   = s.id,
 		uuid                 = s.uuid,
 		index                = s.index,
@@ -371,10 +406,14 @@ sort_ids :: proc(ids: []u32) {
 
 query :: proc(m: ^Manager, args: []string) -> Response {
 	if len(args) == 1 && args[0] == "--health" {
-		if m.health_report == nil {return failure("health is reported only by the daemon")}
+		if m.health_report == nil {
+			return failure("health is reported only by the daemon")
+		}
 		return success(m.health_report(m.health_user))
 	}
-	if len(args) < 2 || strings.has_prefix(args[1], "--") {return query_full(m, args)}
+	if len(args) < 2 || strings.has_prefix(args[1], "--") {
+		return query_full(m, args)
+	}
 	fields := strings.split(args[1], ",", context.temp_allocator)
 	schema: string
 	switch args[0] {
@@ -388,25 +427,34 @@ query :: proc(m: ^Manager, args: []string) -> Response {
 		return failure("unknown query")
 	}
 	shape, err := json.parse(schema, allocator = context.temp_allocator)
-	if err != nil {return failure("could not inspect query schema")}
+	if err != nil {
+		return failure("could not inspect query schema")
+	}
 	object := shape.(json.Object)
 	for field in fields {
-		if _, exists := object[field];
-		   !exists {return failure(errorf("unknown query property '%s'", field))}
+		if _, exists := object[field]; !exists {
+			return failure(errorf("unknown query property '%s'", field))
+		}
 	}
 	clean := make([dynamic]string, 0, len(args) - 1, context.temp_allocator)
-	append(&clean, args[0]);append(&clean, ..args[2:])
+	append(&clean, args[0]); append(&clean, ..args[2:])
 	response := query_full(m, clean[:])
-	if response.failed {return response}
+	if response.failed {
+		return response
+	}
 	value, parse_err := json.parse(
 		response.text,
 		parse_integers = true,
 		allocator = context.temp_allocator,
 	)
-	if parse_err != nil {return failure("could not parse query output")}
+	if parse_err != nil {
+		return failure("could not parse query output")
+	}
 	projected := project_query(value, fields)
 	data, marshal_err := json.unparse(projected, allocator = context.temp_allocator)
-	if marshal_err != nil {return failure("could not encode projected query")}
+	if marshal_err != nil {
+		return failure("could not encode projected query")
+	}
 	return success(data)
 }
 
@@ -554,30 +602,42 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 	if op == "--focus" && operand != "" {
 		s = select_space(m, operand)
 	}
-	if op == "--destroy" && operand != "" {s = select_space(m, operand)}
+	if op == "--destroy" && operand != "" {
+		s = select_space(m, operand)
+	}
 	if op == "--create" && operand != "" {
-		if d := select_display(m, operand);
-		   d !=
-		   nil {s = space_by_id(m, d.active_space)} else {return failure("could not locate display")}
+		if d := select_display(m, operand); d != nil {
+			s = space_by_id(m, d.active_space)
+		} else {
+			return failure("could not locate display")
+		}
 	}
 	if s == nil {
 		return failure("could not locate space")
 	}
 	switch op {
 	case "--scroll":
-		if s.view.layout != .Scroll {return failure("scroll requires scroll layout")}
+		if s.view.layout != .Scroll {
+			return failure("scroll requires scroll layout")
+		}
 		parts := strings.split(operand, ":", context.temp_allocator)
-		if len(parts) != 2 {return failure("scroll expects abs:pixels or rel:pixels")}
+		if len(parts) != 2 {
+			return failure("scroll expects abs:pixels or rel:pixels")
+		}
 		value, ok := strconv.parse_f64(parts[1])
-		if !ok || math.is_nan(value) || math.is_inf(value) {return failure("invalid scroll offset")}
+		if !ok || math.is_nan(value) || math.is_inf(value) {
+			return failure("invalid scroll offset")
+		}
 		switch parts[0] {
 		case "abs":
-		case "rel": value += s.view.scroll.offset
-		case: return failure("scroll expects abs or rel")
+		case "rel":
+			value += s.view.scroll.offset
+		case:
+			return failure("scroll expects abs or rel")
 		}
 		layout.scroll_pan(&s.view, value)
 		s.view.scroll.centered = false
-		s.view.scroll.focused = m.focused;s.view.scroll.reveal = false
+		s.view.scroll.focused = m.focused; s.view.scroll.reveal = false
 	case "--layout":
 		layout, ok := parse_layout(operand)
 		if !ok {
@@ -586,20 +646,26 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		set_layout(m, s, layout)
 		s.overrides["layout"] = true
 	case "--rotate":
-		if s.view.layout == .Scroll {return failure("rotation is unavailable in scroll layout")}
+		if s.view.layout == .Scroll {
+			return failure("rotation is unavailable in scroll layout")
+		}
 		angle, ok := strconv.parse_int(operand)
 		if !ok || (angle != 90 && angle != 180 && angle != 270) {
 			return failure("rotate expects 90, 180, or 270")
 		}
 		layout.rotate(s.view.root, angle)
 	case "--mirror":
-		if s.view.layout == .Scroll {return failure("mirroring is unavailable in scroll layout")}
+		if s.view.layout == .Scroll {
+			return failure("mirroring is unavailable in scroll layout")
+		}
 		if operand != "x-axis" && operand != "y-axis" {
 			return failure("mirror expects x-axis or y-axis")
 		}
 		layout.mirror(s.view.root, operand == "x-axis" ? .Horizontal : .Vertical)
 	case "--balance", "--equalize":
-		if s.view.layout == .Scroll {return failure("balance/equalize split ratios are unavailable in scroll layout")}
+		if s.view.layout == .Scroll {
+			return failure("balance/equalize split ratios are unavailable in scroll layout")
+		}
 		axis: layout.Split
 		switch operand {
 		case "", "both":
@@ -619,6 +685,7 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 	case "--label":
 		delete(s.label)
 		s.label = strings.clone(operand)
+		workspace_reconcile(m)
 	case "--toggle":
 		switch operand {
 		case "padding":
@@ -684,41 +751,82 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 		if target == nil {
 			return failure("could not locate target space")
 		}
-		if s == target {return success()}
-		if s.display !=
-		   target.display {return failure("space --move requires the same display; use --display")}
-		if s.fullscreen ||
-		   target.fullscreen {return failure("cannot reorder native fullscreen spaces")}
-		if s.index < target.index {return result(move_space_after(m, s, target))}
+		if s == target {
+			return success()
+		}
+		if s.display != target.display {
+			return failure("space --move requires the same display; use --display")
+		}
+		if s.fullscreen || target.fullscreen {
+			return failure("cannot reorder native fullscreen spaces")
+		}
+		if s.index < target.index {
+			return result(move_space_after(m, s, target))
+		}
 		previous := previous_space_on_display(m, target)
-		if previous != nil {return result(move_space_after(m, s, previous))}
+		if previous != nil {
+			return result(move_space_after(m, s, previous))
+		}
 		return result(move_space_pair(m, s, target, target, s))
 	case "--swap", "--switch":
 		target := select_space(m, operand)
-		if op == "--switch" {s = select_space(m, "")}
-		if target == nil || s == nil {return failure("could not locate target space")}
-		if s == target {return success()}
-		if s.fullscreen ||
-		   target.fullscreen {return failure("cannot swap native fullscreen spaces")}
-		if op == "--switch" &&
-		   s.display ==
-			   target.display {return result(perform(m, {kind = .Space_Focus, space = target.id}))}
+		if op == "--switch" {
+			s = select_space(m, "")
+		}
+		if target == nil || s == nil {
+			return failure("could not locate target space")
+		}
+		if s == target {
+			return success()
+		}
+		if s.fullscreen || target.fullscreen {
+			return failure("cannot swap native fullscreen spaces")
+		}
+		if op == "--switch" && s.display == target.display {
+			return result(perform(m, {kind = .Space_Focus, space = target.id}))
+		}
 		if s.display != target.display {
-			if err := swap_space_windows(m, s, target); err != "" {return failure(err)}
+			if err := swap_space_windows(m, s, target); err != "" {
+				return failure(err)
+			}
 		} else {
 			earlier, later := s, target
-			if earlier.index > later.index {earlier, later = later, earlier}
+			if earlier.index > later.index {
+				earlier, later = later, earlier
+			}
 			previous := previous_space_on_display(m, later)
-			if previous == earlier {previous = later}
-			if err := move_space_pair(m, later, earlier, earlier, previous); err != "" {return failure(err)}
+			if previous == earlier {
+				previous = later
+			}
+			if err := move_space_pair(m, later, earlier, earlier, previous); err != "" {
+				return failure(err)
+			}
 		}
-		if op == "--switch" {return result(perform(m, {kind = .Space_Focus, space = target.id}))}
+		if op == "--switch" {
+			return result(perform(m, {kind = .Space_Focus, space = target.id}))
+		}
 		return success()
+	case "--vertical":
+		return result(workspace_vertical(m, s, operand))
+	case "--send-window":
+		return result(workspace_send(m, operand, false))
+	case "--send-column":
+		return result(workspace_send(m, operand, true))
+	case "--nudge":
+		return result(workspace_nudge(m, s, operand))
+	case "--overview":
+		return result(workspace_overview_command(m, s, operand))
 	case "--display":
 		d := select_display(m, operand)
-		if d == nil {return failure("could not locate display")}
-		if s.display == d.id {return success()}
-		if s.fullscreen {return failure("cannot move a native fullscreen space")}
+		if d == nil {
+			return failure("could not locate display")
+		}
+		if s.display == d.id {
+			return success()
+		}
+		if s.fullscreen {
+			return failure("cannot move a native fullscreen space")
+		}
 		return result(perform(m, {kind = .Space_Move, space = s.id, destination = d.active_space}))
 	case:
 		return failure(errorf("unsupported space operation '%s'", op))
@@ -728,20 +836,37 @@ space_command :: proc(m: ^Manager, args: []string) -> Response {
 
 previous_space_on_display :: proc(m: ^Manager, target: ^Space) -> ^Space {
 	previous: ^Space
-	for s in m.spaces {if s == target {return previous};if s.display == target.display {previous = s}}
+	for s in m.spaces {
+		if s == target {
+			return previous
+		}; if s.display == target.display {
+			previous = s
+		}
+	}
 	return nil
 }
 
-move_space_pair :: proc(m: ^Manager, first, first_anchor, second, second_anchor: ^Space) -> string {
+move_space_pair :: proc(
+	m: ^Manager,
+	first, first_anchor, second, second_anchor: ^Space,
+) -> string {
 	original := make([dynamic]^Space, context.temp_allocator)
-	for space in m.spaces {if space.display == first.display {append(&original, space)}}
-	if err := move_space_after(m, first, first_anchor); err != "" {return err}
+	for space in m.spaces {
+		if space.display == first.display {
+			append(&original, space)
+		}
+	}
+	if err := move_space_after(m, first, first_anchor); err != "" {
+		return err
+	}
 	if err := move_space_after(m, second, second_anchor); err != "" {
 		// Rebuild the original adjacency through real backend moves. Updating only
 		// the array would conceal the partial reorder that already reached Dock.
 		for i in 1 ..< len(original) {
 			space, anchor := original[i], original[i - 1]
-			if previous_space_on_display(m, space) == anchor {continue}
+			if previous_space_on_display(m, space) == anchor {
+				continue
+			}
 			if rollback := move_space_after(m, space, anchor); rollback != "" {
 				return errorf("%s; rollback failed: %s", err, rollback)
 			}
@@ -752,19 +877,36 @@ move_space_pair :: proc(m: ^Manager, first, first_anchor, second, second_anchor:
 }
 
 move_space_after :: proc(m: ^Manager, s, anchor: ^Space) -> string {
-	if s == nil || anchor == nil || s == anchor {return "invalid space move"}
-	if err := perform(m, {kind = .Space_Move, space = s.id, destination = anchor.id});
-	   err != "" {return err}
+	if s == nil || anchor == nil || s == anchor {
+		return "invalid space move"
+	}
+	if err := perform(m, {kind = .Space_Move, space = s.id, destination = anchor.id}); err != "" {
+		return err
+	}
 	from, to := -1, -1
-	for space, i in m.spaces {if space == s {from = i};if space == anchor {to = i}}
-	if from > to {to += 1}
-	if from < to {for j := from; j < to; j += 1 {m.spaces[j] = m.spaces[j + 1]}}
-	if from > to {for j := from; j > to; j -= 1 {m.spaces[j] = m.spaces[j - 1]}}
+	for space, i in m.spaces {
+		if space == s {
+			from = i
+		}; if space == anchor {
+			to = i
+		}
+	}
+	if from > to {
+		to += 1
+	}
+	if from < to {
+		for j := from; j < to; j += 1 {m.spaces[j] = m.spaces[j + 1]}
+	}
+	if from > to {
+		for j := from; j > to; j -= 1 {m.spaces[j] = m.spaces[j - 1]}
+	}
 	m.spaces[to] = s
 	for &d in m.displays {clear(&d.spaces)}
 	for space, i in m.spaces {
 		space.index = u32(i + 1)
-		if d := display_by_id(m, space.display); d != nil {append(&d.spaces, space.id)}
+		if d := display_by_id(m, space.display); d != nil {
+			append(&d.spaces, space.id)
+		}
 	}
 	return ""
 }
@@ -777,13 +919,19 @@ Space_Window_Move :: struct {
 swap_space_windows :: proc(m: ^Manager, a, b: ^Space) -> string {
 	moves := make([dynamic]Space_Window_Move, context.temp_allocator)
 	for _, w in m.windows {
-		if w.space == a.id {append(&moves, Space_Window_Move{w, a, b, false})}
-		if w.space == b.id {append(&moves, Space_Window_Move{w, b, a, false})}
+		if w.space == a.id {
+			append(&moves, Space_Window_Move{w, a, b, false})
+		}
+		if w.space == b.id {
+			append(&moves, Space_Window_Move{w, b, a, false})
+		}
 	}
 	err := ""
 	for &move in moves {
 		if error := perform(m, {kind = .Space, window = move.window.id, space = move.target.id});
-		   error != "" {err = error;break}
+		   error != "" {
+			err = error; break
+		}
 		move.moved = true
 	}
 	if err != "" {
@@ -792,21 +940,29 @@ swap_space_windows :: proc(m: ^Manager, a, b: ^Space) -> string {
 				if rollback := perform(
 					m,
 					{kind = .Space, window = move.window.id, space = move.source.id},
-				);
-				rollback ==
-				"" {move.moved = false} else {err = errorf("%s; rollback failed: %s", err, rollback)}
+				); rollback == "" {
+					move.moved = false
+				} else {
+					err = errorf("%s; rollback failed: %s", err, rollback)
+				}
 			}
 		}
 	}
 	for move in moves {
-		if !move.moved {continue}
+		if !move.moved {
+			continue
+		}
 		move.window.space, move.window.display = move.target.id, move.target.display
 		if err != "" {
 			layout.remove(&move.source.view, move.window.id)
-			if layout_admitted(move.window) {layout.add(&move.target.view, move.window.id)}
+			if layout_admitted(move.window) {
+				layout.add(&move.target.view, move.window.id)
+			}
 		}
 	}
-	if err != "" {return err}
+	if err != "" {
+		return err
+	}
 	// The windows and their complete virtual desktop move together. Keep native
 	// Space identity and destination geometry, including when one side is empty.
 	a_frame, b_frame := a.view.frame, b.view.frame
@@ -814,7 +970,9 @@ swap_space_windows :: proc(m: ^Manager, a, b: ^Space) -> string {
 	a.view.frame, b.view.frame = a_frame, b_frame
 	a.overrides, b.overrides = b.overrides, a.overrides
 	a.label, b.label = b.label, a.label
-	if err := flush(m, a); err != "" {return err}
+	if err := flush(m, a); err != "" {
+		return err
+	}
 	return flush(m, b)
 }
 
@@ -845,8 +1003,12 @@ display_command :: proc(m: ^Manager, args: []string) -> Response {
 	}
 	if args[0] == "--space" {
 		s := select_space(m, args[1])
-		if s == nil {return failure("could not locate space")}
-		if s.display != d.id {return failure("space must belong to the selected display")}
+		if s == nil {
+			return failure("could not locate space")
+		}
+		if s.display != d.id {
+			return failure("space must belong to the selected display")
+		}
 		return result(perform(m, Action{kind = .Space_Focus, space = s.id}))
 	}
 	if args[0] == "--focus" {

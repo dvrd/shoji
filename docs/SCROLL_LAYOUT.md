@@ -70,18 +70,23 @@ with speed increasing linearly toward the edge. [Niri gesture settings](https://
 
 Hold the configured mouse modifier (Fn by default) and left-drag a tiled window
 over another column. A thin insertion marker shows the boundary where release
-will insert the window, preserving its column width preference. Center drops
-insert before/after the target instead of swapping columns; BSP keeps its existing
-swap behavior. `mouse_drop_action stack` retains the explicit central stack drop.
+will insert the window, preserving its column width preference. The top and
+bottom edges insert a row in that column and leave focus where it was. Center
+drops insert before/after the target instead of swapping columns; BSP keeps its
+existing swap behavior. `mouse_drop_action stack` retains the explicit central
+stack drop.
 Gaps resolve to the closest eligible window and inactive tabs are excluded.
 
 Hold that window drag near a scrolling viewport's left/right edge to pan after
 the delay, without further pointer movement. Leaving the edge, reversing direction,
 releasing the drag, disabling the setting or losing ownership resets the delay.
 Panning stops at strip bounds and caps elapsed-time catch-up after a stalled tick.
-Ordinary in-application drag-and-drop, hold-to-activate and overview edge workspace
-switching are still pending; this implementation only handles Shoji-owned window
-moves. Complete row/tab/floating drag behavior also remains on the checklist.
+Hold-to-activate: holding a Shoji-owned window move over another window focuses
+that window after the same edge delay. Overview edge scrolling uses that delay and speed on the
+top and bottom of the display. Ordinary in-application drag-and-drop is still
+not handled; this path only sees Shoji-owned window moves. Right-click during a modifier move toggles the window between the strip
+and floating. While floating, the window follows the pointer and release leaves
+it there. Right-click again puts it back in the strip.
 
 `task test:focus` checks single-window suppression, eight native owned surfaces,
 their input-transparent tags, 800 transform readbacks without reallocation and
@@ -165,6 +170,8 @@ Existing Shoji stack/warp/swap commands remain. Legacy swap retains slot widths;
 ./bin/shoji -m config scroll_gestures on
 ```
 
+Hold the configured `mouse_modifier` (currently Fn) and drag the middle button. Horizontal movement pans a scrolling strip with the pointer. Vertical movement switches the native Space on release after 80 points, and only when that vertical travel is larger than the horizontal travel. Dragging back under the threshold, or releasing early, cancels the switch. `scroll_gestures off` disables this drag together with the two-finger gesture.
+
 Hold the configured `mouse_modifier` (currently Fn) while scrolling horizontally. In scroll layout this pans columns. In BSP it switches to the adjacent native Space on the same display after 80 points of horizontal travel. Reaching the last Space wraps to the first; going backward from the first wraps to the last. With only one Space on that display, the gesture does nothing. Each swipe requests at most one switch; its remaining movement and momentum are consumed, including after modifier release or crossing into a scroll-layout Space. Floating layouts and ordinary application scrolling remain available. Phase-less wheel bursts are separated by a 250ms pause.
 
 A captured sequence retains its original Space and operation even after releasing the modifier; unclaimed application momentum is not intercepted. In scroll layout, continuous touchpad deltas are normalized by viewport width / 1200, coalesced before presentation, and followed directly during contact. Release uses the last 150ms of timestamped movement to predict a landing position, chooses a valid column-edge or center snap, focuses the furthest fully visible column toward the projected motion, then settles the shared spring using release velocity. The native momentum tail is consumed without moving the camera again. Existing motion is taken over at its current rendered position. Phase-less wheels settle after a 120ms pause. Turn both layout gestures off with `scroll_gestures off`. The current shojirc enables the setting persistently.
@@ -184,7 +191,7 @@ Shoji observes accepted native sizes after a request settles and provisionally a
 
 Tabbed mode gives all members the column frame and orders the active native window above its siblings. It preserves rows and sizing requests when returning to normal mode. By default inactive windows stay ordered behind, so their corners and shadows can show. `tab_conceal on` hides them through the Dock payload instead: an inactive tab is not drawn and clicks pass through it. The most recently used inactive tab stays drawn behind the active one as a standby, so closing the active window or opening a new tab never shows the desktop; with two tabs nothing is concealed. If the daemon exits, the payload reveals them.
 
-Off-screen windows retain a requested 32-pixel edge rather than being clipped. Multiple parked windows may overlap at that edge, and adjacent displays may expose overflow. Exact foreign clipping, truly hidden off-screen input, synchronized live rendering, overview and logical virtual workspaces remain unimplemented platform work. The scrolling camera positions real native windows, batching each update; AX writes remain asynchronous, and this does not establish compositor-level frame synchronization. Width, height and existing-member position changes use a shared spring timeline with the camera; retargeting preserves current position and velocity. New members start at their target. Interactive native resizing and corrections to already accepted application sizes reflow immediately. Other animation paths can still use captured snapshots. Existing native Space operations retain their scripting-addition requirements.
+Off-screen windows retain a requested 32-pixel edge rather than being clipped. Multiple parked windows may overlap at that edge, and adjacent displays may expose overflow. Exact foreign clipping, truly hidden off-screen input, and synchronized live rendering remain unimplemented platform work. Opt-in dynamic workspaces and a thumbnail overview are separate from this camera; they are not a live spatial zoom. The scrolling camera positions real native windows, batching each update; AX writes remain asynchronous, and this does not establish compositor-level frame synchronization. Width, height and existing-member position changes use a shared spring timeline with the camera; retargeting preserves current position and velocity. New members start at their target. Interactive native resizing and corrections to already accepted application sizes reflow immediately. Other animation paths can still use captured snapshots. Existing native Space operations retain their scripting-addition requirements.
 
 Queries include target `scroll-offset`, rendered `scroll-position`, spring `scroll-velocity`, `scroll-animating`, `scroll-interacting`, `scroll-resizing` and `scroll-width` on Spaces, plus target logical `layout-frame`, column index/display/active/full-width state, requested width mode, row height and weight on windows. Windows also expose `size-request-pending`, `width-adjusted`, `height-adjusted`, `accepted-width` and `accepted-height`. Logical frames include accepted body sizes and distinguish the layout target from current native presentation and physical edge parking.
 

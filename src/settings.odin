@@ -33,7 +33,9 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 	}
 	switch name {
 	case "windowserver_gate":
-		if s != nil { return failure("windowserver_gate is global") }
+		if s != nil {
+			return failure("windowserver_gate is global")
+		}
 		if m.ws_gate_control == nil {
 			return failure("windowserver_gate needs the daemon")
 		}
@@ -42,27 +44,42 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		return m.ws_gate_control(m.ws_gate_user, value)
 	case "tab_indicator_gap":
-		if s != nil { return failure("tab_indicator_gap is global") }
-		if !setting { return success(fmt.tprintf("%g", m.tab_indicator_gap)) }
+		if s != nil {
+			return failure("tab_indicator_gap is global")
+		}
+		if !setting {
+			return success(fmt.tprintf("%g", m.tab_indicator_gap))
+		}
 		gap, ok := strconv.parse_f64(value)
 		if !ok || math.is_nan(gap) || math.is_inf(gap) || gap < 0 || gap > 32 {
 			return failure("tab_indicator_gap expects 0 through 32 logical pixels")
 		}
 		m.tab_indicator_gap = gap
 	case "tab_indicator_width":
-		if s != nil { return failure("tab_indicator_width is global") }
-		if !setting { return success(fmt.tprintf("%g", m.tab_indicator_width)) }
+		if s != nil {
+			return failure("tab_indicator_width is global")
+		}
+		if !setting {
+			return success(fmt.tprintf("%g", m.tab_indicator_width))
+		}
 		width, ok := strconv.parse_f64(value)
 		if !ok || math.is_nan(width) || math.is_inf(width) || width < 1 || width > 32 {
 			return failure("tab_indicator_width expects 1 through 32 logical pixels")
 		}
 		m.tab_indicator_width = width
-		for space in m.spaces { space.view.tab_indicator_width = width }
+		for space in m.spaces {space.view.tab_indicator_width = width}
 	case "tab_indicator_active_color", "tab_indicator_inactive_color":
-		if s != nil { return failure(fmt.tprintf("%s is global", name)) }
-		target := name == "tab_indicator_active_color" ? &m.tab_indicator_active_color : &m.tab_indicator_inactive_color
+		if s != nil {
+			return failure(fmt.tprintf("%s is global", name))
+		}
+		target :=
+			name == "tab_indicator_active_color" \
+				? &m.tab_indicator_active_color \
+				: &m.tab_indicator_inactive_color
 		if !setting {
-			if color, present := target^.?; present { return success(fmt.tprintf("0x%08x", color)) }
+			if color, present := target^.?; present {
+				return success(fmt.tprintf("0x%08x", color))
+			}
 			return success("default")
 		}
 		if value == "default" {
@@ -72,17 +89,23 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 				return failure(fmt.tprintf("%s expects default or 0xAARRGGBB", name))
 			}
 			color, ok := strconv.parse_u64(value[2:], 16)
-			if !ok { return failure("invalid tab indicator color") }
+			if !ok {
+				return failure("invalid tab indicator color")
+			}
 			target^ = u32(color)
 		}
 	case "tab_indicator_position":
-		if s != nil { return failure("tab_indicator_position is global") }
-		if !setting { return success(m.tab_indicator_top ? "top" : "left") }
+		if s != nil {
+			return failure("tab_indicator_position is global")
+		}
+		if !setting {
+			return success(m.tab_indicator_top ? "top" : "left")
+		}
 		if value != "top" && value != "left" {
 			return failure("tab_indicator_position expects left or top")
 		}
 		m.tab_indicator_top = value == "top"
-		for space in m.spaces { space.view.tab_indicator_top = m.tab_indicator_top }
+		for space in m.spaces {space.view.tab_indicator_top = m.tab_indicator_top}
 	case "window_resize_animation":
 		if s != nil {
 			return failure("window_resize_animation is global")
@@ -116,10 +139,40 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 			return failure("tab_conceal expects on or off")
 		}
 		m.tab_conceal = value == "on"
-		if !m.tab_conceal {tab_conceal_release(m)}
-		for space in m.spaces {
-			if err := flush(m, space); err != "" {return failure(err)}
+		if !m.tab_conceal {
+			tab_conceal_release(m)
 		}
+		for space in m.spaces {
+			if err := flush(m, space); err != "" {
+				return failure(err)
+			}
+		}
+	case "dynamic_workspaces", "workspace_hotplug":
+		if s != nil {
+			return failure(fmt.tprintf("%s is global", name))
+		}
+		if !setting {
+			on := m.dynamic_workspaces
+			if name == "workspace_hotplug" {
+				on = m.workspace_hotplug
+			}
+			return success(on ? "on" : "off")
+		}
+		if value != "on" && value != "off" {
+			return failure(fmt.tprintf("%s expects on or off", name))
+		}
+		enabled := value == "on"
+		if name == "dynamic_workspaces" {
+			m.dynamic_workspaces = enabled
+			if enabled {
+				workspace_reconcile(m)
+			} else {
+				workspace_drop_ephemeral(m)
+			}
+		} else {
+			m.workspace_hotplug = enabled
+		}
+		return success()
 	case "scroll_animation":
 		if s != nil {
 			return failure("scroll_animation is global")
@@ -162,37 +215,21 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		if s != nil {
 			return failure(fmt.tprintf("%s is global", name))
 		}
-		target :=
-			name == "focus_ring_width" \
-				? &m.focus_ring.width \
-				: &m.focus_ring.radius
+		target := name == "focus_ring_width" ? &m.focus_ring.width : &m.focus_ring.radius
 		if !setting {
 			return success(fmt.tprintf("%g", target^))
 		}
 		width, valid := strconv.parse_f64(value)
 		maximum := name == "focus_ring_width" ? f64(16) : f64(64)
-		if !valid ||
-		   math.is_nan(width) ||
-		   math.is_inf(width) ||
-		   width < 1 ||
-		   width > maximum {
-			return failure(
-				fmt.tprintf(
-					"%s expects 1 through %g logical pixels",
-					name,
-					maximum,
-				),
-			)
+		if !valid || math.is_nan(width) || math.is_inf(width) || width < 1 || width > maximum {
+			return failure(fmt.tprintf("%s expects 1 through %g logical pixels", name, maximum))
 		}
 		target^ = width
 	case "insert_feedback_color", "focus_ring_color":
 		if s != nil {
 			return failure(fmt.tprintf("%s is global", name))
 		}
-		color_target :=
-			name == "focus_ring_color" \
-				? &m.focus_ring.color \
-				: &m.feedback_color
+		color_target := name == "focus_ring_color" ? &m.focus_ring.color : &m.feedback_color
 		if !setting {
 			return success(fmt.tprintf("0x%08x", color_target^))
 		}
@@ -211,21 +248,13 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		modes := [3]string{"off", "main", "all"}
 		if !setting {
 			return success(
-				fmt.tprintf(
-					"%s:%v:%v",
-					modes[int(m.external_bar)],
-					m.bar_top,
-					m.bar_bottom,
-				),
+				fmt.tprintf("%s:%v:%v", modes[int(m.external_bar)], m.bar_top, m.bar_bottom),
 			)
 		}
 		parts := strings.split(value, ":", context.temp_allocator)
 		values: [2]f64
 		if len(parts) != 3 ||
-		   !parse_numbers(
-				   strings.join(parts[1:], ":", context.temp_allocator),
-				   values[:],
-			   ) ||
+		   !parse_numbers(strings.join(parts[1:], ":", context.temp_allocator), values[:]) ||
 		   values[0] < 0 ||
 		   values[1] < 0 ||
 		   values[0] > 100000 ||
@@ -301,11 +330,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 			return success(fmt.tprintf("%v", m.animation_duration))
 		}
 		number, valid := strconv.parse_f64(value)
-		if !valid ||
-		   math.is_nan(number) ||
-		   math.is_inf(number) ||
-		   number < 0 ||
-		   number > 3600 {
+		if !valid || math.is_nan(number) || math.is_inf(number) || number < 0 || number > 3600 {
 			return failure("invalid animation duration")
 		}
 		m.animation_duration = number
@@ -336,7 +361,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 			return failure("window_zoom_persist expects on or off")
 		}
 		m.zoom_persist = value == "on"
-		for space in m.spaces { space.view.zoom_persist = m.zoom_persist }
+		for space in m.spaces {space.view.zoom_persist = m.zoom_persist}
 	case "window_insertion_point":
 		if s != nil {
 			return failure("window_insertion_point is global")
@@ -383,28 +408,17 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 			return success(fmt.tprintf("%v", m.opacity_duration))
 		}
 		number, ok := strconv.parse_f64(value)
-		if !ok ||
-		   math.is_nan(number) ||
-		   math.is_inf(number) ||
-		   number < 0 ||
-		   number > 3600 {
+		if !ok || math.is_nan(number) || math.is_inf(number) || number < 0 || number > 3600 {
 			return failure("invalid opacity duration")
 		}
 		m.opacity_duration = number
 	case "active_window_opacity", "normal_window_opacity":
-		p :=
-			name == "active_window_opacity" \
-				? &m.active_opacity \
-				: &m.normal_opacity
+		p := name == "active_window_opacity" ? &m.active_opacity : &m.normal_opacity
 		if !setting {
 			return success(fmt.tprintf("%v", p^))
 		}
 		number, ok := strconv.parse_f64(value)
-		if !ok ||
-		   math.is_nan(number) ||
-		   math.is_inf(number) ||
-		   number < 0 ||
-		   number > 1 {
+		if !ok || math.is_nan(number) || math.is_inf(number) || number < 0 || number > 1 {
 			return failure("window opacity expects 0..1")
 		}
 		previous := p^
@@ -416,9 +430,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 	case "layout":
 		if !setting {
-			return success(
-				layout_name(s != nil ? s.view.layout : m.default_layout),
-			)
+			return success(layout_name(s != nil ? s.view.layout : m.default_layout))
 		}
 		layout, ok := parse_layout(value)
 		if !ok {
@@ -460,11 +472,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 			return success(fmt.tprintf("%v", p^))
 		}
 		number, ok := strconv.parse_f64(value)
-		if !ok ||
-		   math.is_nan(number) ||
-		   math.is_inf(number) ||
-		   number < 0 ||
-		   number > 100000 {
+		if !ok || math.is_nan(number) || math.is_inf(number) || number < 0 || number > 100000 {
 			return failure("invalid numeric setting")
 		}
 		if name == "split_ratio" && (number < 0.1 || number > 0.9) {
@@ -495,10 +503,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 	case "auto_balance", "window_placement":
 		p := name == "auto_balance" ? &m.auto_balance : &m.first_child
 		if s != nil {
-			p =
-				name == "auto_balance" \
-					? &s.view.auto_balance \
-					: &s.view.first_child
+			p = name == "auto_balance" ? &s.view.auto_balance : &s.view.first_child
 		}
 		yes, no := "on", "off"
 		if name == "window_placement" {
@@ -518,8 +523,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		if value != yes &&
 		   value != no &&
-		   !(name == "auto_balance" &&
-				   (value == "x-axis" || value == "y-axis")) {
+		   !(name == "auto_balance" && (value == "x-axis" || value == "y-axis")) {
 			return failure(errorf("%s expects %s or %s", name, yes, no))
 		}
 		p^ = value != no
@@ -625,20 +629,13 @@ apply_window_opacity :: proc(m: ^Manager) -> string {
 			continue
 		}
 		desired :=
-			m.window_opacity \
-				? (w.id == m.focused ? m.active_opacity : m.normal_opacity) \
-				: 1.0
+			m.window_opacity ? (w.id == m.focused ? m.active_opacity : m.normal_opacity) : 1.0
 		if w.opacity == desired {
 			continue
 		}
 		if err := perform(
 			m,
-			Action {
-				kind = .Opacity,
-				window = w.id,
-				value = desired,
-				duration = m.opacity_duration,
-			},
+			Action{kind = .Opacity, window = w.id, value = desired, duration = m.opacity_duration},
 		); err != "" {
 			return err
 		}
@@ -652,8 +649,7 @@ apply_window_opacity :: proc(m: ^Manager) -> string {
 
 usable_frame :: proc(m: ^Manager, d: ^Display) -> Rect {
 	r := d.usable
-	if m.external_bar == .All ||
-	   (m.external_bar == .Main && d.id == m.main_display) {
+	if m.external_bar == .All || (m.external_bar == .Main && d.id == m.main_display) {
 		r.y += m.bar_top
 		r.h = max(1, r.h - m.bar_top - m.bar_bottom)
 	}
@@ -680,18 +676,16 @@ order_displays :: proc(m: ^Manager) {
 			m.displays[j - 1], m.displays[j] = b, a
 		}
 	}
-	for &d, i in m.displays { d.index = u32(i + 1) }
+	for &d, i in m.displays {d.index = u32(i + 1)}
 }
 
 apply_window_shadows :: proc(m: ^Manager) -> string {
 	for _, w in m.windows {
-		desired :=
-			m.shadow_mode == .On || (m.shadow_mode == .Float && !managed(w))
+		desired := m.shadow_mode == .On || (m.shadow_mode == .Float && !managed(w))
 		if w.shadow == desired {
 			continue
 		}
-		if err := perform(m, {kind = .Shadow, window = w.id, flag = desired});
-		   err != "" {
+		if err := perform(m, {kind = .Shadow, window = w.id, flag = desired}); err != "" {
 			return err
 		}
 		w.shadow = desired
@@ -711,14 +705,8 @@ apply_window_layers :: proc(m: ^Manager) -> string {
 		if w.layer == desired {
 			continue
 		}
-		if err := perform(
-			m,
-			{
-				kind = .Layer,
-				window = w.id,
-				value = below ? -1 : (above ? 1 : 0),
-			},
-		); err != "" {
+		if err := perform(m, {kind = .Layer, window = w.id, value = below ? -1 : (above ? 1 : 0)});
+		   err != "" {
 			return err
 		}
 		w.layer = desired

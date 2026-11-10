@@ -10,27 +10,29 @@ import layout "layout"
 // ------------------------------------------------------------------------
 
 Filter :: struct {
-	pattern: string,
-	expression: POSIX_Regex,
+	pattern:          string,
+	expression:       POSIX_Regex,
 	enabled, exclude: bool,
 }
 
 Rule :: struct {
-	label: string,
-	app, title, role, subrole: Filter,
-	manage: Maybe(bool),
-	space: string,
-	display, grid, scratchpad, sub_layer: string,
-	opacity: Maybe(f64),
+	label:                                          string,
+	app, title, role, subrole:                      Filter,
+	manage:                                         Maybe(bool),
+	space:                                          string,
+	display, grid, scratchpad, sub_layer:           string,
+	opacity:                                        Maybe(f64),
 	sticky, native_fullscreen, mouse_follows_focus: Maybe(bool),
-	one_shot: bool,
-	pending_window: u32,
+	open_floating, open_maximized:                  Maybe(bool),
+	column_width, column_display:                   string,
+	one_shot:                                       bool,
+	pending_window:                                 u32,
 }
 
 Signal :: struct {
 	label, event, action: string,
-	active: Maybe(bool),
-	app, title: Filter,
+	active:               Maybe(bool),
+	app, title:           Filter,
 }
 
 rule_destroy :: proc(r: ^Rule) {
@@ -38,6 +40,8 @@ rule_destroy :: proc(r: ^Rule) {
 	delete(r.space)
 	delete(r.display); delete(r.grid); delete(r.scratchpad)
 	delete(r.sub_layer)
+	delete(r.column_width)
+	delete(r.column_display)
 	filter_destroy(&r.app)
 	filter_destroy(&r.title)
 	filter_destroy(&r.role)
@@ -114,12 +118,20 @@ apply_rules :: proc(
 		if r.mouse_follows_focus != nil {
 			effects.mouse_follows_focus = r.mouse_follows_focus
 		}
-		for pair in ([5][2]^string {
+		if r.open_floating != nil {
+			effects.open_floating = r.open_floating
+		}
+		if r.open_maximized != nil {
+			effects.open_maximized = r.open_maximized
+		}
+		for pair in ([7][2]^string {
 				{&effects.space, &r.space},
 				{&effects.display, &r.display},
 				{&effects.grid, &r.grid},
 				{&effects.scratchpad, &r.scratchpad},
 				{&effects.sub_layer, &r.sub_layer},
+				{&effects.column_width, &r.column_width},
+				{&effects.column_display, &r.column_display},
 			}) {
 			if pair[1]^ != "" {
 				pair[0]^ = pair[1]^
@@ -150,14 +162,15 @@ apply_rules :: proc(
 	if !initial {
 		if membership_error := sync_window_membership(m, w, previous_space);
 		   membership_error != "" && membership_error != err {
-			err =
-				err == "" \
-					? membership_error \
-					: errorf("%s; %s", err, membership_error)
+			err = err == "" ? membership_error : errorf("%s; %s", err, membership_error)
 		}
 	}
 	if err != "" {
 		return err
+	}
+	scroll_rule_store(w, effects)
+	if realize_err := scroll_rule_realize(m, w); realize_err != "" {
+		return realize_err
 	}
 	for i := len(one_shots) - 1; i >= 0; i -= 1 {
 		index := one_shots[i]; rule_destroy(&m.rules[index])
@@ -166,7 +179,63 @@ apply_rules :: proc(
 	return ""
 }
 
+scroll_rule_store :: proc(w: ^Window, effects: Rule) {
+	w.rule_maximize = effects.open_maximized
+	delete(w.rule_column_width)
+	w.rule_column_width = strings.clone(effects.column_width)
+	delete(w.rule_column_display)
+	w.rule_column_display = strings.clone(effects.column_display)
+}
+
+// Column width, display, and maximize wait until the window is in a scrolling
+// column. A floating window keeps the request until it joins the strip.
+scroll_rule_realize :: proc(m: ^Manager, w: ^Window) -> string {
+	if w == nil || w.floating {
+		return ""
+	}
+	s := space_by_id(m, w.space)
+	if s == nil || s.view.layout != .Scroll {
+		return ""
+	}
+	n := layout.find(s.view.root, w.id)
+	if n == nil {
+		return ""
+	}
+	if w.rule_column_width != "" {
+		if err := layout.scroll_set_width(&s.view, w.id, w.rule_column_width); err != "" {
+			return err
+		}
+		n = layout.find(s.view.root, w.id)
+		if n == nil {
+			return ""
+		}
+	}
+	if w.rule_column_display != "" {
+		n.column_tabbed = w.rule_column_display == "tabbed"
+		n.column_raised = 0
+	}
+	if maximize, ok := w.rule_maximize.?; ok {
+		n.column_maximize = maximize
+		if maximize {
+			n.column_full, n.column_cover = false, false
+		}
+		n.column_preset = nil
+		n.column_revision += 1
+		s.view.scroll.fill_after_removal = false
+		s.view.scroll.reveal = true
+	}
+	return ""
+}
+
 apply_rule_effects :: proc(m: ^Manager, w: ^Window, r: Rule) -> string {
+	// open-floating starts the window out of the strip. It does not change
+	// manage, so a later float toggle can tile it again.
+	if value, ok := r.open_floating.?; ok {
+		w.floating = value
+		if !value && w.opening.phase == .Excluded {
+			w.opening.phase = .Admitted
+		}
+	}
 	selector := fmt.tprintf("%d", w.id)
 	target: ^Space
 	follow := false
@@ -193,24 +262,19 @@ apply_rule_effects :: proc(m: ^Manager, w: ^Window, r: Rule) -> string {
 			   !layout.can_add(&target.view, m.focused) {
 				return "rule destination tiling tree is full"
 			}
-			if err := perform(
-				m,
-				{kind = .Space, window = w.id, space = target.id},
-			); err != "" {
+			if err := perform(m, {kind = .Space, window = w.id, space = target.id}); err != "" {
 				return err
 			}
 			w.space, w.display = target.id, target.display
 		}
 		if follow {
-			if err := perform(m, {kind = .Space_Focus, space = target.id});
-			   err != "" {
+			if err := perform(m, {kind = .Space_Focus, space = target.id}); err != "" {
 				return err
 			}
 		}
 	}
 	if value, ok := r.sticky.?; ok {
-		if err := perform(m, {kind = .Sticky, window = w.id, flag = value});
-		   err != "" {
+		if err := perform(m, {kind = .Sticky, window = w.id, flag = value}); err != "" {
 			return err
 		}
 		w.sticky = value
@@ -224,10 +288,8 @@ apply_rule_effects :: proc(m: ^Manager, w: ^Window, r: Rule) -> string {
 		}
 	}
 	if r.sub_layer != "" {
-		if response := window_command(
-			m,
-			[]string{selector, "--sub-layer", r.sub_layer},
-		); response.failed {
+		if response := window_command(m, []string{selector, "--sub-layer", r.sub_layer});
+		   response.failed {
 			return response.text
 		}
 	}
@@ -237,16 +299,12 @@ apply_rule_effects :: proc(m: ^Manager, w: ^Window, r: Rule) -> string {
 		}
 	}
 	if r.grid != "" {
-		if response := window_command(m, []string{selector, "--grid", r.grid});
-		   response.failed {
+		if response := window_command(m, []string{selector, "--grid", r.grid}); response.failed {
 			return response.text
 		}
 	}
 	if value, ok := r.native_fullscreen.?; ok {
-		if err := perform(
-			m,
-			{kind = .Fullscreen, window = w.id, flag = value},
-		); err != "" {
+		if err := perform(m, {kind = .Fullscreen, window = w.id, flag = value}); err != "" {
 			return err
 		}
 		w.fullscreen = value
@@ -331,11 +389,7 @@ parse_rule :: proc(args: []string) -> (rule: Rule, err: string) {
 			}
 		case "opacity":
 			number, valid := strconv.parse_f64(value)
-			if !valid ||
-			   math.is_nan(number) ||
-			   math.is_inf(number) ||
-			   number < 0 ||
-			   number > 1 {
+			if !valid || math.is_nan(number) || math.is_inf(number) || number < 0 || number > 1 {
 				err = "invalid rule opacity"
 			} else {
 				rule.opacity = number
@@ -358,6 +412,30 @@ parse_rule :: proc(args: []string) -> (rule: Rule, err: string) {
 				err = "manage expects on or off"
 			} else {
 				rule.manage = value == "on"
+			}
+		case "open-floating", "open-maximized":
+			p := &rule.open_floating
+			if key == "open-maximized" {
+				p = &rule.open_maximized
+			}
+			if value != "on" && value != "off" {
+				err = "rule boolean expects on or off"
+			} else {
+				p^ = value == "on"
+			}
+		case "column-width":
+			if _, valid := layout.scroll_parse_size(value); !valid {
+				err = "column-width expects abs:pixels or ratio:fraction"
+			} else {
+				delete(rule.column_width)
+				rule.column_width = strings.clone(value)
+			}
+		case "column-display":
+			if value != "normal" && value != "tabbed" {
+				err = "column-display expects normal or tabbed"
+			} else {
+				delete(rule.column_display)
+				rule.column_display = strings.clone(value)
 			}
 		case "one-shot":
 			if value != "on" && value != "off" {
@@ -527,16 +605,20 @@ rule_command :: proc(m: ^Manager, args: []string) -> Response {
 		return success()
 	case "--list":
 		Item :: struct {
-			index: int,
+			index:                            int,
 			label, app, title, role, subrole: string,
-			manage: Maybe(bool),
-			space: string,
-			display, grid, scratchpad: string,
-			sub_layer: string `json:"sub-layer"`,
-			opacity: Maybe(f64),
-			sticky, mouse_follows_focus: Maybe(bool),
-			native_fullscreen: Maybe(bool) `json:"native-fullscreen"`,
-			one_shot: bool `json:"one-shot"`,
+			manage:                           Maybe(bool),
+			space:                            string,
+			display, grid, scratchpad:        string,
+			sub_layer:                        string `json:"sub-layer"`,
+			opacity:                          Maybe(f64),
+			sticky, mouse_follows_focus:      Maybe(bool),
+			native_fullscreen:                Maybe(bool) `json:"native-fullscreen"`,
+			open_floating:                    Maybe(bool) `json:"open-floating"`,
+			open_maximized:                   Maybe(bool) `json:"open-maximized"`,
+			column_width:                     string `json:"column-width"`,
+			column_display:                   string `json:"column-display"`,
+			one_shot:                         bool `json:"one-shot"`,
 		}
 		items := make([dynamic]Item, 0, len(m.rules), context.temp_allocator)
 		for r, i in m.rules {
@@ -559,6 +641,10 @@ rule_command :: proc(m: ^Manager, args: []string) -> Response {
 					r.sticky,
 					r.mouse_follows_focus,
 					r.native_fullscreen,
+					r.open_floating,
+					r.open_maximized,
+					r.column_width,
+					r.column_display,
 					r.one_shot,
 				},
 			)
@@ -584,14 +670,11 @@ rule_command :: proc(m: ^Manager, args: []string) -> Response {
 				temporary = true
 			} else {
 				if len(args) != 2 {
-					return failure(
-						"apply expects a rule selector or properties",
-					)
+					return failure("apply expects a rule selector or properties")
 				}
 				index, numeric := strconv.parse_int(args[1])
 				for rule, i in m.rules {
-					if (numeric && i == index) ||
-					   (!numeric && rule.label == args[1]) {
+					if (numeric && i == index) || (!numeric && rule.label == args[1]) {
 						selected = i; break
 					}
 				}
@@ -617,11 +700,7 @@ rule_command :: proc(m: ^Manager, args: []string) -> Response {
 	return failure("unknown rule operation")
 }
 
-apply_rule_to_window :: proc(
-	m: ^Manager,
-	w: ^Window,
-	selected: int = -1,
-) -> string {
+apply_rule_to_window :: proc(m: ^Manager, w: ^Window, selected: int = -1) -> string {
 	return apply_rules(m, w, existing = true, selected = selected)
 }
 
@@ -650,23 +729,15 @@ signal_command :: proc(m: ^Manager, args: []string) -> Response {
 		return success()
 	case "--list":
 		Item :: struct {
-			index: int,
+			index:                            int,
 			label, event, action, app, title: string,
-			active: Maybe(bool),
+			active:                           Maybe(bool),
 		}
 		items := make([dynamic]Item, 0, len(m.signals), context.temp_allocator)
 		for s, i in m.signals {
 			append(
 				&items,
-				Item {
-					i,
-					s.label,
-					s.event,
-					s.action,
-					s.app.pattern,
-					s.title.pattern,
-					s.active,
-				},
+				Item{i, s.label, s.event, s.action, s.app.pattern, s.title.pattern, s.active},
 			)
 		}
 		return success(json_text(items))

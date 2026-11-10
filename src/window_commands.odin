@@ -9,6 +9,25 @@ import layout "layout"
 // Window commands
 // ------------------------------------------------------------------------
 
+window_toggle_float :: proc(m: ^Manager, w: ^Window) -> string {
+	s := space_by_id(m, w.space)
+	if s == nil {
+		return "window has no space"
+	}
+	w.floating = !w.floating
+	if !w.floating && w.opening.phase == .Excluded {
+		w.opening.phase = .Admitted
+	}
+	w.scroll_frame = {}
+	if w.floating {
+		layout.remove(&s.view, w.id)
+	} else if layout_admitted(w) {
+		layout.add(&s.view, w.id, m.focused)
+		scroll_rule_realize(m, w)
+	}
+	return flush(m, s)
+}
+
 window_command :: proc(m: ^Manager, args: []string) -> Response {
 	start := 0
 	if len(args) > 0 && !strings.has_prefix(args[0], "--") {
@@ -61,8 +80,7 @@ window_command :: proc(m: ^Manager, args: []string) -> Response {
 		if len(part) == 2 {
 			command[2] = part[1]; count = 3
 		}
-		if response := window_command_one(m, command[:count]);
-		   response.failed {
+		if response := window_command_one(m, command[:count]); response.failed {
 			return response
 		}
 	}
@@ -127,8 +145,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if operand != "next" && operand != "prev" {
 				return failure("cycle-row-height expects next or prev")
 			}
-			if err := scroll_cycle_height(m, &s.view, w, operand == "prev");
-			   err != "" {
+			if err := scroll_cycle_height(m, &s.view, w, operand == "prev"); err != "" {
 				return failure(err)
 			}
 		case "--size-limits":
@@ -145,9 +162,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			}
 			if (values[2] > 0 && values[2] < values[0]) ||
 			   (values[3] > 0 && values[3] < values[1]) {
-				return failure(
-					"maximum size must not be smaller than minimum size",
-				)
+				return failure("maximum size must not be smaller than minimum size")
 			}
 			w.min_width, w.min_height, w.max_width, w.max_height =
 				values[0], values[1], values[2], values[3]
@@ -162,15 +177,10 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 				return failure(err)
 			}
 		case "--column-display":
-			if operand != "normal" &&
-			   operand != "tabbed" &&
-			   operand != "toggle" {
-				return failure(
-					"column-display expects normal, tabbed, or toggle",
-				)
+			if operand != "normal" && operand != "tabbed" && operand != "toggle" {
+				return failure("column-display expects normal, tabbed, or toggle")
 			}
-			n.column_tabbed =
-				operand == "toggle" ? !n.column_tabbed : operand == "tabbed"
+			n.column_tabbed = operand == "toggle" ? !n.column_tabbed : operand == "tabbed"
 			n.column_raised = 0
 		case "--consume", "--expel":
 			if operand != "" {
@@ -260,30 +270,36 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			}
 			s.view.scroll.fill_after_removal = false
 			n.column_full = !n.column_full
+			if n.column_full {
+				n.column_maximize, n.column_cover = false, false
+			}
+			n.column_revision += 1
+			n.column_preset = nil
+			s.view.scroll.reveal = true
+		case "maximize", "layout-fullscreen":
+			if s == nil || s.view.layout != .Scroll || n == nil {
+				return failure("maximize and layout-fullscreen require a scrolling column")
+			}
+			s.view.scroll.fill_after_removal = false
+			if operand == "layout-fullscreen" {
+				n.column_cover = !n.column_cover
+				if n.column_cover {
+					n.column_full, n.column_maximize = false, false
+				}
+			} else {
+				n.column_maximize = !n.column_maximize
+				if n.column_maximize {
+					n.column_full, n.column_cover = false, false
+				}
+			}
 			n.column_revision += 1
 			n.column_preset = nil
 			s.view.scroll.reveal = true
 		case "float":
-			if s == nil {
-				return failure("window has no space")
-			}
-			w.floating = !w.floating
-			if !w.floating && w.opening.phase == .Excluded {
-				w.opening.phase = .Admitted
-			}
-			w.scroll_frame = {}
-			if w.floating {
-				layout.remove(&s.view, w.id)
-			} else if layout_admitted(w) {
-				layout.add(&s.view, w.id, m.focused)
-			}
+			return result(window_toggle_float(m, w))
 		case "zoom-parent", "zoom-fullscreen":
-			if s != nil &&
-			   s.view.layout == .Scroll &&
-			   operand == "zoom-parent" {
-				return failure(
-					"parent split zoom is unavailable in scroll layout",
-				)
+			if s != nil && s.view.layout == .Scroll && operand == "zoom-parent" {
+				return failure("parent split zoom is unavailable in scroll layout")
 			}
 			if n == nil {
 				return failure("window is not managed")
@@ -303,14 +319,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			p.split = p.split == .Vertical ? .Horizontal : .Vertical
 		case "native-fullscreen":
 			return result(
-				perform(
-					m,
-					Action {
-						kind = .Fullscreen,
-						window = w.id,
-						flag = !w.fullscreen,
-					},
-				),
+				perform(m, Action{kind = .Fullscreen, window = w.id, flag = !w.fullscreen}),
 			)
 		case "windowed-fullscreen":
 			d := display_by_id(m, w.display)
@@ -322,10 +331,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if restoring {
 				target = previous
 			}
-			if err := perform(
-				m,
-				{kind = .Frame, window = w.id, frame = target},
-			); err != "" {
+			if err := perform(m, {kind = .Frame, window = w.id, frame = target}); err != "" {
 				return failure(err)
 			}
 			if restoring {
@@ -352,14 +358,9 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if bounds.w < 4 || bounds.h <= 0 {
 				return failure("display padding leaves no room for PiP")
 			}
-			return result(
-				perform(m, {kind = .Scale, window = w.id, frame = bounds}),
-			)
+			return result(perform(m, {kind = .Scale, window = w.id, frame = bounds}))
 		case "sticky":
-			if err := perform(
-				m,
-				{kind = .Sticky, window = w.id, flag = !w.sticky},
-			); err != "" {
+			if err := perform(m, {kind = .Sticky, window = w.id, flag = !w.sticky}); err != "" {
 				return failure(err)
 			}
 			w.sticky = !w.sticky
@@ -368,10 +369,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			}
 			return result(flush(m, s))
 		case "shadow":
-			if err := perform(
-				m,
-				{kind = .Shadow, window = w.id, flag = !w.shadow},
-			); err != "" {
+			if err := perform(m, {kind = .Shadow, window = w.id, flag = !w.shadow}); err != "" {
 				return failure(err)
 			}
 			w.shadow = !w.shadow
@@ -395,37 +393,26 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		if n == nil || other == nil {
 			return failure("both windows must be managed")
 		}
-		if op == "--warp" &&
-		   other != n &&
-		   !layout.can_add(&target_space.view, target.id) {
+		if op == "--warp" && other != n && !layout.can_add(&target_space.view, target.id) {
 			return failure("target stack is full")
 		}
 		if target_space != s {
 			if op == "--stack" {
 				return failure("stack target must be on the same space")
 			}
-			if err := perform(
-				m,
-				Action{kind = .Space, window = w.id, space = target_space.id},
-			); err != "" {
+			if err := perform(m, Action{kind = .Space, window = w.id, space = target_space.id});
+			   err != "" {
 				return failure(err)
 			}
 			if op == "--swap" {
-				if err := perform(
-					m,
-					Action{kind = .Space, window = target.id, space = s.id},
-				); err != "" {
-					if rollback := perform(
-						m,
-						Action{kind = .Space, window = w.id, space = s.id},
-					); rollback != "" {
+				if err := perform(m, Action{kind = .Space, window = target.id, space = s.id});
+				   err != "" {
+					if rollback := perform(m, Action{kind = .Space, window = w.id, space = s.id});
+					   rollback != "" {
 						layout.remove(&s.view, w.id)
-						w.space, w.display =
-							target_space.id, target_space.display
+						w.space, w.display = target_space.id, target_space.display
 						layout.add(&target_space.view, w.id, target.id)
-						return failure(
-							errorf("%s; rollback failed: %s", err, rollback),
-						)
+						return failure(errorf("%s; rollback failed: %s", err, rollback))
 					}
 					return failure(err)
 				}
@@ -468,7 +455,9 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			if !swapped {
 				return failure("windows are already in the same stack")
 			}
-			if s.view.layout == .Scroll { s.view.scroll.fill_after_removal = true }
+			if s.view.layout == .Scroll {
+				s.view.scroll.fill_after_removal = true
+			}
 		}
 		if s.view.layout == .Scroll {
 			s.view.scroll.reveal = true
@@ -487,8 +476,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			layout.remove(&s.view, w.id)
 			if s.view.layout == .Scroll {
 				if anchor := layout.find(s.view.root, target.id); anchor != nil {
-					anchor.insert_first =
-						operand == "west" || operand == "prev"
+					anchor.insert_first = operand == "west" || operand == "prev"
 				}
 			}
 			layout.add(&s.view, w.id, target.id)
@@ -524,12 +512,8 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		n.parent.ratio = clamp(value, 0.1, 0.9)
 	case "--insert":
-		if s != nil &&
-		   s.view.layout == .Scroll &&
-		   (operand == "north" || operand == "south") {
-			return failure(
-				"use --insert stack for scrolling rows, or east/west for columns",
-			)
+		if s != nil && s.view.layout == .Scroll && (operand == "north" || operand == "south") {
+			return failure("use --insert stack for scrolling rows, or east/west for columns")
 		}
 		if n == nil {
 			return failure("window is not managed")
@@ -563,7 +547,10 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			return failure("insert expects north, east, south, west, or stack")
 		}
 		n.insert_first = operand == "west" || operand == "north"
-		motion_trace_record(&m.motion_trace, {kind = "insert-armed", window = w.id, space = s.id, status = n.insert_stack ? 1 : 0})
+		motion_trace_record(
+			&m.motion_trace,
+			{kind = "insert-armed", window = w.id, space = s.id, status = n.insert_stack ? 1 : 0},
+		)
 		s.view.insertion = w.id
 	case "--move", "--resize":
 		parts := strings.split(operand, ":", context.temp_allocator)
@@ -571,10 +558,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			return failure("expected mode:x:y")
 		}
 		values: [2]f64
-		if !parse_numbers(
-			strings.join(parts[1:], ":", context.temp_allocator),
-			values[:],
-		) {
+		if !parse_numbers(strings.join(parts[1:], ":", context.temp_allocator), values[:]) {
 			return failure("invalid coordinates")
 		}
 		frame := w.frame
@@ -594,10 +578,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		} else {
 			return result(resize_window(m, w, parts[0], values[0], values[1]))
 		}
-		if err := perform(
-			m,
-			Action{kind = .Frame, window = w.id, frame = frame},
-		); err != "" {
+		if err := perform(m, Action{kind = .Frame, window = w.id, frame = frame}); err != "" {
 			return failure(err)
 		}
 		w.frame = frame
@@ -641,8 +622,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			r.w * width / cols,
 			r.h * height / rows,
 		}
-		if err := perform(m, {kind = .Frame, window = w.id, frame = frame});
-		   err != "" {
+		if err := perform(m, {kind = .Frame, window = w.id, frame = frame}); err != "" {
 			return failure(err)
 		}
 		w.frame = frame
@@ -670,7 +650,9 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 			m,
 			Action{kind = .Space, window = w.id, space = target.id, frame = landing},
 		); err != "" {
-			if staged {layout.remove(&target.view, w.id)}
+			if staged {
+				layout.remove(&target.view, w.id)
+			}
 			return failure(err)
 		}
 		if s != nil {
@@ -695,16 +677,9 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		override := value != 0
 		if !override {
 			value =
-				m.window_opacity \
-					? (w.id == m.focused \
-							? m.active_opacity \
-							: m.normal_opacity) \
-					: 1.0
+				m.window_opacity ? (w.id == m.focused ? m.active_opacity : m.normal_opacity) : 1.0
 		}
-		if err := perform(
-			m,
-			Action{kind = .Opacity, window = w.id, value = value},
-		); err != "" {
+		if err := perform(m, Action{kind = .Opacity, window = w.id, value = value}); err != "" {
 			return failure(err)
 		}; w.opacity = value; w.opacity_override = override; return success()
 	case "--layer", "--sub-layer":
@@ -721,10 +696,7 @@ window_command_one :: proc(m: ^Manager, args: []string) -> Response {
 		case:
 			return failure("invalid layer")
 		}
-		if err := perform(
-			m,
-			Action{kind = .Layer, window = w.id, value = level},
-		); err != "" {
+		if err := perform(m, Action{kind = .Layer, window = w.id, value = level}); err != "" {
 			return failure(err)
 		}; w.layer = level < 0 ? "below" : (level > 0 ? "above" : "normal")
 		w.layer_override = operand != "auto"; return success()
@@ -745,12 +717,7 @@ replace_window_id :: proc(n: ^layout.Node, old, fresh: u32) {
 	}
 }
 
-resize_window :: proc(
-	m: ^Manager,
-	w: ^Window,
-	handle: string,
-	dx, dy: f64,
-) -> string {
+resize_window :: proc(m: ^Manager, w: ^Window, handle: string, dx, dy: f64) -> string {
 	if s := space_by_id(m, w.space);
 	   s != nil && s.view.layout == .Scroll && layout.find(s.view.root, w.id) != nil {
 		if (handle != "left" && handle != "right") || dy != 0 {
@@ -759,28 +726,21 @@ resize_window :: proc(
 			)
 		}
 		delta := handle == "left" ? -dx : dx
-		if err := layout.scroll_set_width(
-			&s.view,
-			w.id,
-			fmt.tprintf("rel:%g", delta),
-		); err != "" {
+		if err := layout.scroll_set_width(&s.view, w.id, fmt.tprintf("rel:%g", delta)); err != "" {
 			return err
 		}
 		return flush(m, s)
 	}
 	if handle == "abs" {
 		s := space_by_id(m, w.space)
-		if s != nil &&
-		   s.view.layout != .Float &&
-		   layout.find(s.view.root, w.id) != nil {
+		if s != nil && s.view.layout != .Float && layout.find(s.view.root, w.id) != nil {
 			return "absolute resize requires a floating window"
 		}
 		if dx <= 0 || dy <= 0 {
 			return "size must be positive"
 		}
 		frame := w.frame; frame.w = dx; frame.h = dy
-		if err := perform(m, {kind = .Frame, window = w.id, frame = frame});
-		   err != "" {
+		if err := perform(m, {kind = .Frame, window = w.id, frame = frame}); err != "" {
 			return err
 		}
 		w.frame = frame; return ""
@@ -804,9 +764,7 @@ resize_window :: proc(
 	case "bottom":
 		x = 0
 	case:
-		return(
-			"resize expects abs, top, bottom, left, right, or a corner handle" \
-		)
+		return "resize expects abs, top, bottom, left, right, or a corner handle"
 	}
 	d := Mouse_Drag {
 		window = w.id,

@@ -34,25 +34,25 @@ Padding :: struct {
 
 MAX_STACK :: 32
 Node :: struct {
-	parent, left, right, zoom: ^Node,
-	frame:                     Rect,
-	minimum:                   Rect,
-	windows, order:            [MAX_STACK]u32,
-	count:                     int,
-	ratio:                     f64,
-	column_width:              f64,
-	column_observed: f64,
-	column_revision: u64,
-	column_size: Scroll_Size,
-	column_resolved: f64,
-	column_preset: Maybe(int),
-	column_full, column_tabbed: bool,
-	column_raised: u32,
-	column_min, column_max: f64,
-	row_heights: [MAX_STACK]f64,
-	split:                     Split,
-	insert_first:              Maybe(bool),
-	insert_stack:              bool,
+	parent, left, right, zoom:                                 ^Node,
+	frame:                                                     Rect,
+	minimum:                                                   Rect,
+	windows, order:                                            [MAX_STACK]u32,
+	count:                                                     int,
+	ratio:                                                     f64,
+	column_width:                                              f64,
+	column_observed:                                           f64,
+	column_revision:                                           u64,
+	column_size:                                               Scroll_Size,
+	column_resolved:                                           f64,
+	column_preset:                                             Maybe(int),
+	column_full, column_maximize, column_cover, column_tabbed: bool,
+	column_raised:                                             u32,
+	column_min, column_max:                                    f64,
+	row_heights:                                               [MAX_STACK]f64,
+	split:                                                     Split,
+	insert_first:                                              Maybe(bool),
+	insert_stack:                                              bool,
 }
 
 View :: struct {
@@ -69,19 +69,19 @@ View :: struct {
 	tab_indicator_width:                                     f64,
 	insertion:                                               u32,
 	scroll:                                                  Scroll_State,
-	scroll_options: Scroll_Options,
+	scroll_options:                                          Scroll_Options,
 }
 
 view_init :: proc(v: ^View, frame: Rect, layout: Layout = .BSP) {
 	v^ = View {
-		root            = new(Node),
-		frame           = frame,
-		layout          = layout,
-		ratio           = 0.5,
+		root                = new(Node),
+		frame               = frame,
+		layout              = layout,
+		ratio               = 0.5,
 		tab_indicator_width = 4,
-		padding_enabled = true,
-		gap_enabled     = true,
-		scroll_options = scroll_options_defaults(),
+		padding_enabled     = true,
+		gap_enabled         = true,
+		scroll_options      = scroll_options_defaults(),
 	}
 	v.root.frame = frame
 }
@@ -203,7 +203,9 @@ node_update :: proc(v: ^View, n: ^Node) {
 		available := n.split == .Vertical ? n.frame.w - gap : n.frame.h - gap
 		a := n.split == .Vertical ? n.left.minimum.w : n.left.minimum.h
 		b := n.split == .Vertical ? n.right.minimum.w : n.right.minimum.h
-		if available > 0 && a + b <= available {ratio = clamp(ratio, a / available, 1 - b / available)}
+		if available > 0 && a + b <= available {
+			ratio = clamp(ratio, a / available, 1 - b / available)
+		}
 	}
 	n.left.frame, n.right.frame = partition(n.frame, n.split, ratio, gap)
 	node_update(v, n.left)
@@ -220,8 +222,10 @@ view_update :: proc(v: ^View) {
 	}
 	v.root.frame = r
 	if v.layout == .Scroll {
-		if v.scroll.viewport != r {v.scroll.reveal = true}
-		v.scroll.viewport = r;scroll_update(v);return
+		if v.scroll.viewport != r {
+			v.scroll.reveal = true
+		}
+		v.scroll.viewport = r; scroll_update(v); return
 	}
 	node_update(v, v.root)
 }
@@ -261,19 +265,26 @@ Zoom_Record :: struct {
 
 capture_zooms :: proc(v: ^View) -> [dynamic]Zoom_Record {
 	result := make([dynamic]Zoom_Record, context.temp_allocator)
-	if !v.zoom_persist {return result}
+	if !v.zoom_persist {
+		return result
+	}
 	for n := first(v.root); n != nil; n = next(n) {
-		if n.zoom == nil {continue}
+		if n.zoom == nil {
+			continue
+		}
 		for i in 0 ..< n.count {append(&result, Zoom_Record{n.windows[i], n.zoom == v.root})}
 	}
 	return result
 }
 
 restore_zooms :: proc(v: ^View, records: []Zoom_Record) {
-	if !v.zoom_persist {return}
+	if !v.zoom_persist {
+		return
+	}
 	for record in records {
-		if n := find(v.root, record.window);
-		   n != nil {n.zoom = record.fullscreen ? v.root : n.parent}
+		if n := find(v.root, record.window); n != nil {
+			n.zoom = record.fullscreen ? v.root : n.parent
+		}
 	}
 }
 
@@ -288,12 +299,16 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 		n = find(v.root, v.insertion)
 	}
 	if n == nil {
-		if v.layout == .Scroll {n = find(v.root, v.scroll.focused)}
+		if v.layout == .Scroll {
+			n = find(v.root, v.scroll.focused)
+		}
 	}
 	if n == nil {
 		n = minimum_depth(v.root)
 	}
-	if v.layout == .Scroll {scroll_before_add(v, id)}
+	if v.layout == .Scroll {
+		scroll_before_add(v, id)
+	}
 	if n.count == 0 || v.layout == .Stack || n.insert_stack {
 		if n.count == 0 && v.layout == .Scroll {
 			n.column_tabbed = v.scroll_options.default_tabbed
@@ -305,25 +320,29 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 		}
 		return ok
 	}
-	if v.layout == .Scroll { v.scroll.fill_after_removal = false }
+	if v.layout == .Scroll {
+		v.scroll.fill_after_removal = false
+	}
 	old := new(Node)
 	fresh := new(Node)
 	old^ = Node {
-		parent  = n,
-		windows = n.windows,
-		order   = n.order,
-		count   = n.count,
-		column_width = n.column_width,
+		parent          = n,
+		windows         = n.windows,
+		order           = n.order,
+		count           = n.count,
+		column_width    = n.column_width,
 		column_revision = n.column_revision,
-		column_size = n.column_size,
+		column_size     = n.column_size,
 		column_resolved = n.column_resolved,
-		column_preset = n.column_preset,
-		column_full = n.column_full,
-		column_tabbed = n.column_tabbed,
+		column_preset   = n.column_preset,
+		column_full     = n.column_full,
+		column_maximize = n.column_maximize,
+		column_cover    = n.column_cover,
+		column_tabbed   = n.column_tabbed,
 	}
 	fresh^ = Node {
-		parent = n,
-		count  = 1,
+		parent        = n,
+		count         = 1,
 		column_tabbed = v.layout == .Scroll && v.scroll_options.default_tabbed,
 	}
 	fresh.windows[0] = id
@@ -344,10 +363,16 @@ add :: proc(v: ^View, id: u32, insertion: u32 = 0) -> bool {
 }
 
 can_add :: proc(v: ^View, insertion: u32 = 0) -> bool {
-	if v.layout == .Float {return false}
+	if v.layout == .Float {
+		return false
+	}
 	n := find(v.root, insertion)
-	if n == nil {n = find(v.root, v.insertion)}
-	if n == nil {n = minimum_depth(v.root)}
+	if n == nil {
+		n = find(v.root, v.insertion)
+	}
+	if n == nil {
+		n = minimum_depth(v.root)
+	}
 	return n != nil && (!(v.layout == .Stack || n.insert_stack) || n.count < MAX_STACK)
 }
 
@@ -356,7 +381,9 @@ remove :: proc(v: ^View, id: u32) -> bool {
 	if n == nil {
 		return false
 	}
-	if v.layout == .Scroll {scroll_before_remove(v, id)}
+	if v.layout == .Scroll {
+		scroll_before_remove(v, id)
+	}
 	zooms := capture_zooms(v)
 	defer restore_zooms(v, zooms[:])
 	if v.insertion == id {

@@ -1,8 +1,8 @@
 package tests
 
 import e "../src"
-import "core:testing"
 import layout "../src/layout"
+import "core:testing"
 
 // Independently authored behavior fixtures. Numerical expectations and assumptions
 // are documented in docs/NIRI_PORT_REFERENCE.md; upstream tests are not copied.
@@ -43,23 +43,17 @@ niri_behavior_three_and_four_columns_keep_half_width :: proc(t: ^testing.T) {
 	testing.expect_value(t, m.windows[1].frame.x, f64(16))
 	testing.expect_value(t, m.windows[2].frame.x, f64(648))
 	niri_open(&m, 3)
-	testing.expect_value(
-		t,
-		layout.find(m.spaces[0].view.root, 1).frame.x,
-		f64(-616),
-	)
+	testing.expect_value(t, layout.find(m.spaces[0].view.root, 1).frame.x, f64(-616))
 	testing.expect_value(t, m.windows[2].frame.x, f64(16))
 	testing.expect_value(t, m.windows[3].frame.x, f64(648))
 	niri_open(&m, 4)
 	testing.expect_value(t, m.windows[3].frame.x, f64(16))
 	testing.expect_value(t, m.windows[4].frame.x, f64(648))
-	for _, w in m.windows { testing.expect_value(t, w.frame.w, f64(616)) }
+	for _, w in m.windows {testing.expect_value(t, w.frame.w, f64(616))}
 }
 
 @(test)
-niri_behavior_insert_right_of_active_and_restore_after_close :: proc(
-	t: ^testing.T,
-) {
+niri_behavior_insert_right_of_active_and_restore_after_close :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
@@ -70,7 +64,7 @@ niri_behavior_insert_right_of_active_and_restore_after_close :: proc(
 	e.focus_window(&m, 2); e.flush(&m, m.spaces[0]); niri_open(&m, 4)
 	ids := [4]u32{1, 2, 4, 3}
 	n := layout.first(m.spaces[0].view.root)
-	for id in ids { testing.expect_value(t, n.windows[0], id); n = layout.next(n) }
+	for id in ids {testing.expect_value(t, n.windows[0], id); n = layout.next(n)}
 	testing.expect_value(t, m.windows[2].frame.x, f64(16))
 	testing.expect_value(t, m.windows[4].frame.x, f64(648))
 }
@@ -83,13 +77,15 @@ niri_behavior_intervening_focus_cancels_close_return :: proc(t: ^testing.T) {
 	e.focus_window(&m, 2); e.flush(&m, m.spaces[0])
 	e.focus_window(&m, 3); e.flush(&m, m.spaces[0])
 	e.remove_window(&m, 3); e.flush(&m, m.spaces[0])
-	testing.expect_value(t, m.windows[2].frame.x, f64(648))
+	// Close-return would put B back at 648. The visit to B cleared it, so the
+	// camera stays where C left it and B remains at 16.
+	testing.expect_value(t, m.spaces[0].view.scroll.offset, f64(616))
+	testing.expect_value(t, layout.find(m.spaces[0].view.root, 1).frame.x, f64(-616))
+	testing.expect_value(t, m.windows[2].frame.x, f64(16))
 }
 
 @(test)
-niri_behavior_left_resize_preserves_active_screen_position :: proc(
-	t: ^testing.T,
-) {
+niri_behavior_left_resize_preserves_active_screen_position :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	e.execute(&m, {"window", "1", "--column-width", "abs:400"})
@@ -104,9 +100,7 @@ niri_behavior_left_resize_preserves_active_screen_position :: proc(
 }
 
 @(test)
-niri_behavior_rows_use_integer_edges_without_losing_height :: proc(
-	t: ^testing.T,
-) {
+niri_behavior_rows_use_integer_edges_without_losing_height :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
@@ -123,9 +117,7 @@ niri_behavior_rows_use_integer_edges_without_losing_height :: proc(
 }
 
 @(test)
-niri_behavior_removing_left_column_preserves_active_position :: proc(
-	t: ^testing.T,
-) {
+niri_behavior_removing_left_column_preserves_active_position :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3); niri_open(&m, 4)
@@ -136,9 +128,7 @@ niri_behavior_removing_left_column_preserves_active_position :: proc(
 }
 
 @(test)
-niri_behavior_close_return_refits_a_resized_previous_column :: proc(
-	t: ^testing.T,
-) {
+niri_behavior_close_return_refits_a_resized_previous_column :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)

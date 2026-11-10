@@ -57,7 +57,9 @@ EASING_NAMES := []string {
 
 ease :: proc(kind: Easing, t: f64) -> f64 {
 	t := clamp(t, 0, 1)
-	if t == 0 || t == 1 {return t}
+	if t == 0 || t == 1 {
+		return t
+	}
 	#partial switch kind {
 	case .Linear:
 		return t
@@ -80,8 +82,8 @@ ease :: proc(kind: Easing, t: f64) -> f64 {
 	case .In_Out_Circ:
 		return(
 			t < 0.5 \
-			? (1 - math.sqrt(1 - 4 * t * t)) / 2 \
-			: (math.sqrt(1 - math.pow(-2 * t + 2, 2)) + 1) / 2 \
+				? (1 - math.sqrt(1 - 4 * t * t)) / 2 \
+				: (math.sqrt(1 - math.pow(-2 * t + 2, 2)) + 1) / 2 \
 		)
 	case:
 	}
@@ -95,8 +97,8 @@ ease :: proc(kind: Easing, t: f64) -> f64 {
 	case 2:
 		return(
 			t < 0.5 \
-			? math.pow(2, power - 1) * math.pow(t, power) \
-			: 1 - math.pow(-2 * t + 2, power) / 2 \
+				? math.pow(2, power - 1) * math.pow(t, power) \
+				: 1 - math.pow(-2 * t + 2, power) / 2 \
 		)
 	}
 	return t
@@ -124,16 +126,14 @@ scroll_motion_sample :: proc(motion: ^layout.Scroll_Motion, now: f64) {
 	}
 	t := max(0, now - motion.began)
 	if t >= SCROLL_SPRING_DURATION {
-		motion.position, motion.velocity, motion.active =
-			motion.target, 0, false
+		motion.position, motion.velocity, motion.active = motion.target, 0, false
 		return
 	}
 	y := motion.from - motion.target
 	b := motion.initial_velocity + SCROLL_SPRING_OMEGA * y
 	decay := math.exp(-SCROLL_SPRING_OMEGA * t)
 	motion.position = motion.target + (y + b * t) * decay
-	motion.velocity =
-		(motion.initial_velocity - SCROLL_SPRING_OMEGA * b * t) * decay
+	motion.velocity = (motion.initial_velocity - SCROLL_SPRING_OMEGA * b * t) * decay
 }
 scroll_motion_prepare :: proc(v: ^layout.View, now: f64, animate: bool) {
 	motion := &v.scroll.motion
@@ -146,8 +146,7 @@ scroll_motion_prepare :: proc(v: ^layout.View, now: f64, animate: bool) {
 		}
 		return
 	}
-	if motion.target != v.scroll.offset ||
-	   (!motion.active && motion.velocity != 0) {
+	if motion.target != v.scroll.offset || (!motion.active && motion.velocity != 0) {
 		scroll_motion_sample(motion, now)
 		motion.from, motion.initial_velocity = motion.position, motion.velocity
 		motion.target, motion.began, motion.active = v.scroll.offset, now, true
@@ -196,8 +195,8 @@ scroll_begin_pan :: proc(m: ^Manager, s: ^Space) {
 }
 
 Scroll_Snap :: struct {
-	offset: f64,
-	window: u32,
+	offset:   f64,
+	window:   u32,
 	centered: bool,
 }
 scroll_snap_target :: proc(v: ^layout.View, position, velocity: f64) -> Scroll_Snap {
@@ -231,44 +230,53 @@ scroll_snap_target :: proc(v: ^layout.View, position, velocity: f64) -> Scroll_S
 		center :=
 			v.scroll_options.center == .Always ||
 			(v.scroll_options.center_single && leading == trailing)
+		// On overflow, center only against the neighbor on the side we came
+		// from. The other side can overflow without pulling this column center.
+		rest_center := false
 		if v.scroll_options.center == .On_Overflow {
 			left, right := layout.previous(n), layout.next(n)
-			center =
-				(left != nil &&
-					left.column_width + n.column_width + 3 * gap > width) ||
-				(right != nil &&
-						right.column_width + n.column_width + 3 * gap > width)
-		}
-		candidates := [2]f64 {
-			clamp(x - padding, minimum, maximum),
-			clamp(x + n.column_width - width + padding, minimum, maximum),
-		}
-		if center {
-			candidates = {
-				n.column_width < width \
-					? x + (n.column_width - width) * 0.5 \
-					: x,
-				n.column_width < width \
-					? x + (n.column_width - width) * 0.5 \
-					: x,
+			left_overflows := left != nil && left.column_width + n.column_width + 3 * gap > width
+			right_overflows :=
+				right != nil && right.column_width + n.column_width + 3 * gap > width
+			old := layout.find(v.root, v.scroll.focused)
+			if old != nil && old != n {
+				center = old.frame.x < n.frame.x ? left_overflows : right_overflows
+			} else {
+				rest_center = left_overflows || right_overflows
 			}
 		}
-		for candidate in candidates {
+		mid := n.column_width < width ? x + (n.column_width - width) * 0.5 : x
+		offsets: [3]f64
+		centered_offset: [3]bool
+		count := 0
+		if center {
+			offsets[0] = clamp(mid, minimum, maximum)
+			centered_offset[0] = true
+			count = 1
+		} else {
+			offsets[0] = clamp(x - padding, minimum, maximum)
+			offsets[1] = clamp(x + n.column_width - width + padding, minimum, maximum)
+			count = 2
+			if rest_center {
+				offsets[2] = clamp(mid, minimum, maximum)
+				centered_offset[2] = true
+				count = 3
+			}
+		}
+		for i in 0 ..< count {
+			candidate := offsets[i]
 			distance := math.abs(projected - candidate)
-			if distance < best_distance ||
-			   (distance == best_distance && candidate < best.offset) {
-				best = {candidate, n.order[0], center}
+			if distance < best_distance || (distance == best_distance && candidate < best.offset) {
+				best = {candidate, n.order[0], centered_offset[i]}
 				best_distance = distance
 			}
 		}
 	}
 	if !best.centered {
 		for n := leading; n != nil; n = layout.next(n) {
-			x :=
-				n.frame.x - v.scroll.viewport.x + v.scroll.offset - best.offset
+			x := n.frame.x - v.scroll.viewport.x + v.scroll.offset - best.offset
 			padding := min(gap, max(0, (width - n.column_width) * 0.5))
-			if x >= padding - 0.001 &&
-			   x + n.column_width <= width - padding + 0.001 {
+			if x >= padding - 0.001 && x + n.column_width <= width - padding + 0.001 {
 				best.window = n.order[0]
 				if projected < position {
 					break
@@ -278,7 +286,13 @@ scroll_snap_target :: proc(v: ^layout.View, position, velocity: f64) -> Scroll_S
 	}
 	return best
 }
-scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64, prevent_overshoot: bool = false, step: i32 = 0) -> string {
+scroll_finish_pan :: proc(
+	m: ^Manager,
+	s: ^Space,
+	velocity: f64,
+	prevent_overshoot: bool = false,
+	step: i32 = 0,
+) -> string {
 	velocity := velocity
 	v := &s.view
 	if math.is_nan(velocity) || math.is_inf(velocity) {
@@ -294,7 +308,10 @@ scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64, prevent_oversho
 			// Reveal only the adjacent column, independently of fling speed.
 			before := v.scroll.offset
 			layout.scroll_reveal(v, neighbor.order[0])
-			snap = {offset = v.scroll.offset, window = neighbor.order[0]}
+			snap = {
+				offset = v.scroll.offset,
+				window = neighbor.order[0],
+			}
 			v.scroll.offset = before; layout.scroll_update(v)
 		}
 	}
@@ -302,8 +319,7 @@ scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64, prevent_oversho
 		return ""
 	}
 	if snap.window != m.focused {
-		if err := perform(m, {kind = .Focus, window = snap.window});
-		   err != "" {
+		if err := perform(m, {kind = .Focus, window = snap.window}); err != "" {
 			return err
 		}
 		focus_window(m, snap.window)
@@ -315,19 +331,20 @@ scroll_finish_pan :: proc(m: ^Manager, s: ^Space, velocity: f64, prevent_oversho
 	v.scroll.focused, v.scroll.reveal = snap.window, false
 	if prevent_overshoot {
 		distance := snap.offset - v.scroll.motion.position
-		velocity = distance >= 0 \
-			? clamp(velocity, 0, SCROLL_SPRING_OMEGA * distance) \
-			: clamp(velocity, SCROLL_SPRING_OMEGA * distance, 0)
+		velocity =
+			distance >= 0 \
+				? clamp(velocity, 0, SCROLL_SPRING_OMEGA * distance) \
+				: clamp(velocity, SCROLL_SPRING_OMEGA * distance, 0)
 	}
 	v.scroll.motion.velocity = velocity
 	return flush(m, s)
 }
 
 Scroll_Velocity :: struct {
-	samples: [64]struct {
+	samples:  [64]struct {
 		at, position: f64,
 	},
-	count: int,
+	count:    int,
 	position: f64,
 }
 scroll_velocity_add :: proc(v: ^Scroll_Velocity, delta, at: f64) {
@@ -336,7 +353,7 @@ scroll_velocity_add :: proc(v: ^Scroll_Velocity, delta, at: f64) {
 	}
 	v.position += delta
 	start := 0
-	for start < v.count && at - v.samples[start].at > 0.15 { start += 1 }
+	for start < v.count && at - v.samples[start].at > 0.15 {start += 1}
 	if start > 0 {
 		copy(v.samples[:], v.samples[start:v.count]); v.count -= start
 	}
@@ -358,9 +375,7 @@ pointer_follows_focus :: proc(m: ^Manager, w: ^Window) -> bool {
 		return override
 	}
 	if s := space_by_id(m, w.space);
-	   s != nil &&
-	   s.view.layout == .Scroll &&
-	   !s.view.scroll_options.warp_pointer {
+	   s != nil && s.view.layout == .Scroll && !s.view.scroll_options.warp_pointer {
 		return false
 	}
 	return m.mouse.follows_focus
@@ -370,11 +385,11 @@ pointer_follows_focus :: proc(m: ^Manager, w: ^Window) -> bool {
 // ------------------------------------------------------------------------
 
 Scroll_Frame :: struct {
-	valid: bool,
-	snap_width, snap_height: bool,
-	space: u64,
+	valid:                                             bool,
+	snap_width, snap_height:                           bool,
+	space:                                             u64,
 	from, target, current, velocity, initial_velocity: Rect,
-	progress: f64,
+	progress:                                          f64,
 }
 scroll_rect_near :: proc(a, b: Rect, tolerance: f64 = 0.001) -> bool {
 	return(
@@ -394,10 +409,7 @@ scroll_small_resize :: proc(current, target, velocity, limit: f64) -> bool {
 	if delta == 0 {
 		return math.abs(velocity) < .001
 	}
-	return(
-		velocity * delta >= 0 &&
-		math.abs(velocity) <= SCROLL_SPRING_OMEGA * math.abs(delta) \
-	)
+	return velocity * delta >= 0 && math.abs(velocity) <= SCROLL_SPRING_OMEGA * math.abs(delta)
 }
 scroll_frame_sample :: proc(frame: ^Scroll_Frame, elapsed: f64) {
 	if elapsed >= SCROLL_SPRING_DURATION {
@@ -418,12 +430,7 @@ scroll_frame_sample :: proc(frame: ^Scroll_Frame, elapsed: f64) {
 		(1 - SCROLL_SPRING_OMEGA * t) *
 		decay
 	from := [4]f64{frame.from.x, frame.from.y, frame.from.w, frame.from.h}
-	target := [4]f64 {
-		frame.target.x,
-		frame.target.y,
-		frame.target.w,
-		frame.target.h,
-	}
+	target := [4]f64{frame.target.x, frame.target.y, frame.target.w, frame.target.h}
 	velocity := [4]f64 {
 		frame.initial_velocity.x,
 		frame.initial_velocity.y,
@@ -496,12 +503,7 @@ scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 				// body uses only the available spacing during catch-up motion.
 				cutoff := min(10.0, layout.scroll_gap(v))
 				if f.target.w != target.w {
-					f.snap_width = scroll_small_resize(
-						f.current.w,
-						target.w,
-						f.velocity.w,
-						cutoff,
-					)
+					f.snap_width = scroll_small_resize(f.current.w, target.w, f.velocity.w, cutoff)
 				}
 				if f.target.h != target.h {
 					f.snap_height = scroll_small_resize(
@@ -511,8 +513,7 @@ scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 						cutoff,
 					)
 				}
-				f.from, f.initial_velocity, f.target =
-					f.current, f.velocity, target
+				f.from, f.initial_velocity, f.target = f.current, f.velocity, target
 				f.progress = 0
 				if f.snap_width {
 					f.current.w, f.from.w = target.w, target.w
@@ -523,8 +524,7 @@ scroll_geometry_prepare :: proc(m: ^Manager, s: ^Space) {
 					f.velocity.h, f.initial_velocity.h = 0, 0
 				}
 			}
-			if !scroll_rect_near(f.current, f.target) ||
-			   !scroll_rect_near(f.velocity, {}) {
+			if !scroll_rect_near(f.current, f.target) || !scroll_rect_near(f.velocity, {}) {
 				active = true
 			}
 		}
@@ -538,8 +538,7 @@ scroll_geometry_finish :: proc(m: ^Manager, s: ^Space) {
 	s.view.scroll.geometry_active = false
 	for _, w in m.windows {
 		if w.space == s.id {
-			w.scroll_frame.current, w.scroll_frame.velocity =
-				w.scroll_frame.target, {}
+			w.scroll_frame.current, w.scroll_frame.velocity = w.scroll_frame.target, {}
 			w.scroll_frame.progress = 1
 		}
 	}
