@@ -976,6 +976,17 @@ insertion_and_drag_previews_match_split_geometry :: proc(t: ^testing.T) {
 }
 
 @(test)
+invalid_color_names_the_setting_that_failed :: proc(t: ^testing.T) {
+	m: mac.Manager
+	mac.manager_init(&m)
+	defer mac.manager_destroy(&m)
+	ring := mac.config(&m, []string{"focus_ring_color", "0xGG000000"})
+	testing.expect_value(t, ring.text, "invalid focus_ring_color")
+	feedback := mac.config(&m, []string{"insert_feedback_color", "0xGG000000"})
+	testing.expect_value(t, feedback.text, "invalid insert_feedback_color")
+}
+
+@(test)
 feedback_reuses_unchanged_overlays_and_releases_changed_and_removed_plans :: proc(
 	t: ^testing.T,
 ) {

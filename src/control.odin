@@ -1521,7 +1521,7 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 		}
 		color, valid := strconv.parse_u64(value[2:], 16)
 		if !valid {
-			return failure("invalid insert feedback color")
+			return failure(fmt.tprintf("invalid %s", name))
 		}
 		color_target^ = u32(color)
 	case "external_bar":
