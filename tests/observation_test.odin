@@ -7,6 +7,18 @@ import "core:testing"
 import layout "../src/layout"
 
 @(test)
+unknown_resize_stays_eligible_in_the_window_query :: proc(t: ^testing.T) {
+	m: mac.Manager
+	mac.manager_init(&m)
+	defer mac.manager_destroy(&m)
+	w := mac.add_window(&m, mac.Window{id = 1})
+	testing.expect(t, w.can_resize == nil)
+	testing.expect(t, mac.window_json(&m, w).can_resize)
+	w.can_resize = false
+	testing.expect(t, !mac.window_json(&m, w).can_resize)
+}
+
+@(test)
 unavailable_appearance_preserves_the_last_observed_window_layer :: proc(
 	t: ^testing.T,
 ) {

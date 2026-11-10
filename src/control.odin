@@ -9,6 +9,7 @@ import "core:math"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
+import "core:sys/darwin"
 import objc "core:sys/darwin/Foundation"
 import posix "core:sys/posix"
 import "core:time"
@@ -309,7 +310,8 @@ window_json :: proc(m: ^Manager, w: ^Window) -> Window_JSON {
 		has_focus            = w.focused,
 		has_shadow           = w.shadow,
 		can_move             = w.can_move,
-		can_resize           = w.can_resize.? or_else false,
+		// Unknown stays eligible, matching admission and border resize.
+		can_resize           = w.can_resize.? or_else true,
 		has_ax_reference     = true,
 		is_native_fullscreen = w.fullscreen,
 		is_minimized         = w.minimized,
@@ -3138,22 +3140,39 @@ workspace_set_dock_pid :: proc(state: ^State, pid: i32) {
 	workspace_record(state, "AXExposeExit")
 }
 
+// NSRunningApplication retains native blocks for several thousand lookups.
+// This poll runs once a second for the life of the daemon, including startup
+// diagnostics outside the session loop. libproc returns the same Dock pid.
 workspace_poll_dock :: proc() -> i32 {
-	// Also safe when called by startup diagnostics outside the daemon loop.
-	pool := pool_push(); defer pool_pop(pool)
-	identifier := cf_string("com.apple.dock")
-	defer CFRelease(identifier)
-	apps := intrinsics.objc_send(
-		^objc.Object,
-		Running_Application,
-		"runningApplicationsWithBundleIdentifier:",
-		(^objc.Object)(identifier),
-	)
-	if intrinsics.objc_send(uint, apps, "count") != 1 {
+	pids: [4096]i32
+	n := darwin.proc_listallpids(&pids[0], i32(size_of(pids)))
+	if n <= 0 {
 		return 0
 	}
-	app := intrinsics.objc_send(^objc.Object, apps, "objectAtIndex:", uint(0))
-	return intrinsics.objc_send(i32, app, "processIdentifier")
+	count := int(n)
+	if count > len(pids) {
+		count = len(pids)
+	}
+	found: i32
+	matches := 0
+	path: [posix.PATH_MAX]byte
+	for pid in pids[:count] {
+		if pid <= 0 {
+			continue
+		}
+		wrote := darwin.proc_pidpath(posix.pid_t(pid), &path[0], u32(len(path)))
+		if wrote <= 0 || int(wrote) > len(path) {
+			continue
+		}
+		if strings.has_suffix(string(path[:wrote]), "/Dock.app/Contents/MacOS/Dock") {
+			matches += 1
+			found = pid
+		}
+	}
+	if matches != 1 {
+		return 0
+	}
+	return found
 }
 
 workspace_tick :: proc(state: ^State, detect_dock: bool = true) {

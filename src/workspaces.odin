@@ -181,13 +181,7 @@ refresh_displays :: proc(state: ^State) {
 			continue
 		}
 		if !seen[s.id] {
-			layout.view_destroy(&s.view)
-			delete(s.overrides)
-			delete(s.uuid)
-			delete(s.label)
-			delete(s.home_uuid)
-			free(s)
-			ordered_remove(&m.spaces, i)
+			workspace_free_space(m, s)
 		}
 	}
 	for i in 1 ..< len(m.spaces) {
