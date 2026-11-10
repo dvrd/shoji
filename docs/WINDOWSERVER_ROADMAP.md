@@ -93,11 +93,11 @@ no effect).
 | Spaces | `SLSMoveWindowsToManagedSpace` skips the table | [live, 26A434] |
 | Input shape | Event-shape ops 0x45/0x46, resize shape 0x64, touch shapes 0x43/0x44/0x65 | [static] ops exist |
 | Hit-testing and event dispatch | Not mapped. 0x2c `SetEventCapture` and 0x2d `DeferWindowMoveEvents` exist. | [static] unknown |
-| Transform | Op 0x0f, op 0x10 (3D), op 0x11 (warp). Also direct `SLSSetWindowTransform`: Dock payload (`src/payloads/dock/payload.odin`) and owned surfaces (`src/surfaces.odin`). | [live] owned and Dock 
+| Transform | Op 0x0f, op 0x10 (3D), op 0x11 (warp). Also direct `SLSSetWindowTransform`: Dock payload (`src/payloads/dock/payload.odin`) and owned surfaces (`src/present.odin`). | [live] owned and Dock 
 | Shadow | 0x48, 0x71, 0x49, 0x53 | [static] |
 | Corner mask and radius | 0x4a; 0x69–0x6f | [static] |
-| Frame sync | `SLSDisableUpdate`/`SLSReenableUpdate` on Shoji's connection only (`src/display_clock.odin`). The four commit endpoints include `sls_transaction_commit_ca`. No vsync or frame-cl
-| Capture | `SLSHWCaptureWindowList` (`src/animation.odin`, `src/resize_transition.odin`) | [live] |
+| Frame sync | `SLSDisableUpdate`/`SLSReenableUpdate` on Shoji's connection only (`src/session.odin`). The four commit endpoints include `sls_transaction_commit_ca`. No vsync or frame-cl
+| Capture | `SLSHWCaptureWindowList` (`src/present.odin`) | [live] |
 
 ## Classification
 

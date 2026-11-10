@@ -3,8 +3,7 @@
 This package is the payload Shoji loads into WindowServer
 (`task build:windowserver-payload` → `bin/shoji-ws.dylib`, loaded by
 `shoji --ws-attach`). The gate engine it serves lives in
-`src/windowserver/gate/`; the daemon side is `src/ws_adapter.odin` and
-`src/ws_attach_runtime.odin`. `task test:windowserver` is the live acceptance
+`src/windowserver/gate/`; the daemon side is `src/ws_client.odin`. `task test:windowserver` is the live acceptance
 check (`tools/harness/harness/live_windowserver.odin`).
 
 Supported build: macOS 26B123 (`BUILD` in `src/windowserver/gate/target.odin`),
