@@ -1496,9 +1496,104 @@ addition_space_transaction :: proc(_: rawptr, target: u64, wid: u32, source: u64
 	return err
 }
 
+addition_cached_valid: bool
+addition_cached_caps: dock.Capabilities
+
+addition_capabilities :: proc() -> (dock.Capabilities, string) {
+	if addition_cached_valid {
+		return addition_cached_caps, ""
+	}
+	caps, err := addition_check()
+	if err != "" {
+		return {}, err
+	}
+	addition_cached_valid, addition_cached_caps = true, caps
+	return caps, ""
+}
+
+// Buffer size for a scaled resize. WindowServer bounds follow the app's
+// committed size, not the presentation transform.
+resize_window_bounds :: proc(user: rawptr, id: u32) -> (Rect, bool) {
+	state := (^State)(user)
+	r: Rect
+	if SLSGetWindowBounds(state.connection, id, &r) != 0 {
+		return {}, false
+	}
+	return r, true
+}
+
+resize_transform_swept_at: f64
+resize_transform_noted: bool
+
+// WindowServer keeps a set transform and shifts it by each later move, so a
+// reset sent just before the app's own move leaves the window drawn off its
+// bounds (and off the focus ring). Re-check windows that just settled, and
+// sweep every managed window once a second for older drift.
+resize_transform_tick :: proc(state: ^State) {
+	m := &state.manager
+	if m.scale_present == nil || m.suspended || m.gesture_active {
+		return
+	}
+	now := m.scroll_time
+	sweep := now - resize_transform_swept_at >= 1
+	if sweep {
+		resize_transform_swept_at = now
+	}
+	for id, w in m.windows {
+		recent := now - w.resize_settled_at < 1
+		if !(recent || sweep) ||
+		   !managed(w) ||
+		   w.concealed ||
+		   w.resize_scaled ||
+		   w.opening.phase != .Admitted ||
+		   id in state.animations ||
+		   id in state.resize_covers {
+			continue
+		}
+		s := space_by_id(m, w.space)
+		if s == nil ||
+		   !s.visible ||
+		   s.view.scroll.dragging ||
+		   s.view.scroll.motion.active ||
+		   s.view.scroll.geometry_active {
+			continue
+		}
+		t: Animation_Transform
+		r: Rect
+		if SLSGetWindowTransform(state.connection, id, &t) != 0 ||
+		   SLSGetWindowBounds(state.connection, id, &r) != 0 {
+			continue
+		}
+		// Only a translation drift is ours to repair. Any other transform
+		// belongs to an animation in flight.
+		if t.b != 0 || t.c != 0 || math.abs(t.a - 1) > 1e-6 || math.abs(t.d - 1) > 1e-6 {
+			continue
+		}
+		if math.abs(t.tx + r.x) < 0.5 && math.abs(t.ty + r.y) < 0.5 {
+			continue
+		}
+		req := dock.Present_Request {
+			window = id,
+			mask   = dock.PRESENT_TRANSFORM,
+			a      = 1,
+			d      = 1,
+			tx     = -r.x,
+			ty     = -r.y,
+		}
+		if err := resize_scale_present(state, req); err != "" && !resize_transform_noted {
+			resize_transform_noted = true
+			fmt.eprintln("shoji: transform repair:", err)
+		}
+	}
+}
+
+resize_scale_present :: proc(_: rawptr, req: dock.Present_Request) -> string {
+	return addition_present(req)
+}
+
 // One Dock transaction for the subset of presentation fields in `req`.
 addition_present :: proc(req: dock.Present_Request) -> string {
-	caps, err := addition_check()
+	caps, err := addition_capabilities()
 	if err != "" {
 		return err
 	}
@@ -1526,6 +1621,10 @@ addition_present :: proc(req: dock.Present_Request) -> string {
 	dock.pack(&packet, req.tx)
 	dock.pack(&packet, req.ty)
 	_, err = addition_exchange(&packet)
+	// A dead Dock socket must not keep the previous handshake.
+	if err != "" {
+		addition_cached_valid = false
+	}
 	return err
 }
 
