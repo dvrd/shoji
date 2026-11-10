@@ -19,8 +19,8 @@ import attach "windowserver/attach"
 import gate "windowserver/gate"
 
 // WindowServer gate adapter (C4): Shoji's own direct-Mach client. The daemon
-// connects it only through `--ws-attach` (ws_attach_runtime.odin, opted in by
-// `windowserver_gate on`). Every operation returns `handled`, and an
+// connects it only through `--ws-attach`, opted in by `windowserver_gate on`.
+// Every operation returns `handled`, and an
 // unhandled result means "do today's behavior".
 // Any transport failure, identity mismatch or ownership loss latches the
 // adapter to .Lost so later calls short-circuit to the fallback path. The
@@ -598,7 +598,7 @@ ws_adapter_describe :: proc(a: ^Ws_Adapter) -> string {
 // Engine hooks (C1 layout batch, C2 focus receipt)
 // ------------------------------------------------------------------------
 
-// Created like motion.odin surface_create, minus the drawing context: a raw
+// Created like present.odin surface_create, minus the drawing context: a raw
 // SkyLight window at alpha 0. Proven as a C1 trigger (c1c2-foreign-20261105).
 ws_marker :: proc(a: ^Ws_Adapter, connection: i32) -> u32 {
 	if a.marker.window != 0 {

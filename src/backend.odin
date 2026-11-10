@@ -99,7 +99,6 @@ foreign sls {
 	SLSCopyManagedDisplaySpaces :: proc(connection: i32) -> Ref ---
 	SLSCopyActiveMenuBarDisplayIdentifier :: proc(connection: i32) -> Ref ---
 	SLSCopySpacesForWindows :: proc(connection, selector: i32, windows: Ref) -> Ref ---
-	SLSGetWindowLevel :: proc(connection: i32, window: u32, level: ^i32) -> i32 ---
 	SLSGetWindowSubLevel :: proc(connection: i32, window: u32) -> i32 ---
 	SLSGetWindowTags :: proc(connection: i32, window: u32, tags: ^u64, size: uint) -> i32 ---
 	SLSWindowIsOrderedIn :: proc(connection: i32, window: u32, ordered: ^u8) -> i32 ---
