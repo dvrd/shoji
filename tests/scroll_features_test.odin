@@ -1,27 +1,19 @@
 package tests
 
 import e "../src"
-import "core:testing"
 import layout "../src/layout"
+import "core:testing"
 
 @(test)
-scroll_width_presets_reset_after_explicit_resize_and_survive_output_resize :: proc(
-	t: ^testing.T,
-) {
+scroll_width_presets_reset_after_explicit_resize_and_survive_output_resize :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	testing.expect(
 		t,
 		!e.execute(&m, {"config", "scroll_width_presets", "abs:400,abs:600,abs:800"}).failed,
 	)
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "--column-width", "abs:398"}).failed,
-	)
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "--cycle-column-width", "next"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "--column-width", "abs:398"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "--cycle-column-width", "next"}).failed)
 	testing.expect_value(t, m.windows[1].frame.w, f64(400))
 	e.execute(&m, {"window", "--column-width", "rel:-1"})
 	e.execute(&m, {"window", "--cycle-column-width", "next"})
@@ -38,9 +30,7 @@ scroll_width_presets_reset_after_explicit_resize_and_survive_output_resize :: pr
 }
 
 @(test)
-scroll_consume_and_expel_have_distinct_membership_and_focus :: proc(
-	t: ^testing.T,
-) {
+scroll_consume_and_expel_have_distinct_membership_and_focus :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
@@ -53,35 +43,23 @@ scroll_consume_and_expel_have_distinct_membership_and_focus :: proc(
 	e.execute(&m, {"window", "2", "--focus"})
 	testing.expect(t, !e.execute(&m, {"window", "--expel"}).failed)
 	testing.expect_value(t, m.focused, u32(1))
-	testing.expect_value(
-		t,
-		layout.next(layout.find(m.spaces[0].view.root, 1)).windows[0],
-		u32(2),
-	)
+	testing.expect_value(t, layout.next(layout.find(m.spaces[0].view.root, 1)).windows[0], u32(2))
 	testing.expect_value(t, layout.find(m.spaces[0].view.root, 1).count, 1)
 }
 
 @(test)
-scroll_directional_consume_expel_preserves_selected_focus :: proc(
-	t: ^testing.T,
-) {
+scroll_directional_consume_expel_preserves_selected_focus :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "--consume-or-expel", "west"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "--consume-or-expel", "west"}).failed)
 	testing.expect_value(
 		t,
 		layout.find(m.spaces[0].view.root, 3),
 		layout.find(m.spaces[0].view.root, 2),
 	)
 	testing.expect_value(t, m.focused, u32(3))
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "--consume-or-expel", "east"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "--consume-or-expel", "east"}).failed)
 	testing.expect(
 		t,
 		layout.find(m.spaces[0].view.root, 3) != layout.find(m.spaces[0].view.root, 2),
@@ -96,29 +74,13 @@ scroll_fixed_and_weighted_rows_preserve_total_height :: proc(t: ^testing.T) {
 	niri_open(&m, 2); niri_open(&m, 3)
 	e.execute(&m, {"window", "1", "--stack", "2"})
 	e.execute(&m, {"window", "1", "--stack", "3"})
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "1", "--row-height", "abs:200"}).failed,
-	)
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "2", "--row-height", "weight:2"}).failed,
-	)
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "3", "--row-height", "weight:1"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--row-height", "abs:200"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "2", "--row-height", "weight:2"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "3", "--row-height", "weight:1"}).failed)
 	testing.expect_value(t, m.windows[1].frame.h, f64(200))
-	testing.expect_value(
-		t,
-		m.windows[2].frame.h + m.windows[3].frame.h,
-		f64(536),
-	)
+	testing.expect_value(t, m.windows[2].frame.h + m.windows[3].frame.h, f64(536))
 	testing.expect(t, m.windows[2].frame.h > m.windows[3].frame.h)
-	testing.expect(
-		t,
-		e.execute(&m, {"window", "--row-height", "weight:NaN"}).failed,
-	)
+	testing.expect(t, e.execute(&m, {"window", "--row-height", "weight:NaN"}).failed)
 }
 
 @(test)
@@ -153,6 +115,7 @@ scroll_default_column_display_applies_to_new_columns_only :: proc(t: ^testing.T)
 	niri_open(&m, 2)
 	testing.expect(t, layout.find(m.spaces[0].view.root, 2).column_tabbed)
 	testing.expect(t, !e.config(&m, {"scroll_default_column_display", "normal"}).failed)
+	e.focus_window(&m, 1)
 	niri_open(&m, 3)
 	testing.expect(t, !layout.find(m.spaces[0].view.root, 3).column_tabbed)
 	testing.expect(t, layout.find(m.spaces[0].view.root, 2).column_tabbed)
@@ -163,28 +126,55 @@ scroll_default_column_display_applies_to_new_columns_only :: proc(t: ^testing.T)
 }
 
 @(test)
+opening_into_a_tabbed_column_inserts_to_the_right_of_the_active_tab :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	niri_open(&m, 2); niri_open(&m, 3)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--stack", "2"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--column-display", "tabbed"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "2", "--focus"}).failed)
+	niri_open(&m, 4)
+	n := layout.find(m.spaces[0].view.root, 1)
+	testing.expect(t, n != nil && n == layout.find(m.spaces[0].view.root, 4))
+	testing.expect(t, n.column_tabbed && n.count == 3)
+	testing.expect_value(t, n.windows[0], u32(1))
+	testing.expect_value(t, n.windows[1], u32(2))
+	testing.expect_value(t, n.windows[2], u32(4))
+	testing.expect_value(t, n.order[0], u32(4))
+	other := layout.find(m.spaces[0].view.root, 3)
+	testing.expect(t, other != nil && other != n && other.count == 1)
+	e.execute(&m, {"window", "1", "--column-display", "tabbed"})
+	e.execute(&m, {"window", "1", "--insert", "east"})
+	niri_open(&m, 5)
+	opened := layout.find(m.spaces[0].view.root, 5)
+	testing.expect(t, opened != nil && opened != n && opened.count == 1)
+}
+
+@(test)
 scroll_default_column_display_supports_space_overrides :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
-	testing.expect(t, !e.config(&m, {"--space", "1", "scroll_default_column_display", "tabbed"}).failed)
+	testing.expect(
+		t,
+		!e.config(&m, {"--space", "1", "scroll_default_column_display", "tabbed"}).failed,
+	)
 	testing.expect(t, !e.config(&m, {"scroll_default_column_display", "normal"}).failed)
-	testing.expect_value(t, e.config(&m, {"--space", "1", "scroll_default_column_display"}).text, "tabbed")
+	testing.expect_value(
+		t,
+		e.config(&m, {"--space", "1", "scroll_default_column_display"}).text,
+		"tabbed",
+	)
 	niri_open(&m, 2)
 	testing.expect(t, layout.find(m.spaces[0].view.root, 2).column_tabbed)
 }
 
 @(test)
-scroll_tabbed_columns_preserve_rows_and_only_raise_active :: proc(
-	t: ^testing.T,
-) {
+scroll_tabbed_columns_preserve_rows_and_only_raise_active :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2)
 	e.execute(&m, {"window", "1", "--stack", "2"})
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "--column-display", "tabbed"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "--column-display", "tabbed"}).failed)
 	testing.expect_value(t, m.windows[1].frame, m.windows[2].frame)
 	orders := 0
 	for a in r.actions {
@@ -323,42 +313,25 @@ scroll_top_tabs_use_horizontal_focus_and_fall_through_to_columns :: proc(t: ^tes
 }
 
 @(test)
-scroll_size_constraints_water_fill_and_preserve_requested_width :: proc(
-	t: ^testing.T,
-) {
+scroll_size_constraints_water_fill_and_preserve_requested_width :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
 	e.execute(&m, {"window", "1", "--stack", "2"})
 	e.execute(&m, {"window", "1", "--stack", "3"})
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "1", "--size-limits", "800:400:0:0"}).failed,
-	)
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "2", "--size-limits", "0:0:700:0"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--size-limits", "800:400:0:0"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", "2", "--size-limits", "0:0:700:0"}).failed)
 	testing.expect_value(t, m.windows[1].frame.w, f64(800))
 	testing.expect_value(t, m.windows[1].frame.h, f64(400))
-	testing.expect_value(
-		t,
-		m.windows[2].frame.h + m.windows[3].frame.h,
-		f64(336),
-	)
+	testing.expect_value(t, m.windows[2].frame.h + m.windows[3].frame.h, f64(336))
 	e.execute(&m, {"window", "1", "--column-width", "abs:900"})
 	e.execute(&m, {"window", "2", "--size-limits", "0:0:0:0"})
 	testing.expect_value(t, m.windows[1].frame.w, f64(900))
-	testing.expect(
-		t,
-		e.execute(&m, {"window", "--size-limits", "900:0:500:0"}).failed,
-	)
+	testing.expect(t, e.execute(&m, {"window", "--size-limits", "900:0:500:0"}).failed)
 }
 
 @(test)
-scroll_legacy_expel_failed_focus_leaves_membership_intact :: proc(
-	t: ^testing.T,
-) {
+scroll_legacy_expel_failed_focus_leaves_membership_intact :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2)
@@ -370,17 +343,12 @@ scroll_legacy_expel_failed_focus_leaves_membership_intact :: proc(
 }
 
 @(test)
-scroll_column_move_and_warp_preserve_proportional_width_request :: proc(
-	t: ^testing.T,
-) {
+scroll_column_move_and_warp_preserve_proportional_width_request :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2)
 	e.execute(&m, {"window", "--column-width", "ratio:0.3333333333333333"})
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "--move-column", "west"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "--move-column", "west"}).failed)
 	testing.expect_value(t, layout.first(m.spaces[0].view.root).windows[0], u32(2))
 	e.execute(&m, {"window", "--warp", "east"})
 	m.spaces[0].view.frame.w = 1600
@@ -389,9 +357,7 @@ scroll_column_move_and_warp_preserve_proportional_width_request :: proc(
 }
 
 @(test)
-scroll_output_shrink_refits_focus_and_preserves_fixed_request :: proc(
-	t: ^testing.T,
-) {
+scroll_output_shrink_refits_focus_and_preserves_fixed_request :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
@@ -419,9 +385,7 @@ scroll_overflow_center_uses_arrival_side_neighbor :: proc(t: ^testing.T) {
 }
 
 @(test)
-scroll_height_presets_and_replacing_fixed_row_preserve_proportions :: proc(
-	t: ^testing.T,
-) {
+scroll_height_presets_and_replacing_fixed_row_preserve_proportions :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
 	defer e.manager_destroy(&m); defer delete(r.actions)
 	niri_open(&m, 2); niri_open(&m, 3)
@@ -437,10 +401,7 @@ scroll_height_presets_and_replacing_fixed_row_preserve_proportions :: proc(
 		t,
 		!e.execute(&m, {"config", "scroll_height_presets", "abs:100,abs:200,abs:300"}).failed,
 	)
-	testing.expect(
-		t,
-		!e.execute(&m, {"window", "2", "--cycle-row-height", "next"}).failed,
-	)
+	testing.expect(t, !e.execute(&m, {"window", "2", "--cycle-row-height", "next"}).failed)
 	testing.expect_value(t, m.windows[2].frame.h, f64(200))
 	e.execute(&m, {"window", "2", "--cycle-row-height", "prev"})
 	testing.expect_value(t, m.windows[2].frame.h, f64(100))
