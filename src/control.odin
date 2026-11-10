@@ -1865,14 +1865,20 @@ config :: proc(m: ^Manager, args: []string) -> Response {
 	case:
 		return failure(errorf("unsupported setting '%s'", name))
 	}
+	// The setting is stored by now. A window refusing its frame write (an
+	// app busy at startup) is a layout problem, not a config one: failing
+	// here would stop a `set -e` shojirc and skip every later setting.
 	if s != nil {
 		mark_space_override(s, name)
-		return result(flush(m, s))
+		if err := flush(m, s); err != "" {
+			fmt.eprintf("shoji: config %s: layout: %s\n", name, err)
+		}
+		return success()
 	}
 	for space in m.spaces {
 		if space.visible {
 			if err := flush(m, space); err != "" {
-				return failure(err)
+				fmt.eprintf("shoji: config %s: layout: %s\n", name, err)
 			}
 		}
 	}
