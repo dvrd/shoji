@@ -125,6 +125,27 @@ scroll_default_column_display_applies_to_new_columns_only :: proc(t: ^testing.T)
 	testing.expect(t, layout.find(m.spaces[0].view.root, 4).column_tabbed)
 }
 
+// A live open goes through admission, the only path that may join a tab.
+niri_open_live :: proc(t: ^testing.T, m: ^e.Manager, id: u32) {
+	w := e.discover_window(
+		m,
+		{
+			id = id,
+			pid = i32(id) + 40,
+			role = "AXWindow",
+			subrole = "AXStandardWindow",
+			space = 100,
+			display = 10,
+			frame = {20, 20, 600, 500},
+		},
+	)
+	admitted, err := e.admit_window(m, w)
+	testing.expect(t, admitted)
+	testing.expect_value(t, err, "")
+	testing.expect_value(t, e.finish_opening(m, w), "")
+	e.focus_window(m, id)
+}
+
 @(test)
 opening_into_a_tabbed_column_inserts_to_the_right_of_the_active_tab :: proc(t: ^testing.T) {
 	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
@@ -133,7 +154,7 @@ opening_into_a_tabbed_column_inserts_to_the_right_of_the_active_tab :: proc(t: ^
 	testing.expect(t, !e.execute(&m, {"window", "1", "--stack", "2"}).failed)
 	testing.expect(t, !e.execute(&m, {"window", "1", "--column-display", "tabbed"}).failed)
 	testing.expect(t, !e.execute(&m, {"window", "2", "--focus"}).failed)
-	niri_open(&m, 4)
+	niri_open_live(t, &m, 4)
 	n := layout.find(m.spaces[0].view.root, 1)
 	testing.expect(t, n != nil && n == layout.find(m.spaces[0].view.root, 4))
 	testing.expect(t, n.column_tabbed && n.count == 3)
@@ -145,9 +166,25 @@ opening_into_a_tabbed_column_inserts_to_the_right_of_the_active_tab :: proc(t: ^
 	testing.expect(t, other != nil && other != n && other.count == 1)
 	e.execute(&m, {"window", "1", "--column-display", "tabbed"})
 	e.execute(&m, {"window", "1", "--insert", "east"})
-	niri_open(&m, 5)
+	niri_open_live(t, &m, 5)
 	opened := layout.find(m.spaces[0].view.root, 5)
 	testing.expect(t, opened != nil && opened != n && opened.count == 1)
+}
+
+// Startup enumeration and restores add already-open windows. They must keep
+// their own columns even while a tabbed column has focus.
+@(test)
+enumerated_windows_do_not_join_a_focused_tabbed_column :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; niri_fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--column-display", "tabbed"}).failed)
+	niri_open(&m, 2); niri_open(&m, 3)
+	tabbed := layout.find(m.spaces[0].view.root, 1)
+	testing.expect(t, tabbed != nil && tabbed.count == 1)
+	two := layout.find(m.spaces[0].view.root, 2)
+	three := layout.find(m.spaces[0].view.root, 3)
+	testing.expect(t, two != nil && two != tabbed && two.count == 1)
+	testing.expect(t, three != nil && three != tabbed && three != two)
 }
 
 @(test)

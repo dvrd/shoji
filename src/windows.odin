@@ -910,7 +910,7 @@ admit_window :: proc(m: ^Manager, w: ^Window, backend: Opening_Backend = {}) -> 
 	v := s.view; v.root = opening_clone_node(s.view.root, nil)
 	defer layout.view_destroy(&v)
 	zooms := layout.capture_zooms(&s.view); layout.restore_zooms(&v, zooms[:])
-	if !layout.add(&v, w.id, window_insertion(m, &v)) {
+	if !layout.add(&v, w.id, window_insertion(m, &v), join_tab = true) {
 		o.wait = .Space; return false, ""
 	}
 	if v.layout == .BSP {
