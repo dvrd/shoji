@@ -703,7 +703,10 @@ closing_a_different_window_does_not_remove_a_live_owners_ring :: proc(
 	testing.expect_value(t, r.destroyed, 0)
 	testing.expect_value(t, state.focus_ring.owner, u32(1))
 	mac.focus_ring_tick(&state)
-	testing.expect_value(t, r.created, 8)
+	// Still eight live surfaces, not a second ring. Strips the flush resized
+	// are redrawn at rest, so a few creates are replacements.
+	testing.expect_value(t, r.created - r.destroyed, 8)
+	testing.expect(t, r.created < 16)
 }
 
 @(test)

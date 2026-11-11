@@ -729,6 +729,13 @@ resize_window :: proc(m: ^Manager, w: ^Window, handle: string, dx, dy: f64) -> s
 			)
 		}
 		delta := handle == "left" ? -dx : dx
+		// Growing stops at the view: past it the column sat off the far edge
+		// with a doubled gap on the near side. A column already wider (fixed
+		// width from a larger display) is not pulled in by a grow.
+		if n := layout.find(s.view.root, w.id); n != nil && delta > 0 {
+			fit := s.view.scroll.viewport.w - 2 * layout.scroll_gap(&s.view)
+			delta = max(0, min(delta, fit - n.column_width))
+		}
 		if err := layout.scroll_set_width(&s.view, w.id, fmt.tprintf("rel:%g", delta)); err != "" {
 			return err
 		}

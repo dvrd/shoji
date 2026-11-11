@@ -546,3 +546,45 @@ real_capture_images_are_accounted_and_released_with_their_surface :: proc(
 	testing.expect(t, rejected == nil && held == 0 && err != "")
 	testing.expect_value(t, state.capture_memory.used, u64(0))
 }
+
+@(test)
+scaled_resize_keeps_old_content_until_the_app_repaints :: proc(
+	t: ^testing.T,
+) {
+	state: mac.State; r: Recorder; c: Cover_Recorder
+	cover_fixture(&state, &r, &c)
+	defer mac.manager_destroy(&state.manager); defer delete(r.actions)
+	defer mac.resize_cover_stop(&state)
+	s := mac.space_by_id(&state.manager, 100)
+	s.view.layout = .Scroll; s.view.scroll.geometry_active = true
+	w := state.manager.windows[1]
+	w.resize_scaled = true
+	w.scroll_frame = {
+		valid    = true,
+		from     = {0, 0, 900, 800},
+		target   = {0, 0, 500, 800},
+		current  = {0, 0, 600, 800},
+		progress = .75,
+	}
+	w.frame = w.scroll_frame.current
+	// The app has not taken the final size yet: no live content shows.
+	c.actual = {0, 0, 900, 800}
+	mac.resize_cover_frame(&state, 1, w.frame, w.scroll_frame.from, 1)
+	mac.resize_cover_tick(&state, 1.02)
+	testing.expect(t, c.alpha < .001, "a blank new-size buffer must stay hidden")
+	// Final size landed, but the paint delay has not passed.
+	c.actual = w.scroll_frame.target
+	mac.resize_cover_tick(&state, 1.04)
+	mac.resize_cover_tick(&state, 1.08)
+	testing.expect(t, c.alpha < .001)
+	// Geometry ends; the content keeps fading in instead of popping.
+	s.view.scroll.geometry_active = false; w.resize_scaled = false
+	w.frame = w.scroll_frame.target
+	mac.resize_cover_tick(&state, 1.2)
+	testing.expect(t, c.alpha > 0 && c.alpha < 1)
+	testing.expect_value(t, len(state.resize_covers), 1)
+	for now := 1.25; now < 1.6; now += .02 {
+		mac.resize_cover_tick(&state, now)
+	}
+	testing.expect_value(t, len(state.resize_covers), 0)
+}

@@ -190,7 +190,7 @@ scroll_keyboard_resize_holds_hidden_tabs_until_settle :: proc(t: ^testing.T) {
 	hidden := active == 1 ? u32(2) : u32(1)
 	resize(&r.actions, 0)
 	m.scroll_time = 10
-	testing.expect(t, !e.execute(&m, {"window", fmt.tprintf("%d", active), "--resize", "right:100:0"}).failed)
+	testing.expect(t, !e.execute(&m, {"window", fmt.tprintf("%d", active), "--resize", "right:-100:0"}).failed)
 	testing.expect_value(t, e.scroll_motion_tick(&m, 10.05), "")
 	for a in r.actions {
 		if a.kind == .Frame && a.window == hidden {
@@ -207,6 +207,37 @@ scroll_keyboard_resize_holds_hidden_tabs_until_settle :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, writes, 1)
 	testing.expect(t, !m.windows[hidden].resize_scaled)
+	// Transparent while it keeps the old size, and after its write until
+	// WindowServer shows the new size.
+	testing.expect(t, m.windows[hidden].resize_faded)
+	m.window_bounds = fade_bounds
+	fade_bounds_rect = m.windows[hidden].frame
+	fade_bounds_rect.w += 100
+	e.resize_fade_tick(&m)
+	testing.expect(t, m.windows[hidden].resize_faded)
+	fade_bounds_rect = m.windows[hidden].frame
+	e.resize_fade_tick(&m)
+	testing.expect(t, !m.windows[hidden].resize_faded)
+	fades: [dynamic]f32
+	defer delete(fades)
+	for i in 0 ..< min(scale_count, len(scale_seen)) {
+		req := scale_seen[i]
+		if req.window == hidden {
+			testing.expect_value(t, req.mask, dock.PRESENT_ALPHA)
+			append(&fades, req.alpha)
+		}
+	}
+	testing.expect_value(t, len(fades), 2)
+	if len(fades) == 2 {
+		testing.expect_value(t, fades[0], f32(0))
+		testing.expect_value(t, fades[1], f32(1))
+	}
+}
+
+fade_bounds_rect: e.Rect
+
+fade_bounds :: proc(_: rawptr, _: u32) -> (e.Rect, bool) {
+	return fade_bounds_rect, true
 }
 
 @(test)
@@ -460,4 +491,23 @@ scroll_warp_preserves_width_and_places_window_before_its_west_neighbor :: proc(
 	testing.expect_value(t, layout.first(m.spaces[0].view.root).windows[0], u32(2))
 	testing.expect_value(t, m.windows[2].frame.w, f64(450))
 	testing.expect_value(t, m.windows[1].frame.w, f64(500))
+}
+
+@(test)
+scroll_keyboard_grow_stops_at_the_view :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	s := m.spaces[0]
+	n := layout.find(s.view.root, 1)
+	fit := s.view.scroll.viewport.w - 2 * layout.scroll_gap(&s.view)
+	for _ in 0 ..< 40 {
+		testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:100:0"}).failed)
+	}
+	testing.expect_value(t, e.flush(&m, s), "")
+	testing.expect(t, math.abs(n.column_width - fit) < 0.01, "a grow must stop at the view width")
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:-100:0"}).failed)
+	testing.expect_value(t, e.flush(&m, s), "")
+	testing.expect(t, math.abs(n.column_width - (fit - 100)) < 0.01)
 }

@@ -67,6 +67,9 @@ Window :: struct {
 	// the animated rect. `frame` is that visual rect until the spring settles.
 	resize_basis, resize_request:                             Rect,
 	resize_scaled, resize_transformed:                        bool,
+	// A hidden tab made transparent for a keyboard resize. It keeps its old
+	// size until Settle and would show around a shrinking active tab.
+	resize_faded:                                             bool,
 	// When the last scaled resize settled. A late app move shifts the reset
 	// transform, so it is re-checked against the bounds for a moment.
 	resize_settled_at:                                        f64,
@@ -251,6 +254,12 @@ Manager :: struct {
 	// Sends a scaled resize's final size without blocking the frame loop. Nil
 	// (tests) sends it as a Frame action.
 	resize_configure:                                             proc(
+		user: rawptr,
+		id: u32,
+		request: Rect,
+	) -> string,
+	// Settled hidden tab: position and size written off the main loop.
+	resize_configure_hidden:                                      proc(
 		user: rawptr,
 		id: u32,
 		request: Rect,
@@ -997,10 +1006,63 @@ Resize_Scale :: enum {
 	Settle,
 }
 
+// Alpha only: a hidden tab's transform is never touched.
+resize_fade_send :: proc(m: ^Manager, w: ^Window, visible: bool) -> string {
+	alpha := f32(1)
+	if visible && w.opacity > 0 {
+		alpha = f32(w.opacity)
+	}
+	return m.scale_present(
+		m.backend_user,
+		dock.Present_Request{window = w.id, mask = dock.PRESENT_ALPHA, alpha = visible ? alpha : 0},
+	)
+}
+
+// Reveals a settled hidden tab once WindowServer shows its new size, it
+// becomes the front tab, or a second has passed. Revealing right after the
+// size write showed the old, wider tab around the active one until a slow
+// app (Chrome, Mail) caught up.
+resize_fade_tick :: proc(m: ^Manager) {
+	for _, w in m.windows {
+		if w == nil || !w.resize_faded || w.resize_scaled {
+			continue
+		}
+		reveal := m.scroll_time - w.resize_settled_at >= 1
+		if s := space_by_id(m, w.space); s != nil {
+			if n := layout.find(s.view.root, w.id); n == nil || !n.column_tabbed || n.order[0] == w.id {
+				reveal = true
+			}
+		} else {
+			reveal = true
+		}
+		if !reveal && m.window_bounds != nil {
+			if b, ok := m.window_bounds(m.backend_user, w.id); ok &&
+			   math.abs(b.w - w.frame.w) < 2 &&
+			   math.abs(b.h - w.frame.h) < 2 {
+				reveal = true
+			}
+		}
+		if reveal {
+			resize_fade_restore(m, w)
+		}
+	}
+}
+
+resize_fade_restore :: proc(m: ^Manager, w: ^Window) {
+	if !w.resize_faded {
+		return
+	}
+	w.resize_faded = false
+	if err := resize_fade_send(m, w, true); err != "" {
+		fmt.eprintln("shoji: resize: could not show hidden tab", w.id, err)
+	}
+}
+
 resize_scale_abort :: proc(m: ^Manager, w: ^Window, err: string) -> Resize_Scale {
 	if w.resize_transformed {
 		_ = resize_scale_send(m, w, 1, 1, -w.frame.x, -w.frame.y)
 	}
+	resize_fade_restore(m, w)
 	w.resize_scaled, w.resize_transformed = false, false
 	m.resize_scale = false
 	if !m.resize_scale_noted {
@@ -1028,8 +1090,19 @@ resize_scale_step :: proc(m: ^Manager, s: ^Space, w: ^Window, visual: Rect) -> R
 	// One configure per target, like niri: the app redraws at the final size
 	// while the spring runs, so the stretch shrinks to 1:1 instead of growing.
 	// A hidden tab sits behind the active one: no transform, no snapshot,
-	// and its one size write waits for Settle.
+	// and its one size write waits for Settle. Until then it keeps its old
+	// size, so it is made transparent rather than showing around a
+	// shrinking active tab.
 	if n := layout.find(s.view.root, w.id); w.concealed || (n != nil && n.column_tabbed && n.order[0] != w.id) {
+		if !w.concealed && !w.resize_faded {
+			err := resize_fade_send(m, w, false)
+			if err == "" {
+				w.resize_faded = true
+			} else {
+				fmt.eprintln("shoji: resize: could not hide tab", w.id, err)
+			}
+			motion_trace_record(&m.motion_trace, {kind = "resize-fade", window = w.id, space = s.id})
+		}
 		w.frame = visual
 		return .Hold
 	}
@@ -1199,16 +1272,27 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 				append(&camera_moves, Deferred_Frame{w, r})
 				continue
 			}
-			if err := perform(
-				m,
-				Action {
-					kind = .Frame,
-					window = w.id,
-					frame = r,
-					live_resize = live_resize,
-					direct = s.view.layout == .Scroll && m.scroll_animate,
-				},
-			); err != "" {
+			// A settled hidden tab is transparent until its frame lands, so
+			// its write goes to the async writer instead of
+			// blocking this flush on each app's layout (25-50 ms apiece).
+			frame_err: string
+			if scale == .Settle && w.resize_faded && m.resize_configure_hidden != nil {
+				frame_err = m.resize_configure_hidden(m.backend_user, w.id, r)
+			} else {
+				frame_err = perform(
+					m,
+					Action {
+						kind = .Frame,
+						window = w.id,
+						frame = r,
+						live_resize = live_resize,
+						direct = s.view.layout == .Scroll && m.scroll_animate,
+					},
+				)
+			}
+			if err := frame_err; err != "" {
+				// A hidden tab must not stay transparent on a failed write.
+				resize_fade_restore(m, w)
 				return err
 			}
 			w.frame = r
@@ -1217,6 +1301,8 @@ flush :: proc(m: ^Manager, s: ^Space, live_resize: bool = false) -> string {
 				if w.resize_transformed {
 					_ = resize_scale_send(m, w, 1, 1, -r.x, -r.y)
 				}
+				// The app applies the size write on its own time; the tab
+				// stays hidden until resize_fade_tick sees the new size.
 				w.resize_scaled, w.resize_transformed = false, false
 				w.resize_settled_at = m.scroll_time
 			}

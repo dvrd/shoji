@@ -154,10 +154,50 @@ desktop_refresh_tick :: proc(
 			}
 		}
 	}
+	if !state.dirty && time.diff(last^, now) >= time.Second && state.connection != 0 {
+		// The one-second floor finds windows that never notify. When the
+		// on-screen window list is unchanged there is nothing to find; the
+		// full rescan (35-40 ms) then runs only every five seconds.
+		if signature, known := desktop_signature(); known {
+			if signature == state.desktop_signature &&
+			   time.diff(state.desktop_scanned_at, now) < 5 * time.Second {
+				last^ = now
+			}
+			state.desktop_signature = signature
+		}
+	}
 	if !state.dirty && time.diff(last^, now) < time.Second {
+		// Every frame write echoes AXMoved/AXResized while the app is busy
+		// repainting; one re-read per 150 ms is enough to see refusals.
+		if len(state.window_dirty) == 0 ||
+		   time.diff(state.windows_refreshed_at, now) < 150 * time.Millisecond {
+			return
+		}
+		state.windows_refreshed_at = now
+		windows_began := time.tick_now()
+		refresh_windows(state)
+		motion_trace_record(
+			&state.manager.motion_trace,
+			{kind = "refresh-windows", duration_ms = time.duration_milliseconds(time.tick_since(windows_began))},
+		)
+		for s in state.manager.spaces {
+			if s.visible {
+				if err := flush(&state.manager, s); err != "" {
+					fmt.eprintln("shoji:", err)
+				}
+			}
+		}
 		return
 	}
+	clear(&state.window_dirty)
+	full_began := time.tick_now()
+	reason: f64 = state.dirty ? 1 : 0
 	collect(state)
+	state.desktop_scanned_at = now
+	motion_trace_record(
+		&state.manager.motion_trace,
+		{kind = "refresh-full", value = reason, duration_ms = time.duration_milliseconds(time.tick_since(full_began))},
+	)
 	state.manager.scroll_time = time.duration_seconds(time.diff(time.Time{}, time.now()))
 	state.structural_dirty = false
 	for s in state.manager.spaces {
@@ -482,6 +522,7 @@ run :: proc(config_path: string, payload_path: string = "", validation_pid: i32 
 			state.manager.scroll_time = time.duration_seconds(time.diff(time.Time{}, time.now()))
 			frame_size_feedback_tick(&state, time.now())
 			resize_transform_tick(&state)
+			resize_fade_tick(&state.manager)
 			screen_capture_guide_tick()
 			opening_tick(&state)
 			feedback_tick(&state)
@@ -701,6 +742,82 @@ application_destroy :: proc(app: Application) {
 	delete(app.name)
 }
 
+// Hash of the on-screen application windows (id and owner), from one
+// WindowServer list instead of an Accessibility read per application.
+desktop_signature :: proc() -> (u64, bool) {
+	list := CGWindowListCopyWindowInfo(1 | 16, 0)
+	if list == nil {
+		return 0, false
+	}
+	defer CFRelease(list)
+	hash: u64 = 14695981039346656037
+	for i in 0 ..< CFArrayGetCount(list) {
+		entry := CFArrayGetValueAtIndex(list, i)
+		// Shoji's own overlays (resize snapshots, ring pieces) come and go
+		// with every resize and are not windows to discover.
+		if number(dictionary(entry, "kCGWindowLayer")) != 0 ||
+		   i32(number(dictionary(entry, "kCGWindowOwnerPID"))) == getpid() {
+			continue
+		}
+		for value in ([2]u64 {
+				u64(number(dictionary(entry, "kCGWindowNumber"))),
+				u64(number(dictionary(entry, "kCGWindowOwnerPID"))),
+			}) {
+			hash = (hash ~ value) * 1099511628211
+		}
+	}
+	return hash, true
+}
+
+app_quiet :: proc(state: ^State, pid: i32) -> bool {
+	until, quiet := state.app_quiet[pid]
+	if !quiet {
+		return false
+	}
+	if time.tick_diff(time.tick_now(), until) <= 0 {
+		delete_key(&state.app_quiet, pid)
+		return false
+	}
+	return true
+}
+
+// Re-reads only the windows that reported a move, resize or title change.
+// Membership, focus and application changes still go through refresh.
+refresh_windows :: proc(state: ^State) {
+	pool := pool_push()
+	defer pool_pop(pool)
+	state.opening_collecting = true
+	m := &state.manager
+	for id in state.window_dirty {
+		w := m.windows[id]
+		element := state.windows[id]
+		if w == nil || element == nil {
+			continue
+		}
+		app, exists := state.applications[w.pid]
+		if !exists {
+			state.dirty = true
+			continue
+		}
+		if app_quiet(state, w.pid) {
+			continue
+		}
+		observation := collect_window(state, app, element, id, w.pid, app.policy, app.hidden)
+		if !(observation.frame_valid.? or_else false) {
+			// Gone or unreadable: the full refresh owns removal.
+			state.dirty = true
+			continue
+		}
+		updated := opening_observe(state, app, element, observation)
+		if !state.read_only && updated != nil && updated.rules_pending {
+			refresh_window_rules(m, updated)
+		}
+	}
+	clear(&state.window_dirty)
+	state.opening_collecting = false
+	observe_changes(state)
+}
+
 refresh :: proc(state: ^State) {
 	state.opening_collecting = true
 	defer {state.opening_collecting = false}
@@ -715,19 +832,46 @@ refresh :: proc(state: ^State) {
 	defer pool_pop(pool)
 	refresh_displays(state)
 	m := &state.manager
-	apps := intrinsics.objc_send(^objc.Object, workspace(), "runningApplications")
-	frontmost := intrinsics.objc_send(^objc.Object, workspace(), "frontmostApplication")
-	frontmost_pid := intrinsics.objc_send(i32, frontmost, "processIdentifier")
+	// A full sweep asks LaunchServices about every process. AXMoved,
+	// AXResized and title echoes only need the window pass below, so they
+	// reuse the last sweep; app-level notifications, structural changes and
+	// a one-second floor still sweep.
+	sweep :=
+		state.apps_dirty ||
+		state.structural_dirty ||
+		len(state.app_sweep) == 0 ||
+		time.diff(state.app_sweep_at, time.now()) >= time.Second
+	apps: ^objc.Object
+	count := len(state.app_sweep)
+	if sweep {
+		apps = intrinsics.objc_send(^objc.Object, workspace(), "runningApplications")
+		frontmost := intrinsics.objc_send(^objc.Object, workspace(), "frontmostApplication")
+		state.app_sweep_frontmost = intrinsics.objc_send(i32, frontmost, "processIdentifier")
+		count = int(intrinsics.objc_send(uint, apps, "count"))
+		clear(&state.app_sweep)
+		state.app_sweep_at = time.now()
+		state.apps_dirty = false
+	}
+	frontmost_pid := state.app_sweep_frontmost
 	accessory_owners, owners_known := accessory_window_owners()
 	seen := make(map[u32]bool, context.temp_allocator)
 	seen_apps := make(map[i32]bool, context.temp_allocator)
-	for i in 0 ..< intrinsics.objc_send(uint, apps, "count") {
-		running := intrinsics.objc_send(^objc.Object, apps, "objectAtIndex:", i)
-		pid := intrinsics.objc_send(i32, running, "processIdentifier")
+	for i in 0 ..< count {
+		running: ^objc.Object
+		entry: App_Sweep_Entry
+		if sweep {
+			running = intrinsics.objc_send(^objc.Object, apps, "objectAtIndex:", uint(i))
+			entry.pid = intrinsics.objc_send(i32, running, "processIdentifier")
+			entry.policy = intrinsics.objc_send(int, running, "activationPolicy")
+			entry.hidden = intrinsics.objc_send(bool, running, "isHidden")
+			append(&state.app_sweep, entry)
+		} else {
+			entry = state.app_sweep[i]
+		}
+		pid, policy := entry.pid, entry.policy
 		if pid == getpid() {
 			continue
 		}
-		policy := intrinsics.objc_send(int, running, "activationPolicy")
 		if !observe_application(state, pid, policy) {
 			continue
 		}
@@ -737,19 +881,32 @@ refresh :: proc(state: ^State) {
 			// Keep existing references for off-screen panels. The WindowServer
 			// retention pass below detects disappearance without synchronous AX reads.
 			if exists {
-				app.hidden = intrinsics.objc_send(bool, running, "isHidden")
+				app.hidden = entry.hidden
 				state.applications[pid] = app
 			}
 			continue
 		}
 		if !exists {
+			if running == nil {
+				// Admitted by the next sweep, which owns the NSRunningApplication.
+				state.apps_dirty = true
+				continue
+			}
 			app = application_create(state, running, pid, policy)
 		}
-		hidden := intrinsics.objc_send(bool, running, "isHidden")
+		hidden := entry.hidden
 		app.hidden = hidden
 		app.policy = policy
 		state.applications[pid] = app
-		list := attribute(app.element, "AXWindows")
+		list: Ref
+		if !app_quiet(state, pid) {
+			started := time.tick_now()
+			list = attribute(app.element, "AXWindows")
+			if list == nil && time.tick_since(started) >= 150 * time.Millisecond {
+				state.app_quiet[pid] = time.tick_add(time.tick_now(), 3 * time.Second)
+				fmt.eprintf("shoji: %s is not responding; its windows are kept as they are\n", app.name)
+			}
+		}
 		if list == nil {
 			// A temporarily unresponsive application is not evidence its windows were destroyed.
 			for id, w in m.windows {

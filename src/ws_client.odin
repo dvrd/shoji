@@ -1523,12 +1523,13 @@ resize_window_bounds :: proc(user: rawptr, id: u32) -> (Rect, bool) {
 }
 
 resize_transform_swept_at: f64
+resize_transform_full_at: f64
 resize_transform_noted: bool
 
 // WindowServer keeps a set transform and shifts it by each later move, so a
 // reset sent just before the app's own move leaves the window drawn off its
 // bounds (and off the focus ring). Re-check windows that just settled, and
-// sweep every managed window once a second for older drift.
+// sweep the rest for older drift.
 resize_transform_tick :: proc(state: ^State) {
 	m := &state.manager
 	if m.scale_present == nil || m.suspended || m.gesture_active {
@@ -1539,9 +1540,21 @@ resize_transform_tick :: proc(state: ^State) {
 	if sweep {
 		resize_transform_swept_at = now
 	}
+	// Every window every five seconds (and on the first tick, which also
+	// repairs a transform a previous process left behind); in between only
+	// the focused and recently resized ones, at two round trips per window.
+	full := sweep && now - resize_transform_full_at >= 5
+	if full {
+		resize_transform_full_at = now
+	}
 	for id, w in m.windows {
 		recent := now - w.resize_settled_at < 1
-		if !(recent || sweep) ||
+		// The focused window is checked every second because the ring
+		// shows its drift; the rest only on the five-second sweep.
+		swept :=
+			full ||
+			sweep && (id == m.focused || w.resize_settled_at > 0 && now - w.resize_settled_at < 10)
+		if !(recent || swept) ||
 		   !managed(w) ||
 		   w.concealed ||
 		   w.resize_scaled ||
@@ -2282,7 +2295,7 @@ frame_size_feedback_tick :: proc(state: ^State, now: time.Time) {
 			if err := flush(m, s, true); err != "" {
 				fmt.eprintln("shoji: accepted size:", err)
 			}
-			state.dirty = true
+			state.window_dirty[id] = true
 		}
 	}
 }
