@@ -34,6 +34,10 @@ Focus_Ring :: struct {
 	config:        Focus_Ring_Config,
 	failed:        bool,
 	order_dirty:   bool,
+	// Hidden at alpha 0 while focus travel moves the column; kept so the
+	// end of each motion does not rebuild eight windows (~30 ms).
+	concealed:     bool,
+	failed_at:     time.Tick,
 	bars:          [8]Feedback_Window,
 	// Focused window still being prepared by the opening pipeline, and since when.
 	pending:       u32,
@@ -63,6 +67,8 @@ Tab_Indicator_State :: struct {
 	tabs:        [layout.MAX_STACK]Tab_Indicator,
 	count:       int,
 	order_dirty: bool,
+	concealed:   bool,
+	retry_at:    time.Tick,
 }
 
 tab_indicator_stop :: proc(state: ^State) {
@@ -75,7 +81,7 @@ tab_indicator_stop :: proc(state: ^State) {
 	state.tab_indicator = {}
 }
 
-tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
+tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32, at_rest := false) {
 	tabs, count := tab_indicators(&state.manager, frame)
 	backend := feedback_backend(state)
 	indicator := &state.tab_indicator
@@ -111,11 +117,19 @@ tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
 					fmt.eprintln("shoji: tab indicator:", err)
 				}
 			} else {
+				if time.tick_diff(time.tick_now(), indicator.retry_at) > 0 {
+					continue
+				}
 				old := bar.surface
 				err: string
 				bar.surface, err = backend.create(state, plan)
 				if err != "" {
+					// Leave the plan unset so the bar is created again, after
+					// wake for instance, instead of staying missing.
 					fmt.eprintln("shoji: tab indicator:", err)
+					bar.surface = old
+					indicator.retry_at = time.tick_add(time.tick_now(), 500 * time.Millisecond)
+					continue
 				}
 				if old.id != 0 {
 					backend.destroy(state, old)
@@ -126,6 +140,18 @@ tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
 		indicator.tabs[i] = tabs[i]
 	}
 	indicator.count = count
+	if at_rest {
+		for i in 0 ..< count {
+			if feedback_rebuild_stale(state, &indicator.bars[i]) {
+				indicator.order_dirty = true
+			}
+		}
+	}
+	if indicator.concealed {
+		indicator.concealed = false
+		indicator.order_dirty = true
+		feedback_surfaces_alpha(state, indicator.bars[:count], 1)
+	}
 	if count > 0 && indicator.order_dirty && backend.reorder != nil {
 		indicator.order_dirty = false
 		surfaces: [layout.MAX_STACK]Owned_Surface; surface_count := 0
@@ -139,6 +165,58 @@ tab_indicator_tick :: proc(state: ^State, frame: Rect, relative: u32) {
 			fmt.eprintln("shoji: tab indicator:", err)
 		}
 	}
+}
+
+feedback_surfaces_alpha :: proc(state: ^State, bars: []Feedback_Window, alpha: f32) {
+	for bar in bars {
+		if bar.surface.id != 0 {
+			SLSSetWindowAlpha(state.connection, bar.surface.id, alpha)
+		}
+	}
+}
+
+// Hides decorations during a camera motion without destroying them. Without
+// a WindowServer connection (tests) it falls back to stopping them.
+focus_ring_conceal :: proc(state: ^State) {
+	if state.connection == 0 || state.feedback_backend.create != nil {
+		focus_ring_stop(state); return
+	}
+	if !state.focus_ring.concealed {
+		feedback_surfaces_alpha(state, state.focus_ring.bars[:], 0)
+		state.focus_ring.concealed = true
+	}
+}
+
+tab_indicator_conceal :: proc(state: ^State) {
+	if state.connection == 0 || state.feedback_backend.create != nil {
+		tab_indicator_stop(state); return
+	}
+	if !state.tab_indicator.concealed {
+		feedback_surfaces_alpha(state, state.tab_indicator.bars[:], 0)
+		state.tab_indicator.concealed = true
+	}
+}
+
+// Moving decorations are stretched by a transform, which leaves light seams
+// at the edges of a scaled surface. Once the layout rests, a bar whose
+// surface was made at another size is redrawn at its own (new one first, so
+// it never blinks). Returns whether a surface was replaced.
+feedback_rebuild_stale :: proc(state: ^State, bar: ^Feedback_Window) -> bool {
+	if bar.surface.id == 0 || bar.surface.frame.w <= 0 || bar.surface.frame.h <= 0 {
+		return false
+	}
+	if math.abs(bar.surface.frame.w - bar.plan.frame.w) < 0.5 &&
+	   math.abs(bar.surface.frame.h - bar.plan.frame.h) < 0.5 {
+		return false
+	}
+	backend := feedback_backend(state)
+	fresh, err := backend.create(state, bar.plan)
+	if err != "" || fresh.id == 0 {
+		return false
+	}
+	backend.destroy(state, bar.surface)
+	bar.surface = fresh
+	return true
 }
 
 focus_ring_stop :: proc(state: ^State) {
@@ -206,6 +284,7 @@ focus_ring_fail :: proc(state: ^State, err: string) {
 		}
 	}
 	state.focus_ring.failed = true
+	state.focus_ring.failed_at = time.tick_now()
 	fmt.eprintln("shoji: focus ring:", err)
 }
 
@@ -347,8 +426,8 @@ focus_ring_tick :: proc(state: ^State) {
 		// Focus travel moves the next window across the screen. The ring stays
 		// off until that motion ends, then draws on the window that arrived.
 		if s.view.scroll.motion.active {
-			focus_ring_stop(state)
-			tab_indicator_stop(state)
+			focus_ring_conceal(state)
+			tab_indicator_conceal(state)
 			return
 		}
 		if s.view.scroll.geometry_active && !s.view.scroll.dragging {
@@ -391,7 +470,15 @@ focus_ring_tick :: proc(state: ^State) {
 			relative = presentation.id
 		}
 	}
-	tab_indicator_tick(state, frame, relative)
+	at_rest := w.id not_in state.animations && state.focus_scroll_pending == 0 && state.mouse.buttons == 0
+	if s := space_by_id(&state.manager, w.space); s != nil {
+		at_rest =
+			at_rest &&
+			!s.view.scroll.dragging &&
+			!s.view.scroll.motion.active &&
+			!s.view.scroll.geometry_active
+	}
+	tab_indicator_tick(state, frame, relative, at_rest)
 	plans, valid := focus_ring_plans(&state.manager, frame)
 	if !valid {
 		focus_ring_stop(state); return
@@ -422,7 +509,14 @@ focus_ring_tick :: proc(state: ^State) {
 		state.focus_ring.order_dirty = true
 	}
 	if state.focus_ring.failed {
-		return
+		// Most failures are transient (the owner is briefly unordered during
+		// a Space switch or opening). Retry rather than leave the window
+		// without a ring until focus moves.
+		if time.tick_since(state.focus_ring.failed_at) < 500 * time.Millisecond {
+			return
+		}
+		state.focus_ring.failed = false
+		state.focus_ring.order_dirty = true
 	}
 	backend := feedback_backend(state)
 	for plan, i in plans {
@@ -459,6 +553,18 @@ focus_ring_tick :: proc(state: ^State) {
 		}
 		// An unchanged plan performs no native work on idle loop iterations.
 		bar.plan = plan
+	}
+	if at_rest {
+		for &bar in state.focus_ring.bars {
+			if feedback_rebuild_stale(state, &bar) {
+				state.focus_ring.order_dirty = true
+			}
+		}
+	}
+	if state.focus_ring.concealed {
+		state.focus_ring.concealed = false
+		state.focus_ring.order_dirty = true
+		feedback_surfaces_alpha(state, state.focus_ring.bars[:], 1)
 	}
 	if state.focus_ring.order_dirty && backend.reorder != nil {
 		// Native opening/focus can raise the owner or restore its layer after
@@ -572,13 +678,15 @@ native_feedback_paint :: proc(ctx: Ref, plan: Feedback_Plan) {
 		255,
 		f64(plan.color >> 24) /
 		255
-	frame := Rect{0, 0, plan.frame.w, plan.frame.h}
+	// WindowServer rounds a fractional surface out to whole pixels; the
+	// uncovered last column stayed white at the end of each tab segment.
+	frame := Rect{0, 0, math.ceil(plan.frame.w), math.ceil(plan.frame.h)}
 	CGContextClearRect(ctx, frame)
 	CGContextSetRGBFillColor(ctx, r, g, b, plan.solid ? a : a * 0.25)
 	if plan.corner != .None {
 		// Clip a quarter annulus to this small corner surface. The center stays
 		// transparent; no full-window bitmap or stretched curved border is used.
-		radius := frame.w
+		radius := plan.frame.w
 		x := plan.corner == .Top_Left || plan.corner == .Bottom_Left ? radius : f64(0)
 		y := plan.corner == .Top_Left || plan.corner == .Top_Right ? radius : f64(0)
 		CGContextBeginPath(ctx)
@@ -1289,6 +1397,32 @@ RESIZE_COVER_DELAY :: .65
 RESIZE_COVER_OUT :: .6
 RESIZE_COVER_FADE :: .1 // Manual-drag release only; layout resizes share geometry progress.
 RESIZE_COVER_MAX :: 3.0
+// Terminals and multiplexers present a blank or half-drawn buffer right
+// after a size change; the old content stays on top until the app repaints.
+RESIZE_COVER_PAINT :: .09
+RESIZE_COVER_READY :: .16
+RESIZE_COVER_RECOVER :: .15
+// Terminals size in whole cells and stop a few points short of the target.
+RESIZE_COVER_SNAP :: 24
+
+// Advances the reveal cap. `ready` means the app's buffer has the final size.
+resize_cover_cap :: proc(cover: ^Resize_Cover, now: f64, ready: bool, hold := false) -> f64 {
+	dt := cover.cap_at > 0 ? clamp(now - cover.cap_at, 0, .1) : 0
+	cover.cap_at = now
+	if !ready {
+		cover.ready_since = 0
+		cover.reveal_cap = max(0, cover.reveal_cap - dt / RESIZE_COVER_RECOVER)
+	} else {
+		if cover.ready_since == 0 {
+			cover.ready_since = now
+		}
+		if !hold && now - cover.ready_since >= RESIZE_COVER_PAINT {
+			cover.reveal_cap = min(1, cover.reveal_cap + dt / RESIZE_COVER_READY)
+		}
+	}
+	t := cover.reveal_cap
+	return t * t * (3 - 2 * t)
+}
 Resize_Cover :: struct {
 	window_generation:                                    u64,
 	surface:                                              Owned_Surface,
@@ -1302,6 +1436,15 @@ Resize_Cover :: struct {
 	geometry_clock:                                       f64,
 	generation:                                           u64,
 	blend_from:                                           f64,
+	// Caps how much live content shows. It rises only once the app's buffer
+	// has the final size and had time to paint, and falls back smoothly when
+	// a new target makes the app redraw again.
+	ready_since, reveal_cap, cap_at:                      f64,
+	last_actual:                                          Rect,
+	unchanged_since:                                      f64,
+	// Set for a scaled resize, where the app gets its final size up front.
+	// Live resizes size the app every frame and keep the plain blend.
+	awaits_paint:                                         bool,
 }
 Resize_Geometry :: struct {
 	from, target:    Rect,
@@ -1952,8 +2095,16 @@ resize_cover_tick :: proc(state: ^State, now: f64) {
 				geometry.clock,
 			)
 		} else if cover.synchronized {
-			// Geometry and live content finish together, without a second fade.
-			resize_cover_remove(state, window); continue
+			if !cover.awaits_paint {
+				// Geometry and live content finish together, without a second fade.
+				resize_cover_remove(state, window); continue
+			}
+			// Geometry is done; live content keeps fading in until the app
+			// has repainted at its final size.
+			cover.alpha = 1
+			if cover.reveal_cap >= 1 {
+				resize_cover_remove(state, window); continue
+			}
 		}
 		if !cover.synchronized &&
 		   (cover.frame.w != model_frame.w || cover.frame.h != model_frame.h) {
@@ -1966,6 +2117,32 @@ resize_cover_tick :: proc(state: ^State, now: f64) {
 		}
 		settled :=
 			math.abs(actual.w - cover.frame.w) <= 2 && math.abs(actual.h - cover.frame.h) <= 2
+		if w.resize_scaled {
+			cover.awaits_paint = true
+		}
+		if cover.synchronized && cover.awaits_paint {
+			// Apps that size in whole cells (terminals) stop a few points short
+			// of the target; a near size that stopped changing is final.
+			final := cover.geometry_target
+			stable :=
+				math.abs(actual.w - cover.last_actual.w) < .5 &&
+				math.abs(actual.h - cover.last_actual.h) < .5
+			if !stable || cover.unchanged_since == 0 {
+				cover.unchanged_since = now
+			}
+			cover.last_actual = actual
+			// An app that clamps the size (minimum, maximum, screen edge)
+			// never reaches the target; a size unchanged after the motion is
+			// its answer.
+			near :=
+				math.abs(actual.w - final.w) <= RESIZE_COVER_SNAP &&
+				math.abs(actual.h - final.h) <= RESIZE_COVER_SNAP
+			ready := near || (stable && !moving && now - cover.unchanged_since >= .12)
+			capped := resize_cover_cap(&cover, now, ready, hold = moving)
+			// The live app is scaled while geometry moves; keep it under the
+			// unstretched old content until the frame has arrived.
+			cover.alpha = moving ? 0 : min(cover.alpha, capped)
+		}
 		if !cover.synchronized &&
 		   resize_cover_step(
 			   &cover,

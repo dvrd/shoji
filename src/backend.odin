@@ -303,6 +303,28 @@ State :: struct {
 	applications: map[i32]Application,
 	connection: i32,
 	dirty: bool,
+	// Running applications from the last NSWorkspace sweep. Each sweep costs
+	// one LaunchServices round trip per process (20-260 ms with ~90 apps),
+	// so window-level notifications rescan from this list instead.
+	app_sweep: [dynamic]App_Sweep_Entry,
+	app_sweep_at: time.Time,
+	app_sweep_frontmost: i32,
+	apps_dirty: bool,
+	// Windows whose AXMoved, AXResized or AXTitleChanged arrived. They are
+	// re-read alone instead of rescanning every application.
+	window_dirty: map[u32]bool,
+	// Apps whose Accessibility read timed out, skipped until the tick. A hung
+	// app otherwise costs a 250 ms timeout per read on every rescan.
+	app_quiet: map[i32]time.Tick,
+	desktop_signature: u64,
+	desktop_scanned_at: time.Time,
+	windows_refreshed_at: time.Time,
+}
+
+App_Sweep_Entry :: struct {
+	pid:    i32,
+	policy: int,
+	hidden: bool,
 }
 
 observer_callback :: proc "c" (
@@ -311,12 +333,28 @@ observer_callback :: proc "c" (
 ) {
 	context = runtime.default_context()
 	state := (^State)(user)
-	state.dirty = true
 	pool := pool_push(); defer pool_pop(pool)
 	scratch := callback_scratch_begin(&state.callback_scratch)
 	defer callback_scratch_end(&state.callback_scratch)
 	context.temp_allocator = mem.dynamic_arena_allocator(scratch)
 	name := text(notification)
+	// Our own frame writes echo back as AXMoved/AXResized, and terminals
+	// retitle on every redraw. A known window is re-read alone; a full
+	// rescan of ~90 applications took 60-260 ms on the main loop.
+	known: u32
+	if name == "AXMoved" || name == "AXResized" || name == "AXTitleChanged" {
+		for id, ref in state.windows {
+			if ref != nil && CFEqual(ref, element) {
+				known = id
+				break
+			}
+		}
+	}
+	if known != 0 && state.manager.windows[known] != nil {
+		state.window_dirty[known] = true
+	} else {
+		state.dirty = true
+	}
 	if (name == "AXMoved" || name == "AXResized") &&
 	   state.focus_ring.owner != 0 {
 		if ref := state.windows[state.focus_ring.owner];
@@ -331,11 +369,14 @@ observer_callback :: proc "c" (
 		state.tab_indicator.order_dirty = true
 		focus_ring_prune_unordered(state)
 	}
+	if strings.has_prefix(name, "AXApplication") {
+		state.apps_dirty = true
+	}
 	if name == "AXWindowMiniaturized" || name == "AXApplicationHidden" {
 		focus_ring_prune_unordered(state)
 	}
 	if name == "AXUIElementDestroyed" {
-		state.structural_dirty = true; opening_destroyed(state, element)
+		state.structural_dirty = true; state.apps_dirty = true; opening_destroyed(state, element)
 		window_destroyed(state, element)
 		return
 	}
@@ -380,6 +421,7 @@ state_init :: proc(state: ^State) {
 	state.manager.scale_present = resize_scale_present
 	state.manager.window_bounds = resize_window_bounds
 	state.manager.resize_configure = resize_configure
+	state.manager.resize_configure_hidden = resize_configure_hidden
 	state.manager.resize_fade = true
 	state.manager.scroll_animate = true
 	state.manager.scroll_frame_pacing = true
@@ -390,6 +432,9 @@ state_destroy :: proc(state: ^State) {
 	tab_conceal_release(&state.manager)
 	layout_snapshot_close(&state.layout_snapshot, &state.manager)
 	defer callback_scratch_destroy(&state.callback_scratch)
+	defer delete(state.app_sweep)
+	defer delete(state.window_dirty)
+	defer delete(state.app_quiet)
 	resize_cover_stop(state)
 	display_clock_stop(&state.display_clock)
 	opening_stop(state)
@@ -480,7 +525,13 @@ perform_native :: proc(user: rawptr, action: Action) -> string {
 	   action.kind == .Scale ||
 	   action.kind == .Conceal {
 		err := addition_action(action); if err == "" {
-			state.dirty = true
+			// Ordering and appearance changes of one window need no rescan.
+			#partial switch action.kind {
+			case .Order, .Shadow, .Conceal, .Scale, .Opacity:
+				state.window_dirty[action.window] = true
+			case:
+				state.dirty = true
+			}
 			focus_ring_note_action(state, action)
 		}; return err
 	}
@@ -944,6 +995,8 @@ apply_frame_now :: proc(state: ^State, window: u32, frame: Rect) -> string {
 			time.duration_seconds(time.diff(time.Time{}, time.now())),
 		)
 	}
-	state.dirty = true
+	// Our own write: re-read this window alone. A full rescan of every
+	// application after each settle cost 60-75 ms.
+	state.window_dirty[window] = true
 	return ""
 }

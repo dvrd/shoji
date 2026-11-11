@@ -3,6 +3,7 @@ package shoji
 import "base:runtime"
 import "core:fmt"
 import "core:math"
+import "core:strings"
 import "core:sync"
 import "core:time"
 import layout "layout"
@@ -1861,7 +1862,10 @@ stack_touch_horizontal :: proc(state: ^State, delta, velocity: f64, ended: bool)
 		if !t.horizontal_switched && math.abs(t.horizontal_travel) >= TOUCH_TAB_STEP_TRAVEL {
 			t.horizontal_switched = true
 			direction := t.horizontal_travel > 0 ? "east" : "west"
-			if response := execute(m, {"window", "--focus", direction}); response.failed {
+			// Past the last tab of the edge column there is nothing to focus;
+			// that is the end of the strip, not an error.
+			if response := execute(m, {"window", "--focus", direction});
+			   response.failed && !strings.contains(response.text, "could not locate window") {
 				fmt.eprintln("shoji: three-finger tab swipe:", response.text)
 			}
 		}
