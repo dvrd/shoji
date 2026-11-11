@@ -625,6 +625,7 @@ foreign feedback_cg {
 	CGContextSetLineWidth :: proc(ctx: Ref, width: f64) ---
 	CGContextFillRect :: proc(ctx: Ref, rect: Rect) ---
 	CGContextStrokeRect :: proc(ctx: Ref, rect: Rect) ---
+	CGContextClipToRect :: proc(ctx: Ref, rect: Rect) ---
 }
 
 native_feedback_create :: proc(
@@ -1579,7 +1580,11 @@ Resize_Snapshots :: struct {
 	background_ready:                          bool,
 	revealing:                                 bool,
 	old_alpha:                                 f64,
-	live_blend:                                bool,
+	// The snapshot's size in points. A layout resize draws it unscaled,
+	// anchored top-left and clipped to the animated rect, on a surface
+	// sized for the largest rect; stretching it distorted the text.
+	content:                                   [2]f64,
+	drawn:                                     [2]f64,
 }
 Resize_Cover_Backend :: struct {
 	create:  proc(state: ^State, window: u32, frame: Rect) -> (Owned_Surface, string),
@@ -1678,7 +1683,13 @@ native_resize_cover_create :: proc(
 	if w.pid != getpid() && !CGPreflightScreenCaptureAccess() {
 		return {}, "Screen Recording permission is required for content fades"
 	}
-	surface_bytes, valid := capture_surface_bytes(frame, 1)
+	// Room for any rect the layout can animate to on this display.
+	extent := frame
+	if s := space_by_id(&state.manager, w.space); s != nil {
+		extent.w = max(extent.w, s.view.frame.w)
+		extent.h = max(extent.h, s.view.frame.h)
+	}
+	surface_bytes, valid := capture_surface_bytes(extent, 1)
 	if !valid || !capture_reserve(&state.capture_memory, surface_bytes) {
 		return {}, "resize capture memory budget exhausted"
 	}
@@ -1696,7 +1707,7 @@ native_resize_cover_create :: proc(
 			capture_release(&state.capture_memory, surface_bytes + image_bytes)
 		}
 	}
-	surface, err := surface_create(state, frame, window, (1 << 1) | (1 << 9), 13, 1)
+	surface, err := surface_create(state, extent, window, (1 << 1) | (1 << 9), 13, 1)
 	if err != "" {
 		return {}, err
 	}
@@ -1707,6 +1718,7 @@ native_resize_cover_create :: proc(
 		initial       = image,
 		initial_bytes = image_bytes,
 		surface_bytes = surface_bytes,
+		content       = {frame.w, frame.h},
 	}
 	success = true
 	return surface, ""
@@ -1740,19 +1752,56 @@ native_resize_cover_update :: proc(
 		return "resize snapshot disappeared"
 	}
 	if cover, exists := state.resize_covers[window]; exists && cover.synchronized {
-		// The old snapshot is stretched with geometry and blended over the live
-		// app, like Niri's old/current texture mix. No final screenshot is frozen,
-		// no background is inserted, and no capture is needed on each frame.
-		if !images.live_blend {
-			r := Rect{0, 0, surface.frame.w, surface.frame.h}
-			CGContextClearRect(surface.ctx, r)
+		// The old snapshot is blended over the live app, like Niri's
+		// old/current texture mix. It keeps its own size: the rect grows
+		// into the app's background colour or crops the old content, so
+		// text never stretches. Redrawn only when the rect's size changes.
+		size := [2]f64{min(math.round(frame.w), surface.frame.w), min(math.round(frame.h), surface.frame.h)}
+		if size != images.drawn {
+			if !images.background_ready {
+				images.background = resize_background(images.initial)
+				images.background_ready = true
+			}
+			// Only the strip that changed is drawn: a whole-surface redraw
+			// and flush cost 15-40 ms a frame.
+			top, old := surface.frame.h, images.drawn
+			paint :: proc(ctx: Ref, images: ^Resize_Snapshots, top: f64, r: Rect) {
+				if r.w <= 0 || r.h <= 0 {
+					return
+				}
+				CGContextSaveGState(ctx)
+				CGContextClipToRect(ctx, r)
+				bg := images.background
+				CGContextSetRGBFillColor(ctx, bg[0], bg[1], bg[2], 1)
+				CGContextFillRect(ctx, r)
+				CGContextDrawImage(
+					ctx,
+					{0, top - images.content[1], images.content[0], images.content[1]},
+					images.initial,
+				)
+				CGContextRestoreGState(ctx)
+			}
 			CGContextSetAlpha(surface.ctx, 1)
-			CGContextDrawImage(surface.ctx, r, images.initial)
+			if old == {} {
+				CGContextClearRect(surface.ctx, {0, 0, surface.frame.w, surface.frame.h})
+				paint(surface.ctx, &images, top, {0, top - size[1], size[0], size[1]})
+			} else {
+				paint(surface.ctx, &images, top, {old[0], top - size[1], size[0] - old[0], size[1]})
+				paint(surface.ctx, &images, top, {0, top - size[1], size[0], size[1] - old[1]})
+				if size[0] < old[0] {
+					CGContextClearRect(surface.ctx, {size[0], top - old[1], old[0] - size[0], old[1]})
+				}
+				if size[1] < old[1] {
+					CGContextClearRect(surface.ctx, {0, top - old[1], old[0], old[1] - size[1]})
+				}
+			}
 			CGContextFlush(surface.ctx)
-			images.live_blend = true
+			images.drawn = size
 		}
 		state.resize_snapshots[surface.id] = images
-		return resize_cover_present(state, surface, window, frame, 1 - alpha)
+		// Unscaled: the surface's origin follows the rect.
+		placed := Rect{frame.x, frame.y, surface.frame.w, surface.frame.h}
+		return resize_cover_present(state, surface, window, placed, 1 - alpha)
 	}
 	if !images.background_ready && !revealing && alpha < 1 {
 		// Pixel readback is only needed for the prolonged manual-drag fallback.
