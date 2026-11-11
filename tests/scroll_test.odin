@@ -5,6 +5,7 @@ import dock "../src/dock"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
+import "core:strings"
 import "core:testing"
 import layout "../src/layout"
 
@@ -510,4 +511,41 @@ scroll_keyboard_grow_stops_at_the_view :: proc(t: ^testing.T) {
 	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:-100:0"}).failed)
 	testing.expect_value(t, e.flush(&m, s), "")
 	testing.expect(t, math.abs(n.column_width - (fit - 100)) < 0.01)
+}
+
+@(test)
+scroll_keyboard_shrink_stops_at_a_learned_minimum :: proc(t: ^testing.T) {
+	m: e.Manager; r: Recorder; fixture(&m, &r)
+	defer e.manager_destroy(&m); defer delete(r.actions)
+	testing.expect(t, !e.execute(&m, {"space", "--layout", "scroll"}).failed)
+	testing.expect_value(t, e.flush(&m, m.spaces[0]), "")
+	s := m.spaces[0]
+	n := layout.find(s.view.root, 1)
+	floor := n.column_width - 150
+	m.windows[1].learned_min_width = floor
+	delete(m.windows[1].app); m.windows[1].app = strings.clone("Mail")
+	Notices :: struct {
+		count: int,
+		body:  string,
+	}
+	notices: Notices
+	m.health_user = &notices
+	m.health_notice = proc(user: rawptr, title, body: string) {
+		n := (^Notices)(user)
+		n.count += 1
+		delete(n.body)
+		n.body = strings.clone(body)
+	}
+	defer delete(notices.body)
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:-100:0"}).failed)
+	testing.expect_value(t, notices.count, 0)
+	for _ in 0 ..< 4 {
+		testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:-100:0"}).failed)
+	}
+	testing.expectf(t, math.abs(n.column_width - floor) < 0.01, "%v %v", n.column_width, floor)
+	testing.expect(t, notices.count > 0, "a stopped shrink must tell the user why")
+	testing.expect(t, strings.contains(notices.body, "Mail"))
+	m.windows[1].learned_min_width = 0
+	testing.expect(t, !e.execute(&m, {"window", "1", "--resize", "right:-100:0"}).failed)
+	testing.expect(t, math.abs(n.column_width - (floor - 100)) < 0.01)
 }

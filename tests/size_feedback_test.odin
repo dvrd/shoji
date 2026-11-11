@@ -237,3 +237,26 @@ accepted_row_height_reallocates_other_rows_and_preserves_explicit_height :: proc
 		f64(16),
 	)
 }
+
+@(test)
+a_refused_width_is_learned_but_a_reflowed_one_is_not :: proc(t: ^testing.T) {
+	refused := feedback_window()
+	e.size_feedback_request(&refused, {0, 0, 500, 400}, {0, 0, 900, 400}, 0)
+	e.size_feedback_observe(&refused, refused.size_feedback.generation, {0, 0, 700, 400}, 0.2)
+	e.size_feedback_observe(&refused, refused.size_feedback.generation, {0, 0, 700, 400}, 0.28)
+	testing.expect_value(t, refused.learned_min_width, f64(700))
+
+	// Intent 500, but the column's reflow sent 700: the app took what it got.
+	reflowed := feedback_window()
+	e.size_feedback_request(&reflowed, {0, 0, 700, 400}, {0, 0, 500, 400}, 0)
+	e.size_feedback_observe(&reflowed, reflowed.size_feedback.generation, {0, 0, 700, 400}, 0.2)
+	e.size_feedback_observe(&reflowed, reflowed.size_feedback.generation, {0, 0, 700, 400}, 0.28)
+	testing.expect_value(t, reflowed.learned_min_width, f64(0))
+
+	// Accepting a narrower width lowers what was learned.
+	refused.size_intent.w = 400
+	e.size_feedback_request(&refused, {0, 0, 400, 400}, {0, 0, 700, 400}, 1)
+	e.size_feedback_observe(&refused, refused.size_feedback.generation, {0, 0, 400, 400}, 1.2)
+	e.size_feedback_observe(&refused, refused.size_feedback.generation, {0, 0, 400, 400}, 1.28)
+	testing.expect_value(t, refused.learned_min_width, f64(400))
+}

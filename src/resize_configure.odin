@@ -1,5 +1,6 @@
 package shoji
 
+import "core:time"
 import "core:fmt"
 import "core:sync"
 import "core:thread"
@@ -116,15 +117,38 @@ resize_configure :: proc(user: rawptr, window: u32, request: Rect) -> string {
 		previous = observed
 	}
 	resize_cover_frame(state, window, request, previous, CACurrentMediaTime())
-	return resize_configure_push(window, element, {request.w, request.h})
+	if err := resize_configure_push(window, element, {request.w, request.h}); err != "" {
+		return err
+	}
+	resize_configure_feedback(state, w, request, previous)
+	return ""
+}
+
+// The app's answer to the size is checked like a direct write's, so a
+// refused width is learned (Window.learned_min_width).
+resize_configure_feedback :: proc(state: ^State, w: ^Window, request: Rect, previous: Maybe(Rect)) {
+	if before, known := previous.?; known {
+		size_feedback_request(w, request, before, time.duration_seconds(time.diff(time.Time{}, time.now())))
+	}
 }
 
 // Manager hook for a hidden tab: no snapshot, position and size off the loop.
 resize_configure_hidden :: proc(user: rawptr, window: u32, request: Rect) -> string {
 	state := (^State)(user)
 	element := state.windows[window]
-	if state.manager.windows[window] == nil || element == nil {
+	w := state.manager.windows[window]
+	if w == nil || element == nil {
 		return "window no longer has an Accessibility reference"
 	}
-	return resize_configure_push(window, element, {request.w, request.h}, Point{request.x, request.y})
+	if err := resize_configure_push(window, element, {request.w, request.h}, Point{request.x, request.y});
+	   err != "" {
+		return err
+	}
+	observed: Rect
+	previous: Maybe(Rect)
+	if SLSGetWindowBounds(state.connection, window, &observed) == 0 && observed.w > 0 && observed.h > 0 {
+		previous = observed
+	}
+	resize_configure_feedback(state, w, request, previous)
+	return ""
 }

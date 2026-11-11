@@ -2140,6 +2140,13 @@ size_feedback_observe :: proc(w: ^Window, generation: u64, observed: Rect, now: 
 	}
 	f.pending = false
 	changed := false
+	// A refusal is the app staying wider than the width it was sent; a
+	// tab widened by the column's reflow kept its intent but not its send.
+	if observed.w > f.intent.w + 1 && observed.w > f.expected.w + 1 {
+		w.learned_min_width = observed.w
+	} else if math.abs(observed.w - f.intent.w) <= 1 && f.intent.w < w.learned_min_width {
+		w.learned_min_width = f.intent.w
+	}
 	if math.abs(observed.w - f.intent.w) <= 1 {
 		if f.width_valid {
 			f.width_valid, changed = false, true
@@ -2288,7 +2295,12 @@ frame_size_feedback_tick :: proc(state: ^State, now: time.Time) {
 		if SLSGetWindowBounds(state.connection, id, &observed) != 0 {
 			f.checked_at = seconds; continue
 		}
+		learned := w.learned_min_width
 		if size_feedback_observe(w, generation, observed, seconds) {
+			if w.learned_min_width > learned + 1 {
+				// The column widens to this app; say why it bounced back.
+				minimum_width_notice(m, w)
+			}
 			// The app is already at its accepted size. Correct layout occupancy
 			// immediately instead of animating neighbors through that native frame.
 			w.frame = observed

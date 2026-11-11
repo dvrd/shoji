@@ -720,6 +720,21 @@ replace_window_id :: proc(n: ^layout.Node, old, fresh: u32) {
 	}
 }
 
+// Tells the user why a column stopped shrinking. Notifications are
+// deduplicated, so a held key posts once.
+minimum_width_notice :: proc(m: ^Manager, limit: ^Window) {
+	if m.health_notice == nil {
+		return
+	}
+	name := limit.app != "" ? limit.app : "A window in this column"
+	width := max(limit.min_width, limit.learned_min_width)
+	m.health_notice(
+		m.health_user,
+		"Shoji: column is at its minimum width",
+		fmt.tprintf("%s can't be narrower than %.0f points.", name, width),
+	)
+}
+
 resize_window :: proc(m: ^Manager, w: ^Window, handle: string, dx, dy: f64) -> string {
 	if s := space_by_id(m, w.space);
 	   s != nil && s.view.layout == .Scroll && layout.find(s.view.root, w.id) != nil {
@@ -735,6 +750,29 @@ resize_window :: proc(m: ^Manager, w: ^Window, handle: string, dx, dy: f64) -> s
 		if n := layout.find(s.view.root, w.id); n != nil && delta > 0 {
 			fit := s.view.scroll.viewport.w - 2 * layout.scroll_gap(&s.view)
 			delta = max(0, min(delta, fit - n.column_width))
+		}
+		// Shrinking stops at the widest minimum among the column's windows,
+		// configured or learned from a refusal. Past it a tab refuses, the
+		// column widens to that tab, and the active window jumps back out
+		// after the animation. --column-width still retries narrower.
+		if n := layout.find(s.view.root, w.id); n != nil && delta < 0 {
+			floor: f64
+			limit: ^Window
+			for i in 0 ..< n.count {
+				if member := m.windows[n.windows[i]]; member != nil {
+					if narrowest := max(member.min_width, member.learned_min_width); narrowest > floor {
+						floor, limit = narrowest, member
+					}
+				}
+			}
+			if floor > 0 && n.column_tabbed && !s.view.tab_indicator_top {
+				floor += layout.tab_indicator_gutter(&s.view, n)
+			}
+			allowed := min(0, max(delta, floor - n.column_width))
+			if allowed > delta && limit != nil {
+				minimum_width_notice(m, limit)
+			}
+			delta = allowed
 		}
 		if err := layout.scroll_set_width(&s.view, w.id, fmt.tprintf("rel:%g", delta)); err != "" {
 			return err
