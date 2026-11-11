@@ -31,6 +31,9 @@ Window :: struct {
 	size_feedback_reflow:                                     bool,
 	size_intent:                                              Size_Intent,
 	size_feedback:                                            Size_Feedback,
+	// The narrowest width the app has kept: learned when it refuses a
+	// narrower one, lowered when it accepts one. Keyboard shrink stops here.
+	learned_min_width:                                        f64,
 	row_revision:                                             u64,
 	scroll_frame:                                             Scroll_Frame,
 	row_fixed, row_weight:                                    f64,
@@ -303,6 +306,9 @@ Manager :: struct {
 	health_user:                                                  rawptr,
 	// Daemon-only `notify test`: posts a test notification; nil elsewhere.
 	health_notify_test:                                           proc(user: rawptr) -> Response,
+	// Daemon-only: tells the user why a command did less than asked. Nil
+	// elsewhere (tests record it through their own hook).
+	health_notice:                                                proc(user: rawptr, title, body: string),
 	// Daemon-only `config windowserver_gate [on|off]`; "" queries. Nil elsewhere.
 	ws_gate_control:                                              proc(
 		user: rawptr,

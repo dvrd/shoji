@@ -570,7 +570,13 @@ health_start :: proc(h: ^Runtime_Health, m: ^Manager) {
 	notifier_start(&h.notifier)
 	m.health_report = health_report
 	m.health_notify_test = health_notify_test
+	m.health_notice = health_notice
 	m.health_user = h
+}
+
+health_notice :: proc(user: rawptr, title, body: string) {
+	h := (^Runtime_Health)(user)
+	notify(&h.notifier, title, body, time.now())
 }
 
 health_stop :: proc(h: ^Runtime_Health) {
